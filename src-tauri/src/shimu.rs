@@ -489,6 +489,10 @@ pub fn shimu_logout(app_state: tauri::State<'_, AppState>) -> Result<(), String>
 #[serde(rename_all = "camelCase", default)]
 pub struct ShimuPostQuery {
     pub category_id: Option<i64>,
+    /// 多个板块（分类）合并查询：站点的 `categoryId` 是单值，需要跨板块时用它，
+    /// 由后端逐板块取一页再合并（见 [`merge_category_posts`]）。
+    /// 投影工坊默认用「投影 + 红石 + 生电 + 建筑」四个板块。
+    pub category_ids: Option<Vec<i64>>,
     pub version_id: Option<i64>,
     pub tag_id: Option<i64>,
     pub user_id: Option<i64>,
@@ -505,6 +509,19 @@ pub struct ShimuPostQuery {
 }
 
 impl ShimuPostQuery {
+    /// 需要查询的板块 ID：`categoryIds` 优先（投影工坊的「投影相关」），
+    /// 否则退化为单个 `categoryId`；丢弃非法值并去重排序。
+    fn category_set(&self) -> Vec<i64> {
+        let mut ids: Vec<i64> = match &self.category_ids {
+            Some(list) if !list.is_empty() => list.clone(),
+            _ => self.category_id.into_iter().collect(),
+        };
+        ids.retain(|v| *v > 0);
+        ids.sort_unstable();
+        ids.dedup();
+        ids
+    }
+
     fn to_query(&self) -> Vec<(String, String)> {
         let mut q: Vec<(String, String)> = Vec::new();
         let mut num = |k: &str, v: Option<i64>| {
@@ -537,14 +554,117 @@ impl ShimuPostQuery {
     }
 }
 
-/// 帖子列表（`{ code, msg, total, rows }`）——匿名可访问
+/// 帖子列表（`{ code, msg, total, rows }`）——匿名可访问。
+///
+/// 传 `categoryIds`（多个板块）时走合并路径；单个板块/不传时直接单次请求。
 #[tauri::command]
 pub async fn shimu_list_posts(
     app_state: tauri::State<'_, AppState>,
     query: Option<ShimuPostQuery>,
 ) -> Result<Value, String> {
     let q = query.unwrap_or_default();
-    get_public(&app_state, "/api/forum/post/list", q.to_query()).await
+    let ids = q.category_set();
+    if ids.len() > 1 {
+        return merge_category_posts(&app_state, &q, &ids).await;
+    }
+    let mut single = q;
+    single.category_id = ids.first().copied();
+    single.category_ids = None;
+    get_public(&app_state, "/api/forum/post/list", single.to_query()).await
+}
+
+/// 板块（分类）列表：返回 `[{ categoryId, name, postCount, ... }]`——匿名可访问。
+///
+/// 投影工坊用它渲染板块筛选；站点 `categoryId` 只支持单值，所以「投影相关」
+/// 需要把命中的板块 ID 一起回传，由 [`merge_category_posts`] 合并。
+#[tauri::command]
+pub async fn shimu_categories(app_state: tauri::State<'_, AppState>) -> Result<Value, String> {
+    let v = get_public(&app_state, "/api/forum/category/list", Vec::new()).await?;
+    Ok(v.get("data").cloned().unwrap_or_else(|| Value::Array(Vec::new())))
+}
+
+/// 合并多个板块的帖子列表。
+///
+/// 与内容中心「全部来源」同一策略：每页向每个板块各取 `pageSize` 条，
+/// 合并去重后按所选维度统一排序，再截断到 `pageSize`；`total` 取各板块
+/// 总数的最大值（可翻阅页数按最深的板块算）。
+/// 单个板块失败不影响整体（全部失败才报错）。
+async fn merge_category_posts(
+    state: &AppState,
+    q: &ShimuPostQuery,
+    ids: &[i64],
+) -> Result<Value, String> {
+    let size = q.page_size.unwrap_or(20).clamp(1, 60) as usize;
+    let reqs = ids.iter().map(|id| {
+        let mut one = q.clone();
+        one.category_id = Some(*id);
+        one.category_ids = None;
+        get_public(state, "/api/forum/post/list", one.to_query())
+    });
+    let results = futures_util::future::join_all(reqs).await;
+
+    let mut rows: Vec<Value> = Vec::new();
+    let mut total: u64 = 0;
+    let mut ok = 0usize;
+    let mut first_err: Option<String> = None;
+    for res in results {
+        match res {
+            Ok(v) => {
+                ok += 1;
+                // 取各板块总数的最大值（而非求和）：合并后每页只截取 `pageSize` 条，
+                // 最深板块的页数就是实际可翻阅的页数，求和会多出一截空页。
+                total = total.max(v.get("total").and_then(|t| t.as_u64()).unwrap_or(0));
+                if let Some(arr) = v.get("rows").and_then(|r| r.as_array()) {
+                    rows.extend(arr.iter().cloned());
+                }
+            }
+            Err(e) => {
+                if first_err.is_none() {
+                    first_err = Some(e);
+                }
+            }
+        }
+    }
+    if ok == 0 {
+        return Err(first_err.unwrap_or_else(|| "请求拾木空间失败".into()));
+    }
+    // 同一帖子理论上只属于一个板块，去重只为兜底（跨版重复发布）
+    let mut seen = std::collections::HashSet::new();
+    rows.retain(|r| {
+        r.get("postId")
+            .and_then(|p| p.as_i64())
+            .map(|id| seen.insert(id))
+            .unwrap_or(true)
+    });
+    sort_merged_rows(&mut rows, q.sort.as_deref());
+    rows.truncate(size);
+    Ok(json!({ "code": 200, "msg": "操作成功", "total": total, "rows": rows }))
+}
+
+/// 合并后的统一排序：各板块单独排出来的顺序无法跨板块比较，只能按字段重排。
+fn sort_merged_rows(rows: &mut [Value], sort: Option<&str>) {
+    use std::cmp::Reverse;
+    match sort.unwrap_or("new") {
+        "hot" => rows.sort_by_key(|r| {
+            Reverse(r.get("viewCount").and_then(|v| v.as_i64()).unwrap_or(0))
+        }),
+        "featured" => rows.sort_by(|a, b| {
+            let fa = is_featured(a);
+            let fb = is_featured(b);
+            fb.cmp(&fa)
+                .then_with(|| create_time(b).cmp(create_time(a)))
+        }),
+        // new（默认）
+        _ => rows.sort_by(|a, b| create_time(b).cmp(create_time(a))),
+    }
+}
+
+fn create_time(v: &Value) -> &str {
+    v.get("createTime").and_then(|t| t.as_str()).unwrap_or("")
+}
+
+fn is_featured(v: &Value) -> bool {
+    v.get("isFeatured").and_then(|f| f.as_str()).unwrap_or("0") == "1"
 }
 
 /// 帖子详情（付费内容未购买时 `content` 为空）——匿名可访问
@@ -856,6 +976,66 @@ mod tests {
         assert!(q.contains(&("pageNum".to_string(), "1".to_string())));
         // pageSize 被夹到上限
         assert!(q.contains(&("pageSize".to_string(), "60".to_string())));
+    }
+
+    #[test]
+    fn category_set_merges_and_dedupes() {
+        // categoryIds 优先，非法值丢弃、去重排序
+        let merged = ShimuPostQuery {
+            category_ids: Some(vec![5, 1, 5, 0, -2, 3, 4]),
+            ..Default::default()
+        };
+        assert_eq!(merged.category_set(), vec![1, 3, 4, 5]);
+        // 只有单个 categoryId 时也能识别
+        let single = ShimuPostQuery {
+            category_id: Some(3),
+            ..Default::default()
+        };
+        assert_eq!(single.category_set(), vec![3]);
+        // categoryIds 为空数组时退回 categoryId
+        let fallback = ShimuPostQuery {
+            category_id: Some(1),
+            category_ids: Some(vec![]),
+            ..Default::default()
+        };
+        assert_eq!(fallback.category_set(), vec![1]);
+        assert!(ShimuPostQuery::default().category_set().is_empty());
+        // 多板块不会进单次查询（走合并路径）
+        assert!(!merged.to_query().iter().any(|(k, _)| k == "categoryIds"));
+    }
+
+    #[test]
+    fn merged_rows_sort_by_selected_dimension() {
+        let mk = |id: i64, time: &str, views: i64, featured: &str| {
+            json!({
+                "postId": id,
+                "createTime": time,
+                "viewCount": views,
+                "isFeatured": featured,
+            })
+        };
+        let base = vec![
+            mk(1, "2026-01-01 00:00:00", 5, "1"),
+            mk(2, "2026-09-25 10:33:11", 156, "0"),
+            mk(3, "2026-05-05 08:00:00", 900, "0"),
+        ];
+        let ids = |rows: &[Value]| {
+            rows.iter()
+                .map(|r| r.get("postId").and_then(|v| v.as_i64()).unwrap_or(0))
+                .collect::<Vec<_>>()
+        };
+
+        let mut newest = base.clone();
+        sort_merged_rows(&mut newest, Some("new"));
+        assert_eq!(ids(&newest), vec![2, 3, 1]);
+
+        let mut hot = base.clone();
+        sort_merged_rows(&mut hot, Some("hot"));
+        assert_eq!(ids(&hot), vec![3, 2, 1]);
+
+        let mut featured = base.clone();
+        sort_merged_rows(&mut featured, Some("featured"));
+        assert_eq!(ids(&featured), vec![1, 2, 3]);
     }
 
     #[test]

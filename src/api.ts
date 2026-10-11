@@ -33,6 +33,7 @@ import type {
   Settings,
   ShimuConfig,
   ShimuDownloadResult,
+  ShimuCategory,
   ShimuPage,
   ShimuPost,
   ShimuPostQuery,
@@ -815,9 +816,12 @@ export const api = {
   shimuStatus: () => invoke<ShimuStatus>("shimu_status"),
   shimuUserInfo: () => invoke<ShimuUser>("shimu_user_info", undefined, { net: true }),
   shimuLogout: () => invoke<void>("shimu_logout"),
-  /** 帖子列表（帖子基本都是投影） */
+  /** 帖子列表（可传 categoryId 单板块，或 categoryIds 多板块合并） */
   shimuListPosts: (query: ShimuPostQuery) =>
     invoke<ShimuPage<ShimuPost>>("shimu_list_posts", { query }, { net: true }),
+  /** 站点板块（分类）列表，用于投影工坊的板块筛选 */
+  shimuCategories: () =>
+    invoke<ShimuCategory[]>("shimu_categories", undefined, { net: true }),
   shimuPostDetail: (postId: number) =>
     invoke<Record<string, unknown>>("shimu_post_detail", { postId }, { net: true }),
   shimuHotPosts: (limit?: number) =>

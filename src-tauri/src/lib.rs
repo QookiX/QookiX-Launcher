@@ -283,6 +283,7 @@ pub fn run() {
   shimu::shimu_user_info,
   shimu::shimu_logout,
   shimu::shimu_list_posts,
+  shimu::shimu_categories,
   shimu::shimu_post_detail,
   shimu::shimu_hot_posts,
   shimu::shimu_featured_posts,

@@ -29,7 +29,7 @@ const shimuLoginRef = ref<InstanceType<typeof ShimuLoginDialog> | null>(null);
 const route = useRoute();
 const router = useRouter();
 
-/** 打开拾木空间投影库（独立页面；浏览不需要登录） */
+/** 打开拾木空间投影库（独立页面；浏览不需要登录，默认只筛「投影相关」板块） */
 function openShimuLibrary() {
   void router.push("/toolbox/shimu");
 }
@@ -363,7 +363,7 @@ onUnmounted(() => {
         </div>
       </NPopover>
 
-      <!-- 拾木空间：账号 + 站内投影库（帖子都是投影，付费帖走出券接口） -->
+      <!-- 拾木空间：账号 + 站内投影库（帖子多为投影作品，板块筛选在库内） -->
       <span class="param-sep" />
       <button
         class="mini-btn"

@@ -990,7 +990,7 @@ onUnmounted(() => {
         <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
         <div class="nav-brand-info">
           <span class="nav-brand-name">QookiX Launcher</span>
-          <span class="nav-brand-ver">v0.13.0</span>
+          <span class="nav-brand-ver">v0.14.0</span>
         </div>
       </div>
     </div>
@@ -1750,7 +1750,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.13.0</span>
+            <span class="about-ver">v0.14.0</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
@@ -1846,7 +1846,7 @@ onUnmounted(() => {
             </button>
           </div>
           <div class="about-links-row">
-            <button class="about-link" @click="openUrl('https://qookix.swkj1.cn/')">
+            <button class="about-link" @click="openUrl('https://qookix.cn/')">
               <span class="link-left"><IconGlobe /> {{ t("settings.about.website") }}</span>
               <span class="link-arrow">→</span>
             </button>

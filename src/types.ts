@@ -296,8 +296,22 @@ export interface ShimuPage<T> {
   rows: T[];
 }
 
+/** 站点板块（分类）：`/api/forum/category/list` 的 data 项 */
+export interface ShimuCategory {
+  categoryId: number;
+  name: string;
+  /** 该板块帖子数 */
+  postCount?: number;
+  parentId?: number;
+}
+
 export interface ShimuPostQuery {
   categoryId?: number;
+  /**
+   * 多板块合并查询（站点只支持单个 categoryId）。
+   * 投影工坊「投影相关」默认传「投影 / 红石 / 生电 / 建筑」四个板块。
+   */
+  categoryIds?: number[];
   versionId?: number;
   tagId?: number;
   userId?: number;

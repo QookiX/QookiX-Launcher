@@ -5,6 +5,11 @@
  * - 帖子列表 / 详情都是**匿名接口**，未登录也能浏览（带封面图）；
  * - 下载附件（含付费下单）需要登录，未登录时点下载会拉起登录弹窗；
  * - 下载完成后跳到投影工坊并用 `?open=<本地路径>` 直接打开预览。
+ *
+ * 板块（分类）：发帖人把投影帖发在哪个板块并不固定（投影 / 红石 / 生电 / 建筑
+ * 都可能是投影作品），而站点的 `categoryId` 只能传单个值，所以默认用
+ * 「投影相关」= 这几个板块一起查（后端分板块取一页再合并），
+ * 也可以点具体板块只看一个。
  */
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
@@ -16,7 +21,7 @@ import SimplePagination from "../components/SimplePagination.vue";
 import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
 import { api } from "../api";
 import { shimuAbsoluteUrl, shimuErrorMessage, useShimuStore } from "../stores/shimu";
-import type { ShimuPost } from "../types";
+import type { ShimuCategory, ShimuPost, ShimuPostQuery } from "../types";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -28,11 +33,40 @@ const PAGE_SIZE = 12;
 const loginRef = ref<InstanceType<typeof ShimuLoginDialog> | null>(null);
 
 const keyword = ref("");
-const sort = ref<"new" | "hot" | "featured">("new");
+const sort = ref<"new" | "hot" | "featured">("hot");
 const page = ref(1);
 const rows = ref<ShimuPost[]>([]);
 const total = ref(0);
 const loading = ref(false);
+
+/**
+ * 板块筛选。`related` = 投影相关（多个板块合并），`all` = 不限板块，
+ * 其余为分类 ID 字符串。
+ */
+const board = ref<string>("related");
+const categories = ref<ShimuCategory[]>([]);
+/** 「投影相关」包含的板块名（站点分类名，匹配时忽略空格） */
+const RELATED_BOARD_NAMES = ["投影", "红石", "生电", "建筑"];
+/** 分类接口拿不到时的兜底 ID（拾木空间固定值） */
+const RELATED_BOARD_IDS = [1, 3, 4, 5];
+
+const relatedIds = computed(() => {
+  const ids = categories.value
+    .filter((c) => RELATED_BOARD_NAMES.some((n) => (c.name ?? "").replace(/\s+/g, "").includes(n)))
+    .map((c) => c.categoryId);
+  return ids.length ? ids : RELATED_BOARD_IDS;
+});
+
+const boardChips = computed(() => {
+  const chips = [
+    { key: "related", label: t("shimu.boardRelated") },
+    { key: "all", label: t("shimu.boardAll") },
+  ];
+  for (const c of categories.value) {
+    chips.push({ key: String(c.categoryId), label: c.name });
+  }
+  return chips;
+});
 
 const detail = ref<ShimuPost | null>(null);
 const detailLoading = ref(false);
@@ -104,6 +138,29 @@ const sortOptions = computed(() => [
 const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
 
 /**
+ * 站点的「评论后查看」隐藏块标记（裸文本，形如 `[hidecontent type="reply" …]`）。
+ * 作者确认客户端可以直接去掉。
+ */
+const HIDECONTENT_MARKER = /\[\/?hidecontent[^\]]*\]/gi;
+
+/**
+ * 去掉「评论后查看」的隐藏标记。
+ *
+ * 站点结构（抓自真实帖子）：
+ *   `<div class="tinymce-hide"><p class="hide-before">[hidecontent …][/hidecontent]</p></div>`
+ * 未评论时服务端**不会**下发被隐藏的内容，只留这串裸标记 —— 直接渲染就是截图里那种
+ * 难看的方括号。这里删掉标记元素；万一块内确实带着正文（有权限时服务端会连同标记
+ * 一起返回），则解包外层容器把内容保留下来，别连内容一起删。
+ */
+function stripHiddenMarkers(root: HTMLElement) {
+  root.querySelectorAll(".hide-before").forEach((m) => m.remove());
+  root.querySelectorAll<HTMLElement>(".tinymce-hide").forEach((box) => {
+    if (!box.childNodes.length) return box.remove();
+    box.replaceWith(...Array.from(box.childNodes));
+  });
+}
+
+/**
  * 正文是富文本 HTML（编辑器上传的图片往往是 `/profile/xxx.png` 这种相对路径）。
  * 直接 v-html 会按启动器自身的 origin（tauri://localhost）解析 → 全部破图，
  * 所以先用 DOMParser 把相对 src/href 补成站点绝对地址，再交给 DOMPurify 净化。
@@ -115,6 +172,7 @@ function absolutizeRichHtml(html: string, host?: string): string {
     const doc = new DOMParser().parseFromString(`<div id="r">${html}</div>`, "text/html");
     const root = doc.getElementById("r");
     if (!root) return html;
+    stripHiddenMarkers(root);
     root.querySelectorAll("[src], [href], [data-src]").forEach((el) => {
       for (const attr of ["src", "data-src", "href"]) {
         const v = el.getAttribute(attr);
@@ -127,7 +185,8 @@ function absolutizeRichHtml(html: string, host?: string): string {
         el.setAttribute("loading", "lazy");
       }
     });
-    return root.innerHTML;
+    // 兜底：作者手写/粘贴在段落里的裸标记也一并清掉（DOM 路径覆盖不到的情况）
+    return root.innerHTML.replace(HIDECONTENT_MARKER, "");
   } catch {
     return html;
   }
@@ -179,6 +238,7 @@ const gallery = computed(() => {
 
 onMounted(() => {
   void store.init();
+  void loadCategories();
   void search();
   window.addEventListener("keydown", onViewerKey);
 });
@@ -204,6 +264,9 @@ watch(
 
 watch(page, () => void search());
 
+// 排序改成立刻生效（不用再点「刷新」）
+watch(sort, () => requery());
+
 function handleError(e: unknown) {
   message.error(shimuErrorMessage(e));
   if (String(e).includes("__shimu_expired__")) void store.refreshStatus();
@@ -212,12 +275,15 @@ function handleError(e: unknown) {
 async function search() {
   loading.value = true;
   try {
-    const res = await api.shimuListPosts({
+    const query: ShimuPostQuery = {
       keyword: keyword.value.trim() || undefined,
       sort: sort.value,
       pageNum: page.value,
       pageSize: PAGE_SIZE,
-    });
+    };
+    if (board.value === "related") query.categoryIds = relatedIds.value;
+    else if (board.value !== "all") query.categoryId = Number(board.value);
+    const res = await api.shimuListPosts(query);
     rows.value = res.rows ?? [];
     total.value = res.total ?? 0;
   } catch (e) {
@@ -229,9 +295,31 @@ async function search() {
   }
 }
 
+/** 拉取站点板块列表（失败时降级为「投影相关」兜底 ID + 全部） */
+async function loadCategories() {
+  try {
+    const list = await api.shimuCategories();
+    categories.value = Array.isArray(list) ? list.filter((c) => c?.categoryId > 0) : [];
+  } catch {
+    categories.value = [];
+  }
+}
+
 function submitSearch() {
+  requery();
+}
+
+/** 条件变化后重新查询：先回到第一页（页码的 watch 会顺带触发搜索） */
+function requery() {
   if (page.value !== 1) page.value = 1;
   else void search();
+}
+
+/** 切换板块：回到第一页重新查询 */
+function selectBoard(key: string) {
+  if (board.value === key) return;
+  board.value = key;
+  requery();
 }
 
 function openPost(post: ShimuPost) {
@@ -493,43 +581,59 @@ function paidDetailLabel(p: ShimuPost): string {
 
 <template>
   <div class="shimu-view">
-    <!-- 参数栏 + 账号区 -->
+    <!-- 参数栏 + 账号区 + 板块筛选（同一张卡，板块行只在列表态显示） -->
     <div class="glass param-bar">
-      <n-input
-        v-model:value="keyword"
-        class="search"
-        size="small"
-        clearable
-        :placeholder="t('shimu.searchPlaceholder')"
-        @keyup.enter="submitSearch"
-      />
-      <n-select v-model:value="sort" class="sort" size="small" :options="sortOptions" />
-      <button class="mini-btn" :disabled="loading" @click="submitSearch">
-        {{ t("common.refresh") }}
-      </button>
-      <span v-if="!detail" class="count">{{ t("shimu.postCount", { n: total }) }}</span>
-
-      <span class="flex-1" />
-
-      <template v-if="store.loggedIn && store.user">
-        <img
-          v-if="store.avatarUrl && !brokenImgs.has(store.avatarUrl)"
-          class="account-avatar"
-          :src="store.avatarUrl"
-          alt=""
-          @error="markBroken(store.avatarUrl)"
+      <div class="param-row">
+        <n-input
+          v-model:value="keyword"
+          class="search"
+          size="small"
+          clearable
+          :placeholder="t('shimu.searchPlaceholder')"
+          @keyup.enter="submitSearch"
         />
-        <div class="account-info">
-          <span class="account-name">{{ store.nickname }}</span>
-          <span v-if="accountMeta" class="account-meta">{{ accountMeta }}</span>
-        </div>
-        <button class="mini-btn" @click="loginRef?.open()">{{ t("shimu.reauth") }}</button>
-        <button class="mini-btn" @click="logout">{{ t("shimu.logout") }}</button>
-      </template>
-      <template v-else>
-        <span class="guest-badge">{{ t("shimu.guestBadge") }}</span>
-        <button class="mini-btn primary" @click="loginRef?.open()">{{ t("shimu.login") }}</button>
-      </template>
+        <n-select v-model:value="sort" class="sort" size="small" :options="sortOptions" />
+        <button class="mini-btn" :disabled="loading" @click="submitSearch">
+          {{ t("common.refresh") }}
+        </button>
+        <span v-if="!detail" class="count">{{ t("shimu.postCount", { n: total }) }}</span>
+
+        <span class="flex-1" />
+
+        <template v-if="store.loggedIn && store.user">
+          <img
+            v-if="store.avatarUrl && !brokenImgs.has(store.avatarUrl)"
+            class="account-avatar"
+            :src="store.avatarUrl"
+            alt=""
+            @error="markBroken(store.avatarUrl)"
+          />
+          <div class="account-info">
+            <span class="account-name">{{ store.nickname }}</span>
+            <span v-if="accountMeta" class="account-meta">{{ accountMeta }}</span>
+          </div>
+          <button class="mini-btn" @click="loginRef?.open()">{{ t("shimu.reauth") }}</button>
+          <button class="mini-btn" @click="logout">{{ t("shimu.logout") }}</button>
+        </template>
+        <template v-else>
+          <span class="guest-badge">{{ t("shimu.guestBadge") }}</span>
+          <button class="mini-btn primary" @click="loginRef?.open()">{{ t("shimu.login") }}</button>
+        </template>
+      </div>
+
+      <!-- 板块筛选：发帖人把投影帖发在哪个板块不固定，默认合并「投影相关」 -->
+      <div v-if="!detail" class="board-row">
+        <button
+          v-for="c in boardChips"
+          :key="c.key"
+          class="board-chip"
+          :class="{ active: board === c.key }"
+          :disabled="loading"
+          @click="selectBoard(c.key)"
+        >
+          {{ c.label }}
+        </button>
+      </div>
     </div>
 
     <!-- 详情 -->
@@ -611,7 +715,10 @@ function paidDetailLabel(p: ShimuPost): string {
               loading="lazy"
               @error="markBroken(coverOf(p))"
             />
-            <div v-else class="cover-ph">{{ (p.title || "?").slice(0, 1) }}</div>
+            <!-- 没有封面图就直接把标题写在占位块上（比只放首字更好认） -->
+            <div v-else class="cover-ph">
+              <span>{{ p.title?.trim() || t("shimu.untitled") }}</span>
+            </div>
             <span v-if="paidLabel(p)" class="paid-badge">{{ paidLabel(p) }}</span>
           </div>
           <div class="card-body">
@@ -663,12 +770,48 @@ function paidDetailLabel(p: ShimuPost): string {
   flex-direction: column;
   gap: var(--gap-page, 18px);
 }
-.param-bar { padding: 10px 14px; display: flex; gap: 8px; align-items: center; flex: none; }
+.param-bar {
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: none;
+}
+.param-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .search { flex: 1; min-width: 160px; max-width: 320px; }
 .sort { width: 104px; flex: none; }
 .flex-1 { flex: 1; }
 .count { font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .muted { margin: 0; font-size: 12px; color: var(--text-3); }
+
+/* —— 板块筛选（与参数栏同一张卡，用细分隔线分开） —— */
+.board-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.board-chip {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.board-chip:hover { background: var(--panel-hover); color: var(--text-1); }
+.board-chip.active {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.board-chip:disabled { opacity: 0.5; cursor: default; }
 
 /* —— 账号区 —— */
 .account-avatar { width: 26px; height: 26px; border-radius: 8px; object-fit: cover; flex: none; }
@@ -748,15 +891,28 @@ function paidDetailLabel(p: ShimuPost): string {
   overflow: hidden;
 }
 .cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* 无封面时的占位块：直接显示标题（最多 3 行、超出省略，竖向居中） */
 .cover-ph {
   width: 100%;
   height: 100%;
+  box-sizing: border-box;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 28px;
-  color: rgba(255, 255, 255, 0.92);
+  padding: 12px 14px;
   background: linear-gradient(135deg, #6b5b95, #352f44);
+}
+.cover-ph span {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+  overflow-wrap: anywhere;
+  color: rgba(255, 255, 255, 0.94);
 }
 .paid-badge {
   position: absolute;
