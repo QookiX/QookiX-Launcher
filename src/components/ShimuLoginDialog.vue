@@ -230,8 +230,8 @@ function copyRedirectUri() {
             </n-button>
           </template>
 
-          <!-- 手动完成：开发环境未注册协议，或浏览器没唤起启动器时用 -->
-          <div class="shimu-manual">
+          <!-- 手动完成：仅开发构建可见（本地未注册 qookix:// 协议时用） -->
+          <div v-if="devMode" class="shimu-manual">
             <n-input
               v-model:value="manualInput"
               size="small"

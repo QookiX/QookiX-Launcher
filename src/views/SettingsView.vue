@@ -1014,7 +1014,7 @@ onUnmounted(() => {
         <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
         <div class="nav-brand-info">
           <span class="nav-brand-name">QookiX Launcher</span>
-          <span class="nav-brand-ver">v0.12.0</span>
+          <span class="nav-brand-ver">v0.12.1</span>
         </div>
       </div>
     </div>
@@ -1774,7 +1774,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.12.0</span>
+            <span class="about-ver">v0.12.1</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
