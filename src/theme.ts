@@ -88,6 +88,7 @@ export function buildDarkOverrides(accent: string): GlobalThemeOverrides {
     },
     Card: {
       borderRadius: "14px",
+      borderColor: "transparent",
     },
     Input: {
       borderRadius: "10px",
@@ -145,6 +146,7 @@ export function buildLightOverrides(accent: string): GlobalThemeOverrides {
     },
     Card: {
       borderRadius: "14px",
+      borderColor: "transparent",
     },
     Input: {
       borderRadius: "10px",

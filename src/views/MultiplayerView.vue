@@ -886,7 +886,7 @@ onUnmounted(() => stopTcPoll());
 .mp-view {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 .mode-tabs {
   position: relative;

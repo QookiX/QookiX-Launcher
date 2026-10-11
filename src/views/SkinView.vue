@@ -854,7 +854,7 @@ onMounted(async () => {
 .skin-view {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
 }
 
 /* 预览区固定、皮肤画廊自适应列数；超宽屏下预览区再放宽一些 */

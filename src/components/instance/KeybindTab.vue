@@ -1394,7 +1394,7 @@ async function save() {
 .list-filters .mod-select :deep(.n-base-selection) {
   --n-height: 34px;
   --n-font-size: 13px;
-  --n-border-radius: 9px;
+  --n-border-radius: 10px;
   --n-color: var(--w-06);
   --n-color-active: var(--w-06);
   --n-border: 1px solid var(--border);
@@ -1515,7 +1515,7 @@ async function save() {
 .text-input {
   background: var(--w-06);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 10px;
   color: var(--text-1);
   padding: 8px 12px;
   font-size: 13px;
@@ -1586,7 +1586,7 @@ async function save() {
 .text-input {
   background: var(--w-06);
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: 10px;
   color: var(--text-1);
   padding: 8px 12px;
   font-size: 13px;

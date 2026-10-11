@@ -799,7 +799,7 @@ onMounted(async () => {
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
-  gap: 14px;
+  gap: 16px;
 }
 .grid.view-list,
 .grid.view-compact {

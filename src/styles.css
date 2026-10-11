@@ -95,7 +95,7 @@ body,
   --pad-panel: 20px 24px;
   --gap-panel: 16px;
   --gap-grid: 16px;
-  --gap-page: 18px;
+  --gap-page: 16px;
 }
 
 :root.light {
@@ -227,7 +227,6 @@ body,
 
 .glass {
   background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: 14px;
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));

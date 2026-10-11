@@ -1853,7 +1853,7 @@ onUnmounted(() => {
 .link-btn:hover { color: var(--accent); }
 
 /* —— 参数栏 —— */
-.param-bar { padding: 14px 16px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.param-bar { padding: 10px 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
 .param-bar .field { width: 128px; }
 .seed-field { flex: 1 1 180px; min-width: 180px; }
 .seed-actions { display: flex; align-items: center; gap: 6px; padding-bottom: 1px; }

@@ -69,7 +69,7 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 18px 24px;
-  margin-bottom: 20px;
+  margin-bottom: 16px;
 }
 .news-header h1 {
   font-size: 22px;

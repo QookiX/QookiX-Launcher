@@ -361,7 +361,7 @@ onMounted(() => {
 .home {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 16px;
   min-height: 100%;
 }
 .hero {
@@ -649,7 +649,7 @@ onMounted(() => {
   color: var(--text-3);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 12px;
   align-items: center;
 }
 .home-empty-actions {

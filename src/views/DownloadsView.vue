@@ -354,7 +354,7 @@ const { onEnter: onExpandEnter, onLeave: onExpandLeave } = useHeightTransition({
 .task-list {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 12px;
+  gap: 16px;
   align-items: start;
 }
 /* 宽屏：任务卡片两列排布 */

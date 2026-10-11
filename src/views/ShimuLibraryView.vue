@@ -879,6 +879,7 @@ function paidDetailLabel(p: ShimuPost): string {
   flex-direction: column;
   overflow: hidden;
   padding: 0;
+  border: none;
   border-radius: 12px;
   text-align: left;
   cursor: pointer;

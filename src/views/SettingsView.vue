@@ -990,7 +990,7 @@ onUnmounted(() => {
         <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
         <div class="nav-brand-info">
           <span class="nav-brand-name">QookiX Launcher</span>
-          <span class="nav-brand-ver">v0.14.0</span>
+          <span class="nav-brand-ver">v0.14.1</span>
         </div>
       </div>
     </div>
@@ -1750,7 +1750,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.14.0</span>
+            <span class="about-ver">v0.14.1</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
@@ -2084,7 +2084,7 @@ onUnmounted(() => {
 <style scoped>
 .settings-view {
   display: flex;
-  gap: 18px;
+  gap: 16px;
   align-items: flex-start;
 }
 .settings-side {
@@ -2103,14 +2103,13 @@ onUnmounted(() => {
   gap: 7px;
   padding: 8px 11px;
   background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: 12px;
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-  transition: border-color 0.12s;
+  transition: box-shadow 0.12s;
 }
 .nav-search-card:focus-within {
-  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent-35);
 }
 .nav-search-icon {
   width: 14px;
@@ -2133,7 +2132,6 @@ onUnmounted(() => {
 }
 .settings-nav {
   background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: 14px;
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
@@ -2255,7 +2253,6 @@ onUnmounted(() => {
   gap: 10px;
   padding: 10px 12px;
   background: var(--panel);
-  border: 1px solid var(--border);
   border-radius: 14px;
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));

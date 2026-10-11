@@ -811,7 +811,7 @@ watch(instanceId, () => {
 .nbt-view {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   padding: 4px;
 }
 .bar {
