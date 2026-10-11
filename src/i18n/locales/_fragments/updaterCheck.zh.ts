@@ -1,6 +1,7 @@
 export default {
   newVersionTitle: "发现新版本",
   newVersionContent: "QookiX Launcher 有新版本 v{version}，是否下载并安装？",
+  releaseNotes: "更新内容",
   ignoreVersion: "忽略此版本",
   later: "以后再说",
   downloadAndUpdate: "下载并更新",

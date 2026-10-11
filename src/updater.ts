@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useTasksStore } from "./stores/tasks";
 import { error as devError } from "./utils/logger";
+import changelogRaw from "../CHANGELOG.md?raw";
 
 /**
  * 应用自更新检查结果（由 Rust 端 `updater::check_for_update` 返回）。
@@ -61,8 +62,11 @@ export async function peekUpdate(strict = false): Promise<UpdateInfo | null> {
 }
 
 /**
- * Fetch the CHANGELOG.md content from the update source (China mirror first,
- * GitHub fallback). Returns the raw Markdown text, or `null` on failure.
+ * Fetch the changelog JSON from the update source (China mirror first, GitHub
+ * fallback). Returns the raw JSON text, or `null` on failure.
+ *
+ * 由 CI 的 `scripts/generate-changelog-json.mjs` 从 `CHANGELOG.md` 生成，
+ * 随 Release 一起上传为 `changelog.json`（**只含最近 5 个版本**）。
  */
 export async function fetchChangelog(): Promise<string | null> {
   try {
@@ -70,6 +74,97 @@ export async function fetchChangelog(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+/** 更新日志的一条记录（与 `changelog.json` 的字段对齐）。 */
+export interface ChangelogEntry {
+  category: string;
+  text: string;
+}
+
+/** 更新日志里的一个版本。 */
+export interface ChangelogRelease {
+  version: string;
+  date: string;
+  entries: ChangelogEntry[];
+}
+
+/**
+ * 版本号比较：按 `.` 分段数值比较（`0.10.0 > 0.9.0`，字符串比较会搞错）。
+ * 无法解析的段按 0 处理，返回 -1 / 0 / 1。
+ */
+export function compareVersions(a: string, b: string): number {
+  const pa = a.split(/[.+-]/).map((s) => Number.parseInt(s, 10) || 0);
+  const pb = b.split(/[.+-]/).map((s) => Number.parseInt(s, 10) || 0);
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i++) {
+    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
+    if (d !== 0) return d < 0 ? -1 : 1;
+  }
+  return 0;
+}
+
+/**
+ * 解析 `CHANGELOG.md`（本地兜底用）。只取 `## [版本] - 日期` 小节里的
+ * `编号. **模块**：说明` 条目，默认最多 5 个版本（与 changelog.json 对齐）。
+ */
+export function parseChangelogMarkdown(md: string, limit = 5): ChangelogRelease[] {
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const releases: ChangelogRelease[] = [];
+  let current: ChangelogRelease | null = null;
+  for (const line of lines) {
+    const heading = /^##\s+\[(.*?)\]\s*-\s*(\d{4}-\d{2}-\d{2})/.exec(line);
+    if (heading) {
+      const [, version, date] = heading;
+      if (/unreleased/i.test(version)) { current = null; continue; }
+      current = { version, date, entries: [] };
+      releases.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const entry = /^\d+[.)]\s+\*\*(.+?)\*\*[:：]\s*(.+)$/.exec(line.trim());
+    if (entry) {
+      current.entries.push({ category: entry[1].trim(), text: entry[2].trim() });
+    }
+  }
+  return releases.slice(0, limit);
+}
+
+/**
+ * 取更新日志：远端 `changelog.json` 优先（国内镜像 → GitHub），失败回退到
+ * 打进包的 `CHANGELOG.md`。两者都只含最近 5 个版本。
+ */
+export async function loadChangelogReleases(): Promise<ChangelogRelease[]> {
+  const remote = await fetchChangelog();
+  if (remote) {
+    try {
+      const parsed = JSON.parse(remote) as ChangelogRelease[];
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    } catch {
+      /* 不是合法 JSON：走本地兜底 */
+    }
+  }
+  return parseChangelogMarkdown(changelogRaw);
+}
+
+/**
+ * 取「当前版本（不含）→ 最新版本（含）」之间跨过的所有版本，按版本倒序。
+ *
+ * `releases` 通常来自 `changelog.json`（只有最近几个版本）——比它更旧的版本
+ * 拿不到就直接省略；`currentVersion` 缺失时退化为只返回最新一版。结果为空
+ * （例如当前版本比日志还新）时同样回退到最新一版，保证弹窗里总有内容。
+ */
+export function releasesInRange(
+  releases: ChangelogRelease[],
+  currentVersion: string | null | undefined,
+  latestVersion: string | null | undefined,
+): ChangelogRelease[] {
+  if (releases.length === 0) return [];
+  const latest = latestVersion ?? releases[0].version;
+  const within = releases.filter((r) => compareVersions(r.version, latest) <= 0);
+  if (!currentVersion) return within.slice(0, 1);
+  const out = within.filter((r) => compareVersions(r.version, currentVersion) > 0);
+  return out.length > 0 ? out : within.slice(0, 1);
 }
 
 /**

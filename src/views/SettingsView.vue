@@ -33,7 +33,7 @@ import {
   IconBookOpen,
   IconTerminal,
 } from "../components/icons";
-import { peekUpdate, downloadUpdate, updateReady, updateReadyVersion, fetchChangelog } from "../updater";
+import { peekUpdate, downloadUpdate, updateReady, updateReadyVersion, loadChangelogReleases, releasesInRange, type ChangelogRelease } from "../updater";
 import type { JavaInfo, MirrorPreset, StorageStats } from "../types";
 import devWeimoshengUrl from "../assets/dev-weimosheng.jpg";
 import devZhayiUrl from "../assets/dev-zhayi.jpg";
@@ -45,7 +45,6 @@ import { IconCloud } from "../components/icons";
 import { error as devError } from "../utils/logger";
 import { useI18n } from "vue-i18n";
 import { SUPPORTED_LOCALES } from "../i18n";
-import changelogRaw from "../../CHANGELOG.md?raw";
 import { titlebarThemeToggle } from "../composables/useDevFlags";
 
 const settings = useSettingsStore();
@@ -81,10 +80,9 @@ const cloudOpen = ref(false);
 const cloudAccount = ref("");
 const cloudRepo = ref("");
 const updateVersion = ref<string | null>(null);
+/** 发起检查时的当前版本：用于算出「当前 → 最新」之间要展示哪些版本 */
+const updateCurrentVersion = ref<string | null>(null);
 const updateModalVisible = ref(false);
-
-interface ChangelogEntry { category: string; text: string; }
-interface ChangelogRelease { version: string; date: string; entries: ChangelogEntry[]; }
 
 const changelogReleases = ref<ChangelogRelease[]>([]);
 const changelogLoading = ref(true);
@@ -109,28 +107,6 @@ function testUpdateModal() {
   updateModalVisible.value = true;
 }
 
-function parseChangelog(md: string): ChangelogRelease[] {
-  const lines = md.replace(/\r\n/g, "\n").split("\n");
-  const releases: ChangelogRelease[] = [];
-  let current: ChangelogRelease | null = null;
-  for (const line of lines) {
-    const heading = /^##\s+\[(.*?)\]\s*-\s*(\d{4}-\d{2}-\d{2})/.exec(line);
-    if (heading) {
-      const [, version, date] = heading;
-      if (/unreleased/i.test(version)) { current = null; continue; }
-      current = { version, date, entries: [] };
-      releases.push(current);
-      continue;
-    }
-    if (!current) continue;
-    const entry = /^\d+[.)]\s+\*\*(.+?)\*\*[:：]\s*(.+)$/.exec(line.trim());
-    if (entry) {
-      current.entries.push({ category: entry[1].trim(), text: entry[2].trim() });
-    }
-  }
-  return releases.slice(0, 5);
-}
-
 function entryTypeClass(text: string): string {
   if (/修复|修正|解决|补回/.test(text)) return "cat-fix";
   if (/新增|添加|增加|支持|接入/.test(text)) return "cat-feature";
@@ -139,7 +115,13 @@ function entryTypeClass(text: string): string {
   return "cat-other";
 }
 
-const updateLatestEntries = computed(() => changelogReleases.value[0]?.entries ?? []);
+/**
+ * 「检查更新」弹窗里展示的更新内容：当前版本 → 最新版本之间跨过的所有版本
+ * （受 changelog.json 自身覆盖范围限制，更旧的版本拿不到就省略）。
+ */
+const updateNotes = computed(() =>
+  releasesInRange(changelogReleases.value, updateCurrentVersion.value, updateVersion.value)
+);
 
 function toggleVersion(version: string) {
   const s = new Set(expandedVersions.value);
@@ -150,16 +132,7 @@ function toggleVersion(version: string) {
 
 async function loadChangelog() {
   changelogLoading.value = true;
-  const remote = await fetchChangelog();
-  if (remote) {
-    try {
-      changelogReleases.value = JSON.parse(remote) as ChangelogRelease[];
-    } catch {
-      changelogReleases.value = parseChangelog(changelogRaw);
-    }
-  } else {
-    changelogReleases.value = parseChangelog(changelogRaw);
-  }
+  changelogReleases.value = await loadChangelogReleases();
   if (changelogReleases.value.length > 0) {
     expandedVersions.value = new Set([changelogReleases.value[0].version]);
   }
@@ -211,6 +184,9 @@ async function checkUpdate() {
       return;
     }
     updateVersion.value = update.version;
+    updateCurrentVersion.value = update.currentVersion;
+    // 更早版本可能还没加载完（首屏就点检查更新）：先补上再算跨度
+    if (changelogReleases.value.length === 0) await loadChangelog();
     // 该版本已经下载好、只等重启：不必再弹一次下载确认框
     if (updateReady.value && updateReadyVersion.value === update.version) {
       message.info(t("settings.update.downloadedRestart", { version: update.version }));
@@ -1014,7 +990,7 @@ onUnmounted(() => {
         <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
         <div class="nav-brand-info">
           <span class="nav-brand-name">QookiX Launcher</span>
-          <span class="nav-brand-ver">v0.12.1</span>
+          <span class="nav-brand-ver">v0.13.0</span>
         </div>
       </div>
     </div>
@@ -1774,7 +1750,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.12.1</span>
+            <span class="about-ver">v0.13.0</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
@@ -2018,13 +1994,18 @@ onUnmounted(() => {
     <n-modal v-model:show="updateModalVisible" preset="card" :title="t('settings.update.newVersionFound')" class="update-modal" :style="{ width: '420px', maxWidth: '90vw' }">
       <div class="update-modal-body">
         <p class="update-modal-ver">{{ t("settings.update.newVersionContent", { version: updateVersion }) }}</p>
-        <div v-if="updateLatestEntries.length" class="update-modal-notes">
+        <div v-if="updateNotes.length" class="update-modal-notes">
           <h4 class="update-notes-title">{{ t("settings.update.releaseNotes") }}</h4>
           <div class="cl-entry-list">
-            <div v-for="(e, i) in updateLatestEntries" :key="i" class="cl-entry">
-              <span class="cl-tag" :class="entryTypeClass(e.text)">{{ e.category }}</span>
-              <span class="cl-text">{{ e.text }}</span>
-            </div>
+            <template v-for="r in updateNotes" :key="r.version">
+              <div class="update-notes-ver">
+                v{{ r.version }}<span class="update-notes-date">{{ r.date }}</span>
+              </div>
+              <div v-for="(e, i) in r.entries" :key="i" class="cl-entry">
+                <span class="cl-tag" :class="entryTypeClass(e.text)">{{ e.category }}</span>
+                <span class="cl-text">{{ e.text }}</span>
+              </div>
+            </template>
           </div>
         </div>
         <div class="update-modal-actions">
@@ -3566,6 +3547,24 @@ textarea.text-input {
   font-size: 13px;
   font-weight: 700;
   color: var(--text-1);
+}
+/* 跨版本更新：每个版本一个小标题，条目列在下面 */
+.update-notes-ver {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 12px 0 6px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text-2);
+}
+.update-notes-ver:first-child {
+  margin-top: 0;
+}
+.update-notes-date {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-3);
 }
 .update-modal-actions {
   display: flex;
