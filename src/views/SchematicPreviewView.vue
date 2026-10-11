@@ -3,8 +3,11 @@ import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
+import { useRoute, useRouter } from "vue-router";
 import { NPopover, NModal } from "naive-ui";
 import { IconFolder, IconClock } from "../components/icons";
+import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
+import { useShimuStore } from "../stores/shimu";
 import {
   loadSchematicResources,
   type SchematicResources,
@@ -19,6 +22,28 @@ import {
 import { createSchematicWorkerPool, type SchematicWorkerPool } from "../composables/useSchematicWorkerPool";
 
 const { t } = useI18n();
+
+// 拾木空间（投影帖子来源）：账号弹窗 + 独立的投影库页面
+const shimu = useShimuStore();
+const shimuLoginRef = ref<InstanceType<typeof ShimuLoginDialog> | null>(null);
+const route = useRoute();
+const router = useRouter();
+
+/** 打开拾木空间投影库（独立页面；浏览不需要登录） */
+function openShimuLibrary() {
+  void router.push("/toolbox/shimu");
+}
+
+/**
+ * 投影库下载完会带着 `?open=<本地路径>` 跳回来，这里直接打开预览；
+ * 打开后立即清掉 query，避免刷新 / 前进后退时重复解析同一个文件。
+ */
+async function openFromQuery() {
+  const p = route.query.open;
+  if (typeof p !== "string" || !p) return;
+  void router.replace({ path: route.path, query: {} });
+  await openSchematic({ kind: "external", path: p });
+}
 
 interface PreviewManifest {
   sessionId: string;
@@ -284,7 +309,17 @@ watch(layerY, (y) => {
 onMounted(() => {
   loadRecent();
   setupResizeObserver();
+  void shimu.init();
+  void openFromQuery();
 });
+
+// 页面已经开着时（例如从投影库返回）再收到 ?open= 也能打开
+watch(
+  () => route.query.open,
+  (v) => {
+    if (v) void openFromQuery();
+  }
+);
 
 onUnmounted(() => {
   resizeObserver?.disconnect();
@@ -327,6 +362,20 @@ onUnmounted(() => {
           </button>
         </div>
       </NPopover>
+
+      <!-- 拾木空间：账号 + 站内投影库（帖子都是投影，付费帖走出券接口） -->
+      <span class="param-sep" />
+      <button
+        class="mini-btn"
+        :class="{ primary: shimu.loggedIn }"
+        @click="shimuLoginRef?.open()"
+        :title="t('shimu.accountTitle')"
+      >
+        {{ shimu.loggedIn ? shimu.nickname || t("shimu.title") : t("shimu.login") }}
+      </button>
+      <button class="mini-btn primary" @click="openShimuLibrary" :disabled="loading">
+        {{ t("shimu.libraryTitle") }}
+      </button>
     </div>
 
     <div v-if="error" class="error glass">{{ error }}</div>
@@ -436,6 +485,9 @@ onUnmounted(() => {
       </div>
     </NModal>
 
+    <!-- 拾木空间账号（投影库是独立页面 /toolbox/shimu） -->
+    <ShimuLoginDialog ref="shimuLoginRef" />
+
     <!-- 空状态：最近打开 -->
     <div v-if="!manifest && !loading && !error" class="empty-state glass">
       <div v-if="recentFiles.length" class="recent-grid">
@@ -487,6 +539,8 @@ onUnmounted(() => {
 .mini-btn.primary { border-color: var(--accent); color: var(--accent); }
 .mini-btn.primary:hover { background: var(--accent-soft); }
 .mini-btn svg { font-size: 14px; }
+/* 参数栏内的分组分隔（本地文件操作 | 拾木空间） */
+.param-sep { width: 1px; align-self: stretch; background: var(--border); }
 .link-btn { padding: 0; border: none; background: none; color: var(--text-3); font-size: 12px; cursor: pointer; }
 .link-btn:hover { color: var(--accent); }
 

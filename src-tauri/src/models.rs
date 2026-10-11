@@ -68,6 +68,14 @@ pub struct Settings {
     pub keep_open: bool,
     /// Microsoft OAuth application (client) id used for sign-in
     pub ms_client_id: String,
+    /// 拾木空间（mcimg）OAuth 应用 ID。空则回退到 SHIMU_CLIENT_ID 编译期常量。
+    /// 非敏感（OAuth 授权页地址里本就会带上），可以下发给前端。
+    #[serde(default)]
+    pub shimu_client_id: String,
+    /// 拾木空间 OAuth 应用密钥，**仅用于后端换 token**。
+    /// 敏感：下发给前端前必须过 `settings::frontend_view`。
+    #[serde(default)]
+    pub shimu_client_secret: Option<String>,
     /// Currently selected account (uuid) used when an instance has no override
     pub selected_account: Option<String>,
     /// 下载代理模式："system"（系统代理，默认）| "direct"（直连）| "custom"（自定义）
@@ -139,6 +147,8 @@ impl Default for Settings {
             auto_launch: false,
             keep_open: true,
             ms_client_id: "00000000-0000-0000-0000-000000000000".into(),
+            shimu_client_id: String::new(),
+            shimu_client_secret: None,
             selected_account: None,
             proxy_mode: "system".into(),
             proxy: None,

@@ -30,6 +30,7 @@ export default {
   importModpackSubDesc: "导入后将自动创建对应版本与加载器的实例，并把模组等文件放入其中。",
   importing: "导入中…",
   selectModpackFile: "选择整合包文件",
+  dropModpackHint: "也可以把 .mrpack / .zip 文件拖到窗口任意位置导入",
   importMcTitle: "导入 .minecraft 游戏文件夹",
   importMcDesc: "选择已有的游戏目录（PCL2 / HMCL 等），将其存档、模组、配置等迁移到新实例",
   gameFolder: "游戏文件夹",

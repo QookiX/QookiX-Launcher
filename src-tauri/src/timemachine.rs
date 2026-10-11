@@ -1093,6 +1093,61 @@ pub async fn list_all(state: &AppState) -> Result<Value, String> {
         }
     }
 
+    // ---- 游戏截图文件夹（.minecraft/screenshots）----
+    // 时光机只捕获它触发的那几张；玩家手动 F2 截的图也值得出现在时间轴上。
+    // 按文件修改时间去重：若某张截图的修改时间与已有条目（同一实例）在 5 秒内，
+    // 认为是同一次截图（时光机已复制），不再重复列。
+    for inst in crate::instances::load_instances(state) {
+        let shots_folder = state.instances_dir().join(&inst.id).join("screenshots");
+        let Ok(rd) = std::fs::read_dir(&shots_folder) else {
+            continue;
+        };
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("png") {
+                continue;
+            }
+            let Ok(m) = p.metadata() else {
+                continue;
+            };
+            let Ok(mt) = m.modified() else {
+                continue;
+            };
+            let created_at = mt
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            if created_at == 0 {
+                continue;
+            }
+            let dup = items.iter().any(|it| {
+                it.get("instanceId").and_then(|v| v.as_str()) == Some(inst.id.as_str())
+                    && (it.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(0) as i64
+                        - created_at as i64)
+                        .abs() <= 5
+            });
+            if dup {
+                continue;
+            }
+            let file = p
+                .file_name()
+                .map(|s| s.to_string_lossy().to_string())
+                .unwrap_or_default();
+            items.push(json!({
+                "id": format!("game:{}:{}", inst.id, file),
+                "instanceId": inst.id,
+                "file": file,
+                "trigger": "game",
+                "createdAt": created_at,
+                "logSnippet": Value::Null,
+                "uploaded": false,
+                "localPath": p.to_string_lossy(),
+                "releaseId": 0,
+                "assetId": 0,
+            }));
+        }
+    }
+
     items.sort_by(|a, b| {
         let ta = a.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(0);
         let tb = b.get("createdAt").and_then(|v| v.as_u64()).unwrap_or(0);
@@ -1214,12 +1269,23 @@ pub async fn delete_shot(
     asset_id: u64,
 ) -> Result<(), String> {
     if !instance_id.is_empty() && !file.is_empty() {
-        let _ = std::fs::remove_file(shots_dir(state, instance_id).join(file));
-        let left: Vec<LocalShot> = load_index(state, instance_id)
-            .into_iter()
-            .filter(|s| s.file != file)
-            .collect();
-        save_index(state, instance_id, &left)?;
+        let tm_path = shots_dir(state, instance_id).join(file);
+        if tm_path.exists() {
+            let _ = std::fs::remove_file(&tm_path);
+            let left: Vec<LocalShot> = load_index(state, instance_id)
+                .into_iter()
+                .filter(|s| s.file != file)
+                .collect();
+            save_index(state, instance_id, &left)?;
+        } else {
+            // 不在时光机副本目录 → 游戏截图文件夹里的原图（trigger=game）
+            let game_path = state
+                .instances_dir()
+                .join(instance_id)
+                .join("screenshots")
+                .join(file);
+            let _ = std::fs::remove_file(&game_path);
+        }
     }
     // 云端：只删这一张附件；这一批里没别的图了就顺手删掉 Release，别在仓库里留空壳
     if release_id > 0 && asset_id > 0 {

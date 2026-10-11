@@ -173,3 +173,29 @@ pub struct DownloadProgress {
     pub downloaded: u64,
     pub total: Option<u64>,
 }
+
+/// 根据更新源拼接 changelog.json 地址。
+fn changelog_url(source: &str) -> Result<String, String> {
+    match source {
+        SOURCE_GITHUB => Ok(format!("{}/changelog.json", github_base())),
+        _ => Ok(format!("{}/changelog.json", bucket_base())),
+    }
+}
+
+/// 获取 CHANGELOG.md 内容：优先国内镜像，失败回退 GitHub 官方源。
+#[tauri::command]
+pub async fn fetch_changelog(
+    state: tauri::State<'_, AppState>,
+) -> Result<String, String> {
+    for source in [SOURCE_BUCKET, SOURCE_GITHUB] {
+        let url = match changelog_url(source) {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
+        match crate::download::get_text(&state.client, &url).await {
+            Ok(text) => return Ok(text),
+            Err(_) => continue,
+        }
+    }
+    Err("获取更新日志失败".into())
+}

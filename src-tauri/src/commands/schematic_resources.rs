@@ -101,12 +101,18 @@ fn find_latest_version(versions_dir: &Path) -> Result<(String, PathBuf), String>
     }
 }
 
+/// 资源缓存格式版本：提取逻辑变化（新增索引 / 换图集布局 / 改填充）时递增。
+///
+/// ⚠️ 写入与校验必须用这同一个常量：此前写入端写 `v4-trns-alpha`、校验端读
+/// `v7-atlas-pad`，两边对不上 → `is_cache_complete` 永远是 false，缓存目录每次
+/// 都被删掉重新解包客户端 jar（打开投影白等几秒）。
+const RESOURCE_CACHE_VERSION: &str = "v7-atlas-pad";
+
 /// 检查缓存目录是否已有完整资源。
 fn is_cache_complete(cache_dir: &Path) -> bool {
-    const CACHE_VERSION: &str = "v7-atlas-pad";
     let version_file = cache_dir.join("cache-version.txt");
     match std::fs::read_to_string(&version_file) {
-        Ok(v) if v.trim() == CACHE_VERSION => {}
+        Ok(v) if v.trim() == RESOURCE_CACHE_VERSION => {}
         _ => return false,
     }
     let files: &[(&str, u64)] = &[
@@ -267,7 +273,7 @@ fn extract_resources_from_jar(jar_path: &Path, cache_dir: &Path) -> Result<(), S
     std::fs::write(cache_dir.join("block-name-index.json"), names_json)
         .map_err(|e| format!("写入方块名称索引失败: {e}"))?;
 
-    std::fs::write(cache_dir.join("cache-version.txt"), "v4-trns-alpha")
+    std::fs::write(cache_dir.join("cache-version.txt"), RESOURCE_CACHE_VERSION)
         .map_err(|e| format!("写入缓存版本失败: {e}"))?;
 
     Ok(())

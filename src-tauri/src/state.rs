@@ -1,4 +1,5 @@
 use crate::models::Settings;
+use crate::shimu::ShimuAuth;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -26,6 +27,8 @@ pub struct AppState {
     pub install_cancel: Arc<AtomicBool>,
     /// Pending Microsoft device-code flow (if any)
     pub ms_flow: Arc<Mutex<Option<crate::models::MsFlow>>>,
+    /// 拾木空间（mcimg）OAuth 登录态：待校验 state + access_token + 用户资料
+    pub shimu: Mutex<ShimuAuth>,
     /// Cached Java detection results (unix seconds, list)
     pub java_cache: Mutex<Option<(u64, Vec<crate::models::JavaInfo>)>>,
     /// Currently running Terracotta (陶瓦联机) session, if any

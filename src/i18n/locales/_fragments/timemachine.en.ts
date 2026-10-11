@@ -122,5 +122,6 @@ export default {
     manual: "Manual",
     custom: "Custom",
     batch: "Batch",
+    game: "In-game",
   },
 };

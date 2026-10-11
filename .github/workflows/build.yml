@@ -143,6 +143,9 @@ jobs:
         env:
           MS_CLIENT_ID: ${{ secrets.MS_CLIENT_ID }}
           CURSEFORGE_API_KEY: ${{ secrets.CURSEFORGE_API_KEY }}
+          # 拾木空间（投影库）OAuth 凭证：编译期注入，正式包里不留用户可填入口
+          SHIMU_CLIENT_ID: ${{ secrets.SHIMU_CLIENT_ID }}
+          SHIMU_CLIENT_SECRET: ${{ secrets.SHIMU_CLIENT_SECRET }}
           QOOKIX_CERT_PFX: ${{ runner.temp }}/qookix.pfx
           QOOKIX_CERT_PASSWORD: ${{ secrets.QOOKIX_CERT_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -227,6 +230,10 @@ jobs:
       - name: Generate release notes (changelog + download table)
         run: |
           node scripts/generate-release-notes.mjs release "${GITHUB_REF_NAME}" body.md CHANGELOG.md
+
+      - name: Generate structured changelog JSON
+        run: |
+          node scripts/generate-changelog-json.mjs CHANGELOG.md release/changelog.json 5
 
       - name: Publish to GitHub Release
         uses: softprops/action-gh-release@v2

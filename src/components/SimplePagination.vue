@@ -97,7 +97,9 @@ function go(p: number) {
   padding: 0 6px;
   border: 1px solid var(--border);
   border-radius: 7px;
-  background: var(--w-04);
+  /* --panel / --panel-hover 深浅色都有定义（--w-* 只在深色主题给了值，
+     浅色下按钮会没有底色） */
+  background: var(--panel);
   color: var(--text-2);
   font-size: 13px;
   font-weight: 600;
@@ -109,7 +111,7 @@ function go(p: number) {
   transition: all 0.12s;
 }
 .sp-btn:hover:not(:disabled):not(.active) {
-  background: var(--w-08);
+  background: var(--panel-hover);
   color: var(--text-1);
 }
 .sp-btn.active {

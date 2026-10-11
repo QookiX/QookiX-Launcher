@@ -11,6 +11,7 @@ import CrashDialog from "./components/CrashDialog.vue";
 import CloseConfirmDialog from "./components/CloseConfirmDialog.vue";
 import UpdaterCheck from "./components/UpdaterCheck.vue";
 import SplashScreen from "./components/SplashScreen.vue";
+import ModpackDropOverlay from "./components/ModpackDropOverlay.vue";
 import { transitionName } from "./composables/usePageTransition";
 import { useSettingsStore } from "./stores/settings";
 import { initDeepLink } from "./composables/deepLink";
@@ -217,6 +218,7 @@ onBeforeUnmount(() => {
                 <CrashDialog />
                 <CloseConfirmDialog />
                 <UpdaterCheck />
+                <ModpackDropOverlay />
                 <SplashScreen :progress="bootProgress" :status="bootStatus" :done="booted" />
               </n-notification-provider>
           </n-message-provider>

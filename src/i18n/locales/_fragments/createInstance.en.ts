@@ -30,6 +30,7 @@ export default {
   importModpackSubDesc: "After importing, an instance with the matching version and loader will be created automatically, and mods and other files will be placed inside.",
   importing: "Importing…",
   selectModpackFile: "Select modpack file",
+  dropModpackHint: "You can also drag & drop a .mrpack / .zip anywhere in the window",
   importMcTitle: "Import .minecraft folder",
   importMcDesc: "Select an existing game directory (PCL2 / HMCL, etc.) and migrate its saves, mods, configs and more into a new instance",
   gameFolder: "Game folder",

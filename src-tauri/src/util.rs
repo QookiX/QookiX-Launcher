@@ -273,17 +273,6 @@ pub fn extract_zip_strip(path: &Path, dest: &Path, strip: &str, skip_prefixes: &
     extract_zip_inner(path, dest, skip_prefixes, Some(strip), None)
 }
 
-/// Like `extract_zip`, but reports `(done, total)` through `on_file`
-/// as files are written (used for install-phase progress).
-pub fn extract_zip_progress(
-    path: &Path,
-    dest: &Path,
-    skip_prefixes: &[&str],
-    on_file: &mut dyn FnMut(usize, usize),
-) -> Result<usize, String> {
-    extract_zip_inner(path, dest, skip_prefixes, None, Some(on_file))
-}
-
 fn extract_zip_inner(
     path: &Path,
     dest: &Path,

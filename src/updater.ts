@@ -61,6 +61,18 @@ export async function peekUpdate(strict = false): Promise<UpdateInfo | null> {
 }
 
 /**
+ * Fetch the CHANGELOG.md content from the update source (China mirror first,
+ * GitHub fallback). Returns the raw Markdown text, or `null` on failure.
+ */
+export async function fetchChangelog(): Promise<string | null> {
+  try {
+    return await invoke<string>("fetch_changelog");
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Download the pending update from the selected source **without installing
  * it**. The download+signature-check happen on the Rust side, which streams
  * progress back through the `update://progress` event.

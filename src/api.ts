@@ -31,6 +31,13 @@ import type {
   PlayerData,
   ItemSlot,
   Settings,
+  ShimuConfig,
+  ShimuDownloadResult,
+  ShimuPage,
+  ShimuPost,
+  ShimuPostQuery,
+  ShimuStatus,
+  ShimuUser,
   StorageStats,
   TerracottaInfo,
   TerracottaLaunch,
@@ -786,6 +793,61 @@ export const api = {
       "yggdrasil_textures",
       { server, profileId }
     ),
+
+  // ---------------------------------------------------------------
+  // 拾木空间（www.mcimg.com）OAuth 授权登录 + 开放 API
+  // client_secret 只在 Rust 侧使用，前端只拿到「配没配」
+  // ---------------------------------------------------------------
+  shimuConfig: () => invoke<ShimuConfig>("shimu_config"),
+  /** 写入 client_id / client_secret（secret 留空表示保持原值不变） */
+  shimuSetCredentials: (clientId: string, clientSecret?: string) =>
+    invoke<ShimuConfig>("shimu_set_credentials", { clientId, clientSecret }),
+  /** 第一步：生成授权页地址（用系统浏览器打开） */
+  shimuOauthStart: () =>
+    invoke<{ url: string; state: string; redirectUri: string }>("shimu_oauth_start"),
+  /** 第三步：授权码换 access_token（拿 state 校验回调来源） */
+  shimuOauthComplete: (code: string, state: string) =>
+    invoke<{ user: ShimuUser | null; expiresAt: number; expiresIn: number }>(
+      "shimu_oauth_complete",
+      { code, state },
+      { net: true }
+    ),
+  shimuStatus: () => invoke<ShimuStatus>("shimu_status"),
+  shimuUserInfo: () => invoke<ShimuUser>("shimu_user_info", undefined, { net: true }),
+  shimuLogout: () => invoke<void>("shimu_logout"),
+  /** 帖子列表（帖子基本都是投影） */
+  shimuListPosts: (query: ShimuPostQuery) =>
+    invoke<ShimuPage<ShimuPost>>("shimu_list_posts", { query }, { net: true }),
+  shimuPostDetail: (postId: number) =>
+    invoke<Record<string, unknown>>("shimu_post_detail", { postId }, { net: true }),
+  shimuHotPosts: (limit?: number) =>
+    invoke<ShimuPost[]>("shimu_hot_posts", { limit }, { net: true }),
+  shimuFeaturedPosts: () => invoke<ShimuPost[]>("shimu_featured_posts", undefined, { net: true }),
+  shimuMyCollects: (pageNum = 1, pageSize = 20) =>
+    invoke<ShimuPage<ShimuPost>>("shimu_my_collects", { pageNum, pageSize }, { net: true }),
+  /** 是否已购买帖子 / 资源 */
+  shimuCheckEntitlement: (bizType: "POST" | "DOWNLOAD", bizId: number) =>
+    invoke<{ code: number; entitled: boolean }>(
+      "shimu_check_entitlement",
+      { bizType, bizId },
+      { net: true }
+    ),
+  /** 付费下载：自动扣余额/积分并给作者分成 */
+  shimuPurchaseDownload: (fileId: number) =>
+    invoke<{ code: number; msg?: string; data?: unknown }>(
+      "shimu_purchase_download",
+      { fileId },
+      { net: true }
+    ),
+  shimuMyOrders: (bizType?: string, pageNum = 1, pageSize = 20) =>
+    invoke<ShimuPage<Record<string, unknown>>>(
+      "shimu_my_orders",
+      { bizType, pageNum, pageSize },
+      { net: true }
+    ),
+  /** 下载附件到数据目录（付费资源自动先购买），返回本地路径 */
+  shimuDownloadFile: (url: string, fileName?: string, fileId?: number) =>
+    invoke<ShimuDownloadResult>("shimu_download_file", { url, fileName, fileId }),
   /** 正文：translate=false 仅拉原文，true 时翻译（内置服务仅 Modrinth） */
   translateBody: (provider: string, slug: string, translate: boolean) =>
     invoke<{

@@ -191,6 +191,133 @@ export type Account =
   server_name: string;
   };
 
+// ---------------------------------------------------------------------------
+// 拾木空间（www.mcimg.com）第三方接入：OAuth 授权登录 + 开放 API
+// ---------------------------------------------------------------------------
+
+/** 后端接入配置（client_secret 不会下发到前端） */
+export interface ShimuConfig {
+  host: string;
+  base: string;
+  authorizeUrl: string;
+  /** 已登记的回调地址（qookix://oauth/callback） */
+  redirectUri: string;
+  scope: string;
+  clientId: string;
+  /** client_id 是否已配置 */
+  configured: boolean;
+  /** client_secret 是否已配置（只返回真假，不回传密钥） */
+  secretConfigured: boolean;
+  /** 开发构建才为 true：只有开发/联调时提供「接入设置」入口 */
+  devMode: boolean;
+  /** 下载的投影文件存放目录 */
+  downloadDir: string;
+}
+
+/** `getInfo` 返回的用户资料（字段以服务端为准，未给出的为可选） */
+export interface ShimuUser {
+  userId?: number;
+  userName?: string;
+  nickName?: string;
+  avatar?: string;
+  signature?: string;
+  /** 积分 */
+  score?: number;
+  /** 余额（元） */
+  balance?: number;
+  /** 0 非会员 / 1 普通会员 / 2 高级会员 */
+  memberLevel?: number;
+  memberName?: string;
+  /** null 表示长期 */
+  vipExpireTime?: string | null;
+  /**
+   * 我的世界 UUID（去连字符小写）。
+   * ⚠️ 仅作资料展示/识别用：拾木空间账号不能当启动账号，也不得以它当作
+   * 通过 Minecraft 正版验证的身份（不得用于绕过正版验证的外置登录）。
+   */
+  mcUuid?: string;
+  /** 皮肤 / 披风相对路径（拼 HOST 访问） */
+  skin?: string;
+  cape?: string;
+  title?: string;
+  exp?: number;
+  level?: number;
+}
+
+export interface ShimuStatus {
+  loggedIn: boolean;
+  /** 本地判定已过期（access_token 有效期 3 天且无 refresh_token） */
+  expired: boolean;
+  expiresAt: number;
+  user: ShimuUser | null;
+}
+
+/** 帖子对象（列表 / 详情共用，付费字段为字符串 "0"/"1"） */
+export interface ShimuPost {
+  postId: number;
+  title?: string;
+  /** 富文本 HTML；付费帖未购买时为空 */
+  content?: string;
+  summary?: string;
+  cover?: string;
+  images?: string;
+  userId?: number;
+  authorName?: string;
+  authorAvatar?: string;
+  authorMemberLevel?: number;
+  categoryId?: number;
+  categoryName?: string;
+  tagNames?: string | null;
+  isFeatured?: string;
+  isTop?: string;
+  viewCount?: number;
+  likeCount?: number;
+  commentCount?: number;
+  collectCount?: number;
+  /** 0 免费 / 1 付费 */
+  isPaid?: string;
+  /** 0 余额 / 1 积分（免费帖为 null） */
+  payType?: string | null;
+  payAmount?: number | null;
+  /** 0 内容付费 / 1 文件下载付费 */
+  payTarget?: string;
+  liked?: boolean;
+  collected?: boolean;
+  purchased?: boolean;
+  commented?: boolean;
+  createTime?: string;
+}
+
+/** 分页返回（`total` + `rows`） */
+export interface ShimuPage<T> {
+  code: number;
+  msg?: string;
+  total: number;
+  rows: T[];
+}
+
+export interface ShimuPostQuery {
+  categoryId?: number;
+  versionId?: number;
+  tagId?: number;
+  userId?: number;
+  title?: string;
+  keyword?: string;
+  searchType?: "all" | "content" | "author";
+  isFeatured?: string;
+  isTop?: string;
+  sort?: "hot" | "new" | "featured";
+  pageNum?: number;
+  pageSize?: number;
+}
+
+/** 下载完成的附件（`path` 可直接交给投影预览打开） */
+export interface ShimuDownloadResult {
+  path: string;
+  name: string;
+  size: number;
+}
+
 export interface ProjectHit {
   /** spigot 来源仅用于展示/翻译，不支持程序化安装 */
   provider: "modrinth" | "curseforge" | "spigot";

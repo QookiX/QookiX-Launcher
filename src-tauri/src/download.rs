@@ -730,6 +730,7 @@ mod diag {
                 task_counter: std::sync::atomic::AtomicU64::new(1),
                 install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 ms_flow: Arc::new(Mutex::new(None)),
+                shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
                 java_cache: Mutex::new(None),
                 terracotta: Mutex::new(None),
                 pending_update: Mutex::new(None),

@@ -35,6 +35,7 @@ import downloads from "./_fragments/downloads.zh";
 import skinZh from "./_fragments/skin.zh";
 import newsZh from "./_fragments/news.zh";
 import toolboxZh from "./_fragments/toolbox.zh";
+import shimuZh from "./_fragments/shimu.zh";
 import seedMapZh from "./_fragments/seedMap.zh";
 import settingsZh from "./_fragments/settings.zh";
 import nbtZh from "./_fragments/nbt.zh";
@@ -58,6 +59,8 @@ export default {
     loading: "加载中…",
     retry: "重试",
     ok: "确定",
+    on: "开",
+    off: "关",
   },
   nav: {
     home: "首页",
@@ -116,6 +119,8 @@ export default {
     newGroup: "新建分组",
     createServer: "创建服务器",
     clearFinished: "清除已完成",
+    switchDark: "切换到深色模式",
+    switchLight: "切换到浅色模式",
   },
   settings: {
     ...settingsZh,
@@ -137,6 +142,13 @@ export default {
     readingData: "读取实例与账号…",
     initTasks: "初始化任务系统…",
     almostReady: "即将就绪…",
+  },
+  drop: {
+    overlayTitle: "松开鼠标导入整合包",
+    overlayDesc: "即将导入「{name}」",
+    confirmTitle: "导入整合包",
+    confirmContent: "检测到拖入的整合包文件「{name}」，是否立即导入？",
+    confirmImport: "导入",
   },
   onboardingBar,
   accountChip,
@@ -170,6 +182,7 @@ export default {
   ...skinZh,
   ...newsZh,
   ...toolboxZh,
+  ...shimuZh,
   ...seedMapZh,
   keybind,
   timemachine,

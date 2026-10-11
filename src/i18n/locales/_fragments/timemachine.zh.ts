@@ -120,5 +120,6 @@ export default {
     manual: "手动",
     custom: "自定义",
     batch: "批量",
+    game: "游戏截图",
   },
 };

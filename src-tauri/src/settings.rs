@@ -118,7 +118,7 @@ pub fn persist(state: &AppState) -> Result<(), String> {
 ///
 /// 命令返回值在前端 DevTools 里一条 `await api.getSettings()` 就能拿到，
 /// 所以 API Key 这类东西绝不能出现在 `get_settings` / `set_settings` 的返回体里。
-const SECRET_FIELDS: [&str; 2] = ["curseforge_api_key", "translate_api_key"];
+const SECRET_FIELDS: [&str; 3] = ["curseforge_api_key", "translate_api_key", "shimu_client_secret"];
 
 /// 给前端的设置视图：敏感字段替换成「是否已配置 + 掩码尾号」。
 ///
@@ -241,6 +241,13 @@ pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Set
         if !v.trim().is_empty() {
             settings.ms_client_id = v.trim().to_string();
         }
+    }
+    // 拾木空间 OAuth 凭证：client_id 非敏感可直接回传，client_secret 走 set_secret
+    if let Some(v) = patch.get("shimu_client_id").and_then(|v| v.as_str()) {
+        settings.shimu_client_id = v.trim().to_string();
+    }
+    if let Some(v) = patch.get("shimu_client_secret") {
+        set_secret(&mut settings.shimu_client_secret, v);
     }
     if let Some(v) = patch.get("selected_account") {
         settings.selected_account = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());

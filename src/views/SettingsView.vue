@@ -1,8 +1,8 @@
 ﻿<script setup lang="ts">
-import { computed, h, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fmtMem, fmtSize, fmtTime } from "../utils/format";
 import { useRouter } from "vue-router";
-import { NButton, NModal, NSelect, NSlider, NTooltip, useMessage, useDialog } from "naive-ui";
+import { NModal, NSelect, NSlider, NTooltip, useMessage, useDialog } from "naive-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
@@ -31,8 +31,9 @@ import {
   IconSliders,
   IconTrash,
   IconBookOpen,
+  IconTerminal,
 } from "../components/icons";
-import { peekUpdate, downloadUpdate, updateReady, updateReadyVersion } from "../updater";
+import { peekUpdate, downloadUpdate, updateReady, updateReadyVersion, fetchChangelog } from "../updater";
 import type { JavaInfo, MirrorPreset, StorageStats } from "../types";
 import devWeimoshengUrl from "../assets/dev-weimosheng.jpg";
 import devZhayiUrl from "../assets/dev-zhayi.jpg";
@@ -44,6 +45,8 @@ import { IconCloud } from "../components/icons";
 import { error as devError } from "../utils/logger";
 import { useI18n } from "vue-i18n";
 import { SUPPORTED_LOCALES } from "../i18n";
+import changelogRaw from "../../CHANGELOG.md?raw";
+import { titlebarThemeToggle } from "../composables/useDevFlags";
 
 const settings = useSettingsStore();
 const instances = useInstancesStore();
@@ -78,6 +81,90 @@ const cloudOpen = ref(false);
 const cloudAccount = ref("");
 const cloudRepo = ref("");
 const updateVersion = ref<string | null>(null);
+const updateModalVisible = ref(false);
+
+interface ChangelogEntry { category: string; text: string; }
+interface ChangelogRelease { version: string; date: string; entries: ChangelogEntry[]; }
+
+const changelogReleases = ref<ChangelogRelease[]>([]);
+const changelogLoading = ref(true);
+const expandedVersions = ref<Set<string>>(new Set());
+const devMode = ref(false);
+let brandClickCount = 0;
+let brandClickTimer: ReturnType<typeof setTimeout> | null = null;
+
+function onBrandClick() {
+  brandClickCount++;
+  if (brandClickTimer) clearTimeout(brandClickTimer);
+  brandClickTimer = setTimeout(() => { brandClickCount = 0; }, 1500);
+  if (brandClickCount >= 7) {
+    brandClickCount = 0;
+    devMode.value = !devMode.value;
+    message.info(devMode.value ? t("settings.dev.enabled") : t("settings.dev.disabled"));
+  }
+}
+
+function testUpdateModal() {
+  updateVersion.value = "9.9.9";
+  updateModalVisible.value = true;
+}
+
+function parseChangelog(md: string): ChangelogRelease[] {
+  const lines = md.replace(/\r\n/g, "\n").split("\n");
+  const releases: ChangelogRelease[] = [];
+  let current: ChangelogRelease | null = null;
+  for (const line of lines) {
+    const heading = /^##\s+\[(.*?)\]\s*-\s*(\d{4}-\d{2}-\d{2})/.exec(line);
+    if (heading) {
+      const [, version, date] = heading;
+      if (/unreleased/i.test(version)) { current = null; continue; }
+      current = { version, date, entries: [] };
+      releases.push(current);
+      continue;
+    }
+    if (!current) continue;
+    const entry = /^\d+[.)]\s+\*\*(.+?)\*\*[:：]\s*(.+)$/.exec(line.trim());
+    if (entry) {
+      current.entries.push({ category: entry[1].trim(), text: entry[2].trim() });
+    }
+  }
+  return releases.slice(0, 5);
+}
+
+function entryTypeClass(text: string): string {
+  if (/修复|修正|解决|补回/.test(text)) return "cat-fix";
+  if (/新增|添加|增加|支持|接入/.test(text)) return "cat-feature";
+  if (/优化|改进|提升|统一|完善|加强|增强/.test(text)) return "cat-improve";
+  if (/重构|调整|改用|取代|移除|删除|过滤/.test(text)) return "cat-refactor";
+  return "cat-other";
+}
+
+const updateLatestEntries = computed(() => changelogReleases.value[0]?.entries ?? []);
+
+function toggleVersion(version: string) {
+  const s = new Set(expandedVersions.value);
+  if (s.has(version)) s.delete(version);
+  else s.add(version);
+  expandedVersions.value = s;
+}
+
+async function loadChangelog() {
+  changelogLoading.value = true;
+  const remote = await fetchChangelog();
+  if (remote) {
+    try {
+      changelogReleases.value = JSON.parse(remote) as ChangelogRelease[];
+    } catch {
+      changelogReleases.value = parseChangelog(changelogRaw);
+    }
+  } else {
+    changelogReleases.value = parseChangelog(changelogRaw);
+  }
+  if (changelogReleases.value.length > 0) {
+    expandedVersions.value = new Set([changelogReleases.value[0].version]);
+  }
+  changelogLoading.value = false;
+}
 
 async function loadCloudAccount() {
   try {
@@ -89,6 +176,7 @@ async function loadCloudAccount() {
   }
 }
 onMounted(loadCloudAccount);
+onMounted(loadChangelog);
 // 云存档弹窗里可能完成授权 / 建仓，关闭后刷新账户显示
 watch(cloudOpen, (v) => {
   if (!v) void loadCloudAccount();
@@ -128,26 +216,7 @@ async function checkUpdate() {
       message.info(t("settings.update.downloadedRestart", { version: update.version }));
       return;
     }
-    let dlg: { destroy: () => void } | null = null;
-    const close = () => { dlg?.destroy(); dlg = null; };
-    dlg = dialog.warning({
-      title: t("settings.update.newVersionFound"),
-      content: t("settings.update.newVersionContent", { version: update.version }),
-      action: () =>
-        h("div", { style: "display:flex; gap:8px; justify-content:flex-end;" }, [
-          h(NButton, { size: "small", ghost: true, onClick: close }, () => t("settings.update.later")),
-          h(
-            NButton,
-            {
-              size: "small",
-              type: "primary",
-              disabled: updateReady.value,
-              onClick: () => { close(); void doInstall(); },
-            },
-            { default: () => (updateReady.value ? t("settings.update.downloadedPending") : t("settings.update.downloadAndInstall")) },
-          ),
-        ]),
-    });
+    updateModalVisible.value = true;
   } catch {
     // 国内镜像不可用时给出明确提示，而不是误报「已是最新版本」
     const isBucket = settings.settings?.update_source !== "github";
@@ -390,15 +459,21 @@ watch(tab, () => {
   nextTick(refreshCurrentPaneIndicators);
 });
 
-const tabs = computed(() => [
-  { key: "general", label: t("settings.tab.general"), icon: IconSliders },
-  { key: "appearance", label: t("settings.tab.appearance"), icon: IconImage },
-  { key: "java", label: t("settings.tab.java"), icon: IconCpu },
-  { key: "download", label: t("settings.tab.download"), icon: IconDownload },
-  { key: "content", label: t("settings.tab.content"), icon: IconGlobe },
-  { key: "storage", label: t("settings.tab.storage"), icon: IconHardDrive },
-  { key: "about", label: t("settings.tab.about"), icon: IconFile },
-]);
+const tabs = computed(() => {
+  const list = [
+    { key: "general", label: t("settings.tab.general"), icon: IconSliders },
+    { key: "appearance", label: t("settings.tab.appearance"), icon: IconImage },
+    { key: "java", label: t("settings.tab.java"), icon: IconCpu },
+    { key: "download", label: t("settings.tab.download"), icon: IconDownload },
+    { key: "content", label: t("settings.tab.content"), icon: IconGlobe },
+    { key: "storage", label: t("settings.tab.storage"), icon: IconHardDrive },
+    { key: "about", label: t("settings.tab.about"), icon: IconFile },
+  ];
+  if (devMode.value) {
+    list.push({ key: "dev", label: t("settings.tab.dev"), icon: IconTerminal });
+  }
+  return list;
+});
 
 const searchQuery = ref("");
 
@@ -439,10 +514,12 @@ const settingItemsDef: { id: string; cardId: string; tab: string; labelKey: stri
   { id: "s-stats", cardId: "storage-stats", tab: "storage", labelKey: "settings.storage.stats", cardTitleKey: "settings.storage.stats" },
   { id: "ab-overview", cardId: "about-showcase", tab: "about", labelKey: "settings.about.overview", cardTitleKey: "settings.about.overview" },
   { id: "ab-devs", cardId: "about-devs", tab: "about", labelKey: "settings.about.developers", cardTitleKey: "settings.about.developers" },
+  { id: "ab-coop", cardId: "about-coop", tab: "about", labelKey: "settings.about.coopTitle", cardTitleKey: "settings.about.coopTitle" },
   { id: "ab-diag", cardId: "about-update", tab: "about", labelKey: "settings.about.diagReport", cardTitleKey: "settings.about.updateCard" },
   { id: "ab-update", cardId: "about-update", tab: "about", labelKey: "settings.about.checkUpdate", cardTitleKey: "settings.about.updateCard" },
   { id: "ab-upsrc", cardId: "about-update", tab: "about", labelKey: "settings.about.updateSource", cardTitleKey: "settings.about.updateCard" },
-  { id: "ab-license", cardId: "about-license", tab: "about", labelKey: "settings.about.license", cardTitleKey: "settings.about.license" },
+  { id: "ab-changelog", cardId: "about-changelog", tab: "about", labelKey: "settings.about.changelogTitle", cardTitleKey: "settings.about.changelogTitle" },
+{ id: "ab-license", cardId: "about-license", tab: "about", labelKey: "settings.about.license", cardTitleKey: "settings.about.license" },
   { id: "ab-onboarding", cardId: "about-onboarding", tab: "about", labelKey: "settings.about.onboarding", cardTitleKey: "settings.about.onboarding" },
   { id: "ab-deps", cardId: "about-deps", tab: "about", labelKey: "settings.about.depsTitle", cardTitleKey: "settings.about.depsTitle" },
 ];
@@ -933,6 +1010,13 @@ onUnmounted(() => {
           </template>
         </nav>
       </aside>
+      <div class="nav-brand glass" @click="onBrandClick">
+        <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
+        <div class="nav-brand-info">
+          <span class="nav-brand-name">QookiX Launcher</span>
+          <span class="nav-brand-ver">v0.12.0</span>
+        </div>
+      </div>
     </div>
 
     <Transition :name="skipPaneTransition ? '' : 'settings-pane'" mode="out-in" @after-enter="onPaneAfterEnter">
@@ -1690,7 +1774,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.11.2</span>
+            <span class="about-ver">v0.12.0</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
@@ -1773,6 +1857,18 @@ onUnmounted(() => {
               </div>
             </div>
           </div>
+          <div class="card glass about-coop-card" id="about-coop">
+            <h3>{{ t("settings.about.coopTitle") }}</h3>
+            <p class="license-text">
+              {{ t("settings.about.coopLead") }}
+              <span class="license-accent">{{ t("settings.about.coopAccent") }}</span>
+              {{ t("settings.about.coopTail") }}
+            </p>
+            <button class="about-link" @click="openUrl('https://www.mcimg.com/')">
+              <span class="link-left"><IconGlobe /> {{ t("settings.about.coopVisit") }}</span>
+              <span class="link-arrow">→</span>
+            </button>
+          </div>
           <div class="about-links-row">
             <button class="about-link" @click="openUrl('https://qookix.swkj1.cn/')">
               <span class="link-left"><IconGlobe /> {{ t("settings.about.website") }}</span>
@@ -1798,6 +1894,31 @@ onUnmounted(() => {
               <span class="link-left"><IconHeart /> {{ t("settings.about.sponsor") }}</span>
               <span class="link-arrow">→</span>
             </button>
+          </div>
+          <div class="card glass about-changelog-card" id="about-changelog">
+            <h3>{{ t("settings.about.changelogTitle") }}</h3>
+            <div v-if="changelogLoading" class="changelog-loading">{{ t("settings.about.changelogLoading") }}</div>
+            <div v-else class="cl-releases">
+              <div
+                v-for="r in changelogReleases"
+                :key="r.version"
+                class="cl-release"
+                :class="{ expanded: expandedVersions.has(r.version) }"
+              >
+                <button class="cl-release-header" @click="toggleVersion(r.version)">
+                  <span class="cl-version">v{{ r.version }}</span>
+                  <span class="cl-date">{{ r.date }}</span>
+                  <span class="cl-count">{{ r.entries.length }}</span>
+                  <span class="cl-arrow">▾</span>
+                </button>
+                <div v-if="expandedVersions.has(r.version)" class="cl-release-body">
+                  <div v-for="(e, i) in r.entries" :key="i" class="cl-entry">
+                    <span class="cl-tag" :class="entryTypeClass(e.text)">{{ e.category }}</span>
+                    <span class="cl-text">{{ e.text }}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
           <div class="card glass about-license-card" id="about-license">
             <h3>{{ t("settings.about.license") }}</h3>
@@ -1872,10 +1993,48 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
+      <!-- 开发者 -->
+      <div v-show="tab === 'dev'" class="settings-pane">
+        <div class="card glass dev-pane-card">
+          <h3>{{ t("settings.dev.title") }}</h3>
+          <div class="dev-tools">
+            <button class="mini-btn primary" @click="testUpdateModal">{{ t("settings.dev.testUpdateModal") }}</button>
+            <button class="mini-btn" @click="loadChangelog">{{ t("settings.dev.reloadChangelog") }}</button>
+            <button class="mini-btn" @click="devMode = false">{{ t("settings.dev.exit") }}</button>
+          </div>
+          <div class="dev-section">
+            <span class="dev-section-label">{{ t("settings.dev.titlebarThemeToggle") }}</span>
+            <button class="mini-btn" :class="{ primary: titlebarThemeToggle }" @click="titlebarThemeToggle = !titlebarThemeToggle">
+              {{ titlebarThemeToggle ? t("common.on") : t("common.off") }}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
     </Transition>
 
     <DiagnosticsDialog v-model:show="showDiag" />
+
+    <n-modal v-model:show="updateModalVisible" preset="card" :title="t('settings.update.newVersionFound')" class="update-modal" :style="{ width: '420px', maxWidth: '90vw' }">
+      <div class="update-modal-body">
+        <p class="update-modal-ver">{{ t("settings.update.newVersionContent", { version: updateVersion }) }}</p>
+        <div v-if="updateLatestEntries.length" class="update-modal-notes">
+          <h4 class="update-notes-title">{{ t("settings.update.releaseNotes") }}</h4>
+          <div class="cl-entry-list">
+            <div v-for="(e, i) in updateLatestEntries" :key="i" class="cl-entry">
+              <span class="cl-tag" :class="entryTypeClass(e.text)">{{ e.category }}</span>
+              <span class="cl-text">{{ e.text }}</span>
+            </div>
+          </div>
+        </div>
+        <div class="update-modal-actions">
+          <button class="mini-btn" @click="updateModalVisible = false">{{ t("settings.update.later") }}</button>
+          <button class="mini-btn primary" :disabled="updateReady" @click="updateModalVisible = false; void doInstall()">
+            {{ updateReady ? t("settings.update.downloadedPending") : t("settings.update.downloadAndInstall") }}
+          </button>
+        </div>
+      </div>
+    </n-modal>
 
     <!-- 云存档浏览（浏览模式：不绑定实例，恢复时在弹窗内选择实例） -->
     <CloudSyncDialog
@@ -2108,6 +2267,42 @@ onUnmounted(() => {
   color: var(--text-3);
   font-size: 12px;
   text-align: center;
+}
+.nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+}
+.nav-brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.nav-brand-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.nav-brand-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.nav-brand-ver {
+  font-size: 11px;
+  color: var(--text-3);
 }
 .setting-flash {
   animation: setting-flash 1.2s ease-out;
@@ -2728,8 +2923,21 @@ textarea.text-input {
   flex-direction: column;
   gap: 12px;
 }
-.about-license-card .about-link {
+.about-license-card .about-link,
+.about-coop-card .about-link {
   margin-bottom: 0;
+}
+.about-coop-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.about-coop-card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-1);
 }
 .about-license-card h3 {
   margin: 0;
@@ -3334,6 +3542,191 @@ textarea.text-input {
 .mini-btn.danger:hover {
   color: #ff7a70;
   border-color: #e5534b;
+}
+
+.update-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.update-modal-ver {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-2);
+}
+.update-modal-notes {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+.update-notes-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.update-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.about-changelog-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dev-pane-card {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.dev-pane-card h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.dev-tools {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dev-section {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dev-section-label {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.about-changelog-card h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.changelog-loading {
+  font-size: 13px;
+  color: var(--text-3);
+  padding: 20px 0;
+  text-align: center;
+}
+
+.cl-releases {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.cl-release {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.cl-release.expanded {
+  border-color: var(--accent-35);
+}
+.cl-release-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text-1);
+  transition: background 0.12s;
+}
+.cl-release-header:hover {
+  background: var(--panel-hover);
+}
+.cl-release-header:active {
+  transform: none;
+}
+.cl-version {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--accent);
+}
+.cl-date {
+  font-size: 11px;
+  color: var(--text-3);
+}
+.cl-count {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--text-3);
+  background: var(--bg-3, rgba(128, 128, 128, 0.12));
+  border-radius: 8px;
+  padding: 1px 7px;
+}
+.cl-arrow {
+  font-size: 10px;
+  color: var(--text-3);
+  transition: transform 0.2s;
+}
+.cl-release.expanded .cl-arrow {
+  transform: rotate(180deg);
+}
+.cl-release-body {
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cl-entry-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.cl-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.cl-tag {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.cl-tag.cat-fix {
+  color: #e5534b;
+  background: rgba(229, 83, 75, 0.12);
+}
+.cl-tag.cat-feature {
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.12);
+}
+.cl-tag.cat-improve {
+  color: #4493f8;
+  background: rgba(68, 147, 248, 0.12);
+}
+.cl-tag.cat-refactor {
+  color: #a371f7;
+  background: rgba(163, 113, 247, 0.12);
+}
+.cl-tag.cat-other {
+  color: var(--text-2);
+  background: var(--bg-3, rgba(128, 128, 128, 0.12));
+}
+.cl-text {
+  color: var(--text-1);
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
 }
 </style>
 

@@ -3,6 +3,7 @@ use crate::instances::add_content_batch;
 use crate::models::{Instance, InstalledContent, LoaderType};
 use crate::state::AppState;
 use serde_json::Value;
+use tauri::Emitter;
 
 // ---------------------------------------------------------------------------
 // 整合包安装公共骨架
@@ -292,216 +293,155 @@ fn parse_cf_loader(id: &str) -> (LoaderType, String) {
     (LoaderType::Vanilla, id.to_string())
 }
 
-/// Stage the pack's files (mods, overrides, config...) into the instance.
-pub async fn apply(
+/// 从本地整合包文件完整安装：解析包索引 → 下载内容 → 登记记录 → 解压 overrides →
+/// 安装游戏本体 → 标记已安装（与在线安装 Modrinth / CurseForge 共用同一骨架
+/// [`install_pack_contents`]）。
+///
+/// 支持两种包格式（二选一）：
+/// - Modrinth `.mrpack`：按 `modrinth.index.json` 的 `files[]` 下载地址拉取模组等，
+///   `overrides/` 解压到实例根；
+/// - CurseForge `.zip`：按 `manifest.json` 的 `files[]` (projectID, fileID) 逐个查
+///   元数据后下载。
+///
+/// 进度与成败都通过 `install://progress` 事件（`task_id`）上报给下载中心。
+pub async fn install_local_pack(
     app: &tauri::AppHandle,
     state: &AppState,
+    task_id: u64,
     instance: &Instance,
-    path: &std::path::Path,
+    pack_path: &std::path::Path,
+) -> Result<(), String> {
+    let source = format!("整合包：{}", instance.name);
+    let result = install_local_pack_inner(app, state, task_id, instance, pack_path, &source).await;
+    match &result {
+        Ok(()) => {
+            crate::install::emit_progress(app, task_id, "done", "整合包安装完成", 1, 1, instance, &source);
+        }
+        Err(e) => {
+            let _ = app.emit(
+                "install://progress",
+                serde_json::json!({
+                    "taskId": task_id,
+                    "stage": "done",
+                    "message": format!("安装失败：{e}"),
+                    "done": 0,
+                    "total": 0,
+                    "instanceId": instance.id,
+                    "instanceName": instance.name,
+                    "source": source,
+                    "ok": false,
+                }),
+            );
+        }
+    }
+    result
+}
+
+async fn install_local_pack_inner(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    task_id: u64,
+    instance: &Instance,
+    pack_path: &std::path::Path,
+    source: &str,
 ) -> Result<(), String> {
     let instance_dir = state.instances_dir().join(&instance.id);
     std::fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
 
-    let task_id = state.next_task_id();
-    crate::install::emit_progress(
-        app,
-        task_id,
-        "modpack",
-        "正在解压整合包文件…",
-        0,
-        1,
-        instance,
-        "导入整合包",
-    );
+    // ---- Modrinth .mrpack ----
+    if let Ok(bytes) = crate::util::read_zip_entry(pack_path, "modrinth.index.json") {
+        let index: Value =
+            serde_json::from_slice(&bytes).map_err(|e| format!("modrinth.index.json 解析失败: {e}"))?;
+        let (items, hash_by_name) = crate::modrinth::parse_index_files(&index, &instance_dir)?;
+        // 按文件哈希批量反查 Project/Version，供扫盘登记时补上在线来源信息
+        let resolved = crate::modrinth::resolve_by_hashes(
+            state,
+            &hash_by_name.values().cloned().collect::<Vec<_>>(),
+        )
+        .await;
+        let mut hash_meta: std::collections::HashMap<String, (String, String)> =
+            std::collections::HashMap::new();
+        for (fname, h) in &hash_by_name {
+            if let Some((pid, vid)) = resolved.get(h) {
+                hash_meta.insert(fname.clone(), (pid.clone(), vid.clone()));
+            }
+        }
+        let overrides = index
+            .get("overrides")
+            .and_then(|v| v.as_str())
+            .unwrap_or("overrides")
+            .to_string();
+        let file_count = items.len();
+        install_pack_contents(
+            app,
+            state,
+            instance,
+            pack_path,
+            PackContentsSpec {
+                task_id,
+                source: source.to_string(),
+                download_label: format!("正在下载 {file_count} 个文件…"),
+                downloads: items,
+                records: Vec::new(),
+                hash_meta,
+                skip_prefixes: vec!["modrinth.index.json".into(), "META-INF/".into()],
+                overrides_prefix: overrides,
+            },
+        )
+        .await?;
+        return Ok(());
+    }
 
-    // regular files (mods/, config/...), skipping the pack metadata + overrides
-    let _ = crate::util::extract_zip_progress(
-        path,
-        &instance_dir,
-        &["modrinth.index.json", "manifest.json", "overrides/", "META-INF/"],
-        &mut |done, total| {
+    // ---- CurseForge manifest.json ----
+    if let Ok(bytes) = crate::util::read_zip_entry(pack_path, "manifest.json") {
+        let manifest: Value =
+            serde_json::from_slice(&bytes).map_err(|e| format!("manifest.json 解析失败: {e}"))?;
+        let pairs = crate::curseforge::manifest_file_pairs(&manifest);
+        let total = pairs.len();
+        let mut metas: Vec<(u64, u64, Value)> = Vec::with_capacity(total);
+        for (idx, (pid, fid)) in pairs.iter().enumerate() {
             crate::install::emit_progress(
                 app,
                 task_id,
-                "modpack-install",
-                &format!("正在解压整合包文件…（{done}/{total}）"),
-                done,
+                "modpack",
+                &format!("正在获取模组信息…（{}/{total}）", idx + 1),
+                idx + 1,
                 total,
                 instance,
-                "导入整合包",
+                source,
             );
-        },
-    )
-    .map_err(|e| format!("解压整合包失败: {e}"))?;
-    // overrides -> instance root
-    let _ = crate::util::extract_zip_strip(
-        path,
-        &instance_dir,
-        "overrides/",
-        &["modrinth.index.json", "manifest.json", "META-INF/"],
-    )?;
-
-    // record staged mods — prefer pack index metadata, fall back to disk scan
-    let mods_dir = instance_dir.join("mods");
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    let mut records: Vec<InstalledContent> = Vec::new();
-    let mut handled = false;
-
-    // Modrinth .mrpack: resolve project_id/version_id from sha1 hashes
-    if let Ok(bytes) = crate::util::read_zip_entry(path, "modrinth.index.json") {
-        handled = true;
-        if let Ok(index) = serde_json::from_slice::<Value>(&bytes) {
-            let files = index.get("files").and_then(|f| f.as_array()).cloned().unwrap_or_default();
-            let mut hash_by_name: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-            for f in &files {
-                let p = f.get("path").and_then(|p| p.as_str()).unwrap_or("");
-                if !p.starts_with("mods/") || p.ends_with('/') {
-                    continue;
+            if let Ok(fbody) = crate::curseforge::file_info(state, *pid, *fid).await {
+                if let Some(fdata) = fbody.get("data") {
+                    metas.push((*pid, *fid, fdata.clone()));
                 }
-                let fname = std::path::Path::new(p)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("")
-                    .to_string();
-                if fname.is_empty() {
-                    continue;
-                }
-                if let Some(h) = f.get("hashes").and_then(|h| h.get("sha1")).and_then(|v| v.as_str()) {
-                    hash_by_name.insert(fname, h.to_string());
-                }
-            }
-            let resolved =
-                crate::modrinth::resolve_by_hashes(state, &hash_by_name.values().cloned().collect::<Vec<_>>()).await;
-            for (fname, h) in &hash_by_name {
-                if !mods_dir.join(fname).exists() {
-                    continue;
-                }
-                let size = std::fs::metadata(mods_dir.join(fname)).map(|m| m.len()).unwrap_or(0);
-                let (pid, vid) = resolved
-                    .get(h)
-                    .map(|(p, v)| (Some(p.clone()), Some(v.clone())))
-                    .unwrap_or((None, None));
-                let mut rec = InstalledContent {
-                    filename: fname.clone(),
-                    source: "modrinth".into(),
-                    project_id: pid,
-                    slug: None,
-                    version_id: vid,
-                    name: Some(fname.clone()),
-                    version: None,
-                    mod_id: None,
-                    authors: None,
-                    description: None,
-                    installed_at: now,
-                    size,
-                    icon: None,
-                    enabled: true,
-                };
-                crate::util::fill_content_from_jar(&mut rec, &mods_dir.join(fname));
-                records.push(rec);
             }
         }
+        let mods_dir = state.instances_dir().join(&instance.id).join("mods");
+        let (dl_items, mod_records) = crate::curseforge::build_manifest_contents(&metas, &mods_dir);
+        install_pack_contents(
+            app,
+            state,
+            instance,
+            pack_path,
+            PackContentsSpec {
+                task_id,
+                source: source.to_string(),
+                download_label: format!("正在下载 {} 个模组…", dl_items.len()),
+                downloads: dl_items,
+                records: mod_records
+                    .into_iter()
+                    .map(|r| ("mod".to_string(), r))
+                    .collect(),
+                hash_meta: Default::default(),
+                skip_prefixes: vec!["manifest.json".into(), "META-INF/".into()],
+                overrides_prefix: "overrides".into(),
+            },
+        )
+        .await?;
+        return Ok(());
     }
 
-    // CurseForge: resolve fileName from manifest projectID/fileID via API
-    if !handled {
-        if let Ok(bytes) = crate::util::read_zip_entry(path, "manifest.json") {
-            handled = true;
-            if let Ok(manifest) = serde_json::from_slice::<Value>(&bytes) {
-                let files = manifest.get("files").and_then(|f| f.as_array()).cloned().unwrap_or_default();
-                for f in &files {
-                    let Some(pid) = f.get("projectID").and_then(|v| v.as_u64()) else { continue };
-                    let Some(fid) = f.get("fileID").and_then(|v| v.as_u64()) else { continue };
-                    let fname = match crate::curseforge::file_info(state, pid, fid).await {
-                        Ok(info) => info
-                            .get("data")
-                            .and_then(|d| d.get("fileName"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string(),
-                        Err(_) => continue,
-                    };
-                    if fname.is_empty() || !fname.ends_with(".jar") {
-                        continue;
-                    }
-                    if !mods_dir.join(&fname).exists() {
-                        continue;
-                    }
-                    let size = std::fs::metadata(mods_dir.join(&fname)).map(|m| m.len()).unwrap_or(0);
-                    let mut rec = InstalledContent {
-                        filename: fname.clone(),
-                        source: "curseforge".into(),
-                        project_id: Some(pid.to_string()),
-                        slug: None,
-                        version_id: Some(fid.to_string()),
-                        name: Some(fname.clone()),
-                        version: None,
-                        mod_id: None,
-                        authors: None,
-                        description: None,
-                        installed_at: now,
-                        size,
-                        icon: None,
-                        enabled: true,
-                    };
-                    crate::util::fill_content_from_jar(&mut rec, &mods_dir.join(&fname));
-                    records.push(rec);
-                }
-            }
-            if records.is_empty() {
-                handled = false;
-            }
-        }
-    }
-
-    // Fallback: scan disk (offline import or unrecognized format)
-    if !handled && mods_dir.is_dir() {
-        if let Ok(entries) = std::fs::read_dir(&mods_dir) {
-            for e in entries.flatten() {
-                let name = e.file_name().to_string_lossy().to_string();
-                if !name.ends_with(".jar") {
-                    continue;
-                }
-                let size = e.metadata().map(|m| m.len()).unwrap_or(0);
-                let mut rec = InstalledContent {
-                    filename: name.clone(),
-                    source: "modpack".into(),
-                    project_id: None,
-                    slug: None,
-                    version_id: None,
-                    name: Some(name),
-                    version: None,
-                    mod_id: None,
-                    authors: None,
-                    description: None,
-                    installed_at: now,
-                    size,
-                    icon: None,
-                    enabled: true,
-                };
-                crate::util::fill_content_from_jar(&mut rec, &e.path());
-                records.push(rec);
-            }
-        }
-    }
-
-    for rec in records {
-        let _ = crate::util::log_best_effort("add_content", crate::instances::add_content(state, &instance.id, "mod", rec));
-    }
-    crate::install::emit_progress(
-        app,
-        task_id,
-        "done",
-        "整合包已导入",
-        1,
-        1,
-        instance,
-        "导入整合包",
-    );
-    Ok(())
+    Err("无法识别的整合包格式（需要 modrinth.index.json 或 manifest.json）".into())
 }
 
 #[cfg(test)]
@@ -523,6 +463,7 @@ mod tests {
             task_counter: std::sync::atomic::AtomicU64::new(1),
             install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ms_flow: Arc::new(Mutex::new(None)),
+            shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),

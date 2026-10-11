@@ -3,6 +3,7 @@ use crate::models::*;
 use crate::state::AppState;
 use serde_json::{json, Value};
 use tauri::Emitter;
+use tauri::Manager;
 use tauri::State;
 
 // Instance file manager
@@ -153,7 +154,9 @@ pub fn reveal_instance_path(
 }
 
 /// Import a local modpack (.mrpack / CurseForge zip): creates an instance
-/// with the pack's Minecraft version + loader and stages its files.
+/// with the pack's Minecraft version + loader, then installs it in the
+/// background (downloads the pack's mods, applies overrides, installs the
+/// vanilla game + loader, marks the instance installed).
 #[tauri::command]
 pub async fn import_modpack(
     app: tauri::AppHandle,
@@ -164,17 +167,34 @@ pub async fn import_modpack(
     if !path.exists() {
         return Err("文件不存在".into());
     }
-    let (name, mc_version, loader, loader_version) =
-        crate::modpack::detect(&path).await.map_err(|e| format!("无法解析整合包: {e}"))?;
+    // 建实例 + 提取包内图标（快速，同步完成，好让前端立刻拿到实例 id）
+    let (instance, _source) = crate::modpack::prepare_pack(
+        state.inner(),
+        crate::modpack::PackPrepareSpec {
+            pack_path: path.clone(),
+            icon_fallback_url: None,
+        },
+    )
+    .await?;
 
-    let instance = crate::instances::create_instance(
-        &state,
-        name,
-        mc_version,
-        loader,
-        Some(loader_version),
-    )?;
-    crate::modpack::apply(&app, &state, &instance, &path).await?;
+    // 完整安装（下载内容 → 登记 → 解压 overrides → 安装游戏本体 → 标记已安装）
+    // 在后台执行：本地整合包动辄数百个文件 + 游戏本体，不能阻塞前端拿实例 id。
+    // 进度与成败都通过 install://progress 事件进下载中心。
+    let app2 = app.clone();
+    let iid = instance.id.clone();
+    tauri::async_runtime::spawn(async move {
+        let state = app2.state::<crate::state::AppState>();
+        let task_id = state.next_task_id();
+        let result: Result<(), String> = async {
+            let inst = crate::instances::get_instance(&state, &iid)?;
+            crate::modpack::install_local_pack(&app2, &state, task_id, &inst, &path).await
+        }
+        .await;
+        if let Err(e) = result {
+            crate::util::log_line(&format!("[import_modpack] 安装失败: {e}"));
+        }
+    });
+
     Ok(instance)
 }
 

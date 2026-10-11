@@ -29,6 +29,7 @@ mod paths;
 mod servers;
 mod secret;
 mod settings;
+mod shimu;
 mod state;
 mod storage;
 mod terracotta;
@@ -90,6 +91,8 @@ pub fn run() {
             rusqlite::Connection::open_in_memory().expect("内存数据库也打不开")
         }
     };
+    // 拾木空间登录态：在 root 被 move 进 AppState 之前读盘
+    let shimu_auth = shimu::load_saved(&root);
     let app_state = AppState {
         root,
         settings: RwLock::new(loaded),
@@ -102,6 +105,7 @@ pub fn run() {
         task_counter: std::sync::atomic::AtomicU64::new(1),
         install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         ms_flow: Arc::new(Mutex::new(None)),
+        shimu: Mutex::new(shimu_auth),
         java_cache: Mutex::new(None),
         terracotta: Mutex::new(None),
         pending_update: Mutex::new(None),
@@ -270,6 +274,23 @@ pub fn run() {
   yggdrasil::yggdrasil_add_account,
   yggdrasil::yggdrasil_ensure_token,
   yggdrasil::yggdrasil_textures,
+  // 拾木空间（www.mcimg.com）OAuth 登录 + 开放 API
+  shimu::shimu_config,
+  shimu::shimu_set_credentials,
+  shimu::shimu_oauth_start,
+  shimu::shimu_oauth_complete,
+  shimu::shimu_status,
+  shimu::shimu_user_info,
+  shimu::shimu_logout,
+  shimu::shimu_list_posts,
+  shimu::shimu_post_detail,
+  shimu::shimu_hot_posts,
+  shimu::shimu_featured_posts,
+  shimu::shimu_my_collects,
+  shimu::shimu_check_entitlement,
+  shimu::shimu_purchase_download,
+  shimu::shimu_my_orders,
+  shimu::shimu_download_file,
             commands::apply_update,
             commands::uninstall_content,
             commands::list_content,
@@ -356,6 +377,7 @@ pub fn run() {
             updater::check_for_update,
             updater::download_update,
             updater::apply_app_update,
+            updater::fetch_changelog,
             // toolbox (工具箱：种子查询)
             commands::toolbox_query_biome,
             commands::toolbox_biome_table,
@@ -634,6 +656,7 @@ mod smoke {
             task_counter: std::sync::atomic::AtomicU64::new(1),
             install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ms_flow: Arc::new(Mutex::new(None)),
+            shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
@@ -679,6 +702,7 @@ mod smoke {
             task_counter: std::sync::atomic::AtomicU64::new(1),
             install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ms_flow: Arc::new(Mutex::new(None)),
+            shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
@@ -725,6 +749,7 @@ mod smoke {
             task_counter: std::sync::atomic::AtomicU64::new(1),
             install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ms_flow: Arc::new(Mutex::new(None)),
+            shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),

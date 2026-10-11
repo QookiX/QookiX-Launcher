@@ -35,5 +35,20 @@ fn main() {
     println!("cargo:rerun-if-changed=src/cubiomes_bridge.c");
     println!("cargo:rerun-if-changed=vendor/cubiomes");
 
+    // 这些变量由 Rust 侧 `option_env!` 在**编译期**读取。cargo 默认不会因为
+    // 环境变量变化而重编译，于是「改了变量却拿到旧值」——必须显式声明依赖，
+    // 否则构建脚本改了 secret 后还得手动 cargo clean 才生效。
+    for key in [
+        "MS_CLIENT_ID",
+        "CURSEFORGE_API_KEY",
+        "SHIMU_CLIENT_ID",
+        "SHIMU_CLIENT_SECRET",
+        "QOOKIX_BUCKET_UPDATE_URL",
+        "QOOKIX_GITHUB_REPOSITORY",
+        "GITHUB_REPOSITORY",
+    ] {
+        println!("cargo:rerun-if-env-changed={key}");
+    }
+
     tauri_build::build()
 }

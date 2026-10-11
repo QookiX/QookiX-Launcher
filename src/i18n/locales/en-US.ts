@@ -35,6 +35,7 @@ import downloads from "./_fragments/downloads.en";
 import skinEn from "./_fragments/skin.en";
 import newsEn from "./_fragments/news.en";
 import toolboxEn from "./_fragments/toolbox.en";
+import shimuEn from "./_fragments/shimu.en";
 import seedMapEn from "./_fragments/seedMap.en";
 import settingsEn from "./_fragments/settings.en";
 import nbtEn from "./_fragments/nbt.en";
@@ -58,6 +59,8 @@ export default {
     loading: "Loading…",
     retry: "Retry",
     ok: "OK",
+    on: "On",
+    off: "Off",
   },
   nav: {
     home: "Home",
@@ -116,6 +119,8 @@ export default {
     newGroup: "New group",
     createServer: "Create server",
     clearFinished: "Clear finished",
+    switchDark: "Switch to dark mode",
+    switchLight: "Switch to light mode",
   },
   settings: {
     ...settingsEn,
@@ -137,6 +142,13 @@ export default {
     readingData: "Reading instances and accounts…",
     initTasks: "Initializing task system…",
     almostReady: "Almost ready…",
+  },
+  drop: {
+    overlayTitle: "Release to import modpack",
+    overlayDesc: "About to import {name}",
+    confirmTitle: "Import modpack",
+    confirmContent: "Detected a dropped modpack file: {name}. Import it now?",
+    confirmImport: "Import",
   },
   onboardingBar,
   accountChip,
@@ -170,6 +182,7 @@ export default {
   ...skinEn,
   ...newsEn,
   ...toolboxEn,
+  ...shimuEn,
   ...seedMapEn,
   keybind,
   timemachine,

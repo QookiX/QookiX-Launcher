@@ -7,6 +7,7 @@
  *   qookix://news              → 打开新闻
  *   qookix://settings          → 打开设置
  *   qookix://launch/<别名>      → 启动设置了该别名的实例
+ *   qookix://oauth/callback     → 拾木空间 OAuth 回调（?code=..&state=..）
  *
  * 两条到达路径（都会进入 onOpenUrl）：
  *   - 冷启动：deep-link 插件在 Rust 侧解析 argv 后发出 deep-link://new-url
@@ -16,6 +17,7 @@
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { api } from "../api";
 import { useInstancesStore } from "../stores/instances";
+import { shimuErrorMessage, useShimuStore } from "../stores/shimu";
 import { notifySuccess, notifyError, notifyWarning } from "./notify";
 import router from "../router";
 import { log as devLog, warn as devWarn, error as devError } from "../utils/logger";
@@ -52,6 +54,12 @@ async function handleUrl(raw: string) {
     return;
   }
 
+  // 拾木空间 OAuth 回调（qookix://oauth/callback?code=..&state=..）
+  if (host === "oauth" && path === "callback") {
+    await handleShimuCallback(url);
+    return;
+  }
+
   const route = PAGE_ROUTES[host];
   if (route) {
     await router.push(route);
@@ -61,6 +69,21 @@ async function handleUrl(raw: string) {
   // 非页面命令：把 host 当作实例别名处理（qookix://<别名> 是
   // qookix://launch/<别名> 的便捷写法）
   await launchByAlias(host);
+}
+
+/** 拾木空间 OAuth 回调：换 token + 提示结果（登录窗口会自行监听状态收起） */
+async function handleShimuCallback(url: URL) {
+  const store = useShimuStore();
+  try {
+    const res = await store.handleCallback(url.toString());
+    if (res === "denied") {
+      notifyWarning("拾木空间授权已取消");
+      return;
+    }
+    notifySuccess("拾木空间登录成功");
+  } catch (e) {
+    notifyError(shimuErrorMessage(e));
+  }
 }
 
 /** 按别名查找实例并启动 */

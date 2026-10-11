@@ -223,10 +223,15 @@ function openTabFolder() {
 
 // ---- 安装游戏本体（导入分享包后的实例需要）----
 const tasks = useTasksStore();
+// 整合包导入/安装也会在本实例上产生任务：来源文案先为「整合包：xxx」，到安装游戏本体
+// 阶段变为「游戏安装 …」。两类都算本实例的安装任务，这样进度与失败（失败卡片带
+// 「重新安装」按钮）都能显示在详情页。
 const installTask = computed(() =>
-  tasks.taskList.find(
-    (t) => t.instanceId === instanceId && (t.source ?? "").includes("游戏安装")
-  )
+  tasks.taskList.find((t) => {
+    if (t.instanceId !== instanceId) return false;
+    const source = t.source ?? "";
+    return source.includes("游戏安装") || source.includes("整合包");
+  })
 );
 const installPct = computed(() => {
   const t = installTask.value;

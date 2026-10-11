@@ -119,15 +119,10 @@ async function create() {
 }
 
 // ---- import ----
-async function importPack() {
-  const file = await open({
-    multiple: false,
-    filters: [{ name: t("createInstance.modpackFilterName"), extensions: ["zip", "mrpack"] }],
-  });
-  if (!file) return;
+async function doImport(file: string) {
   importing.value = true;
   try {
-    const inst = await api.importModpack(file as string);
+    const inst = await api.importModpack(file);
     message.success(t("createInstance.modpackImported", { name: inst.name }));
     router.push(`/instance/${inst.id}`);
   } catch (e) {
@@ -135,6 +130,15 @@ async function importPack() {
   } finally {
     importing.value = false;
   }
+}
+
+async function importPack() {
+  const file = await open({
+    multiple: false,
+    filters: [{ name: t("createInstance.modpackFilterName"), extensions: ["zip", "mrpack"] }],
+  });
+  if (!file) return;
+  await doImport(file as string);
 }
 
 // ---- import existing .minecraft folder ----
@@ -548,6 +552,7 @@ onUnmounted(() => {
       <button class="btn primary big" :disabled="importing" @click="importPack">
         <IconFolder /> {{ importing ? t("createInstance.importing") : t("createInstance.selectModpackFile") }}
       </button>
+      <p class="drop-hint">{{ t("createInstance.dropModpackHint") }}</p>
     </div>
 
     <!-- import existing .minecraft folder -->
@@ -1024,6 +1029,13 @@ onUnmounted(() => {
   align-items: center;
   text-align: center;
   padding: 50px 30px;
+  border: 2px dashed var(--border);
+  transition: border-color 0.15s, background 0.15s;
+}
+.import .drop-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-3);
 }
 .import-icon {
   font-size: 40px;

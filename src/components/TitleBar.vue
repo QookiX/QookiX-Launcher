@@ -20,9 +20,13 @@ import {
   IconRefresh,
   IconClock,
   IconTool,
+  IconMoon,
+  IconSun,
 } from "./icons";
 import { useTasksStore } from "../stores/tasks";
 import { useServersStore } from "../stores/servers";
+import { useSettingsStore } from "../stores/settings";
+import { titlebarThemeToggle } from "../composables/useDevFlags";
 import {
   updateReady,
   updateReadyVersion,
@@ -36,7 +40,13 @@ const route = useRoute();
 const router = useRouter();
 const tasks = useTasksStore();
 const servers = useServersStore();
+const settings = useSettingsStore();
 const { t } = useI18n();
+
+const isDark = computed(() => settings.settings?.theme !== "light");
+function toggleTheme() {
+  void settings.patch({ theme: isDark.value ? "light" : "dark" });
+}
 
 const pageIcons: Record<string, any> = {
   home: IconHome,
@@ -155,6 +165,10 @@ onMounted(async () => {
         </button>
       </div>
       <div class="tb-controls">
+        <button v-if="titlebarThemeToggle" class="tb-btn tb-theme-toggle" :title="isDark ? t('titlebar.switchLight') : t('titlebar.switchDark')" @click="toggleTheme">
+          <IconSun v-if="isDark" />
+          <IconMoon v-else />
+        </button>
         <button class="tb-btn" :title="t('titlebar.minimize')" @click="win.minimize()">
         <IconMinus />
       </button>
