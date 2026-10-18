@@ -15,7 +15,7 @@ on:
         default: ""
         type: string
       only_manifest:
-        description: "仅上传 latest.json（安装包不重新上传）"
+        description: "仅上传清单 latest.json / changelog.json（安装包不重新上传）"
         required: false
         default: false
         type: boolean
@@ -73,14 +73,18 @@ jobs:
           ONLY_MANIFEST: ${{ inputs.only_manifest }}
         run: |
           if [ "${ONLY_MANIFEST}" = "true" ]; then
-            aws configure set default.s3.max_concurrent_requests 1
             endpoint_args=()
             if [ -n "${AWS_ENDPOINT_URL:-}" ]; then
               endpoint_args=(--endpoint-url "${AWS_ENDPOINT_URL}")
             fi
-            aws "${endpoint_args[@]}" s3 cp release/latest.json \
-              "s3://${QOOKIX_S3_BUCKET}/latest.json" \
-              --no-progress --checksum-algorithm CRC32
+            # latest.json + changelog.json：更新弹窗的版本条目同样来自更新源
+            for file in latest.json changelog.json; do
+              if [ -f "release/${file}" ]; then
+                aws "${endpoint_args[@]}" s3 cp "release/${file}" \
+                  "s3://${QOOKIX_S3_BUCKET}/${file}" \
+                  --no-progress --checksum-algorithm CRC32
+              fi
+            done
           else
             bash scripts/push-bucket.sh release
           fi

@@ -116,6 +116,6 @@ npm run tauri build
 3. 提交后打标签并推送：`git tag -a vX.Y.Z -m "vX.Y.Z"`，然后 `git push origin main vX.Y.Z`
 4. 标签会触发 `.github/workflows/build.yml` 构建三平台产物、发布 GitHub Release，并同步到对象存储更新源
 
-如果对象存储端点拒绝大文件写入（`SlowDownWrite`），Release 本身仍然可用；运行 **Sync update bucket** 工作流并填写标签即可稍后补传。紧急情况下可勾选 `only_manifest` 并把下载地址前缀填成 GitHub Release 地址，让默认更新源临时指向 GitHub。
+如果对象存储端点拒绝大文件写入（`SlowDownWrite`），Release 本身仍然可用；运行 **Sync update bucket** 工作流并填写标签即可稍后补传。紧急情况下可勾选 `only_manifest`（会同时补传 `latest.json` 与 `changelog.json`）并把下载地址前缀填成 GitHub Release 地址，让默认更新源临时指向 GitHub。
 
 Linux 的 AppImage 约 90 MB，对象存储端点基本都会对它的分片上传限流，因此桶里的 `latest.json` 把 `linux-x86_64` / `linux-aarch64` 的下载地址直接写成 GitHub Release 附件地址，桶同步也会跳过 AppImage 本体（逻辑见 `scripts/shared/updater-targets.mjs` 的 `githubHosted`）。签名仍然内联在 `latest.json` 里，自动更新照常校验。
