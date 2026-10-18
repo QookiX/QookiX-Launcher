@@ -179,7 +179,7 @@ async function exportLog() {
   cursor: text;
 }
 .log-line.err {
-  color: #f0907f;
+  color: var(--danger-text);
 }
 .log-line.out {
   color: #c9ccd6;

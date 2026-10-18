@@ -19,6 +19,7 @@ body,
   --accent-deep: #d97f33;
   --accent-hover: #f2a860;
   --accent-soft: rgba(232, 154, 75, 0.14);
+  --accent-contrast: #1a1208;
   --accent-01: rgba(232, 154, 75, 0.01);
   --accent-02: rgba(232, 154, 75, 0.02);
   --accent-03: rgba(232, 154, 75, 0.03);
@@ -92,6 +93,13 @@ body,
   --success-12: rgba(78, 201, 160, 0.12);
   --info-14: rgba(90, 162, 240, 0.14);
   --info-15: rgba(90, 162, 240, 0.15);
+  /* 语义纯色：与 theme.ts 的 errorColor/successColor/warningColor 对齐，
+     供 latency 等级、stop-all 按钮等需要纯色文字/描边处使用。
+     --danger-text 比 --danger 浅一档，用于深色面板上的次要危险文字。 */
+  --danger: #e5534b;
+  --danger-text: #f0907f;
+  --success: #4ec9a0;
+  --warn: #e0a030;
   --pad-panel: 20px 24px;
   --gap-panel: 16px;
   --gap-grid: 16px;
@@ -103,6 +111,7 @@ body,
   --accent-deep: #e8893c;
   --accent-hover: #ffb978;
   --accent-soft: rgba(255, 160, 80, 0.12);
+  --accent-contrast: #1a1208;
   --accent-01: rgba(255, 160, 80, 0.01);
   --accent-02: rgba(255, 160, 80, 0.02);
   --accent-03: rgba(255, 160, 80, 0.03);
@@ -137,6 +146,11 @@ body,
   --text-3: #55586a;
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
+  /* 浅色主题语义纯色：比深色档更深，保证白底可读 */
+  --danger: #d63d35;
+  --danger-text: #c9332c;
+  --success: #2d9b6f;
+  --warn: #c87420;
 }
 
 :root.has-bg {
@@ -178,7 +192,7 @@ body,
   background:
     radial-gradient(900px 480px at 85% -10%, var(--accent-12), transparent 60%),
     radial-gradient(700px 420px at -10% 110%, rgba(90, 162, 240, 0.08), transparent 55%),
-    linear-gradient(180deg, var(--bg-0), var(--bg-1) 55%, #0d1016);
+    linear-gradient(180deg, var(--bg-0), var(--bg-1) 55%, var(--bg-2));
   color: var(--text-1);
 }
 .app-bg::before {

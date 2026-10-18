@@ -450,24 +450,15 @@ defineExpose({
   importLocal,
   updatesCount,
   checkingUpdates,
+  runDepCheck,
+  checkingDeps,
+  updateAll,
+  updatingAll,
 });
 </script>
 
 <template>
   <div>
-    <!-- 模组工具栏：依赖体检 + 可更新汇总 -->
-    <div v-if="kind === 'mod' && contentItems.length" class="dep-bar glass">
-      <button class="btn ghost" :disabled="checkingDeps" @click="runDepCheck">
-        <IconCheck /> {{ checkingDeps ? t("instanceContent.depChecking") : t("instanceContent.depCheck") }}
-      </button>
-      <span v-if="updatesCount > 0" class="dep-hint">
-        {{ t("instanceContent.foundUpdatesCount", { count: updatesCount }) }}
-        <button class="btn ok" :disabled="updatingAll" @click="updateAll">
-          <IconDownload /> {{ updatingAll ? t("instanceContent.updatingAll") : t("instanceContent.updateAll") }}
-        </button>
-      </span>
-    </div>
-
     <!-- 依赖体检结果 -->
     <NModal v-model:show="depShow">
       <div class="dep-dialog glass">
@@ -823,7 +814,7 @@ defineExpose({
   opacity: 0.85;
 }
 .missing {
-  color: #e5534b;
+  color: var(--danger);
   font-weight: 600;
 }
 .icon-btn {
@@ -841,24 +832,24 @@ defineExpose({
   transition: all 0.12s;
 }
 .icon-btn.danger:hover {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-50);
 }
 .icon-btn.warn {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-35);
 }
 .icon-btn.warn:hover {
   background: rgba(229, 83, 75, 0.15);
-  border-color: #e5534b;
+  border-color: var(--danger);
 }
 .icon-btn.ok {
-  color: #4ec9a0;
+  color: var(--success);
   border-color: rgba(78, 201, 160, 0.35);
 }
 .icon-btn.ok:hover {
   background: rgba(78, 201, 160, 0.15);
-  border-color: #4ec9a0;
+  border-color: var(--success);
 }
 .center {
   padding: 60px;
@@ -927,25 +918,9 @@ defineExpose({
 }
 
 /* ---- 模组工具栏 / 依赖体检 ---- */
-.dep-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  margin-bottom: 12px;
-}
-.dep-hint {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: var(--text-2);
-  font-size: 13px;
-}
 .btn.ok {
   background: var(--success-12);
-  color: #4ec9a0;
+  color: var(--success);
 }
 .btn.ok:hover {
   opacity: 0.85;
@@ -1022,7 +997,7 @@ defineExpose({
 .dep-disabled {
   margin-top: 4px;
   font-size: 12px;
-  color: #e0a030;
+  color: var(--warn);
 }
 .dep-tag {
   flex-shrink: 0;
@@ -1045,7 +1020,7 @@ defineExpose({
   align-items: center;
   gap: 8px;
   padding: 16px 0 6px;
-  color: #4ec9a0;
+  color: var(--success);
   font-size: 14px;
 }
 </style>

@@ -13,7 +13,7 @@
  */
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
-import { NButton, NInput, NSelect, useMessage } from "naive-ui";
+import { NButton, NInput, NSelect, NModal, useMessage } from "naive-ui";
 import DOMPurify from "dompurify";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useI18n } from "vue-i18n";
@@ -21,12 +21,14 @@ import SimplePagination from "../components/SimplePagination.vue";
 import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
 import { api } from "../api";
 import { shimuAbsoluteUrl, shimuErrorMessage, useShimuStore } from "../stores/shimu";
+import { useInstancesStore } from "../stores/instances";
 import type { ShimuCategory, ShimuPost, ShimuPostQuery } from "../types";
 
 const { t } = useI18n();
 const message = useMessage();
 const router = useRouter();
 const store = useShimuStore();
+const instancesStore = useInstancesStore();
 
 const PAGE_SIZE = 12;
 
@@ -71,6 +73,18 @@ const boardChips = computed(() => {
 const detail = ref<ShimuPost | null>(null);
 const detailLoading = ref(false);
 const downloading = ref("");
+
+/** 投影下载完成后弹出的实例选择器：把投影复制到所选实例的 schematics 目录 */
+const instancePicker = ref<{ sourcePath: string; filename: string } | null>(null);
+const pickerInstanceId = ref<string | null>(null);
+const pickerBusy = ref(false);
+const instanceOptions = computed(() =>
+  instancesStore.instances.map((i) => ({ label: i.name, value: i.id }))
+);
+const instancePickerVisible = computed({
+  get: () => instancePicker.value !== null,
+  set: (v) => { if (!v) instancePicker.value = null; },
+});
 
 /** 图片放大查看（图集与正文图片共用；多图时可左右切换） */
 const viewer = ref<{ list: string[]; index: number } | null>(null);
@@ -199,6 +213,14 @@ const paidContent = computed(() => detail.value?.isPaid === "1" && detail.value?
 // 付费内容帖未购买时服务端直接返回空正文（且 purchased 字段在匿名访问下也会是 true），
 // 所以以「正文为空」作为锁定信号更可靠。
 const contentLocked = computed(() => paidContent.value && !(detail.value?.content ?? "").trim());
+/** 回复可见帖未评论时，服务端只下发 [hidecontent] 裸标记 + .hide-before 提示，不含真正内容。
+ *  靠检测原始 content 里的隐藏标记判断，不能靠 bodyHtml 是否为空（帖子可能有公开引言 + 隐藏块）。 */
+const needComment = computed(() => {
+  if (detailLoading.value || contentLocked.value) return false;
+  const c = detail.value?.content ?? "";
+  const hasHide = /\[hidecontent/i.test(c) || c.includes("tinymce-hide") || c.includes("hide-before");
+  return hasHide && detail.value?.commented !== true;
+});
 
 /** 标签：接口的 tagNames 常为 null，退一步显示分类名 */
 function tagsOf(p?: ShimuPost | null): string {
@@ -470,13 +492,37 @@ async function download(att: Attachment, preview = false) {
   try {
     const res = await api.shimuDownloadFile(att.url, att.name, att.fileId);
     message.success(t("shimu.downloaded", { name: res.name }));
-    if (preview && att.kind === "schematic") {
-      await router.push({ path: "/toolbox/schematic", query: { open: res.path } });
+    if (att.kind === "schematic") {
+      if (preview) {
+        await router.push({ path: "/toolbox/schematic", query: { open: res.path } });
+      } else {
+        void instancesStore.load();
+        pickerInstanceId.value = null;
+        instancePicker.value = { sourcePath: res.path, filename: res.name };
+      }
     }
   } catch (e) {
     handleError(e);
   } finally {
     downloading.value = "";
+  }
+}
+
+/** 把刚下载的投影复制到所选实例的 schematics 目录 */
+async function confirmAddToInstance() {
+  const picker = instancePicker.value;
+  const id = pickerInstanceId.value;
+  if (!picker || !id) return;
+  pickerBusy.value = true;
+  try {
+    await api.copyFileToInstanceSchematics(picker.sourcePath, id, picker.filename);
+    const inst = instancesStore.get(id);
+    message.success(t("shimu.addedToInstance", { name: inst?.name ?? id }));
+    instancePicker.value = null;
+  } catch (e) {
+    handleError(e);
+  } finally {
+    pickerBusy.value = false;
   }
 }
 
@@ -640,9 +686,7 @@ function paidDetailLabel(p: ShimuPost): string {
     <div v-if="detail" class="glass detail">
       <div class="detail-head">
         <button class="link-btn" @click="closeDetail">← {{ t("shimu.back") }}</button>
-        <n-button size="tiny" type="primary" quaternary @click="openOnSite">
-          {{ t("shimu.openPost") }}
-        </n-button>
+        <button class="mini-btn primary" @click="openOnSite">{{ t("shimu.openPost") }}</button>
       </div>
 
       <h2 class="detail-title">{{ detail.title }}</h2>
@@ -668,35 +712,42 @@ function paidDetailLabel(p: ShimuPost): string {
         </div>
 
         <div v-if="detailLoading" class="muted">{{ t("common.loading") }}</div>
-        <div v-else-if="contentLocked" class="locked">{{ t("shimu.contentLocked") }}</div>
         <div v-else-if="bodyHtml" class="detail-body" v-html="bodyHtml" @click="onBodyClick"></div>
-        <p v-else class="muted">{{ t("shimu.emptyContent") }}</p>
+        <p v-else-if="!contentLocked && !needComment" class="muted">{{ t("shimu.emptyContent") }}</p>
 
-        <div class="files">
+        <div v-if="detailLoading || attachments.length || contentLocked || needComment" class="files">
           <div class="files-head">{{ t("shimu.attachments") }}</div>
           <p v-if="detailLoading" class="muted">{{ t("common.loading") }}</p>
-          <p v-else-if="!attachments.length" class="muted">{{ t("shimu.noAttachments") }}</p>
-          <div v-for="att in attachments" :key="att.url" class="file">
-            <span class="file-kind">{{ kindLabel(att.kind) }}</span>
-            <span class="file-name" :title="att.url">{{ att.name }}</span>
-            <span v-if="att.size" class="file-size">{{ formatSize(att.size) }}</span>
-            <n-button
-              size="tiny"
-              :loading="downloading === att.url"
-              @click="download(att, false)"
-            >
-              {{ t("shimu.download") }}
-            </n-button>
-            <n-button
-              v-if="att.kind === 'schematic'"
-              size="tiny"
-              type="primary"
-              :loading="downloading === att.url"
-              @click="download(att, true)"
-            >
-              {{ t("shimu.downloadPreview") }}
-            </n-button>
-          </div>
+          <template v-else-if="attachments.length">
+            <div v-for="att in attachments" :key="att.url" class="file">
+              <span class="file-kind">{{ kindLabel(att.kind) }}</span>
+              <span class="file-name" :title="att.url">{{ att.name }}</span>
+              <span v-if="att.size" class="file-size">{{ formatSize(att.size) }}</span>
+              <button
+                class="mini-btn"
+                :disabled="downloading === att.url"
+                @click="download(att, false)"
+              >
+                {{ downloading === att.url ? t("common.loading") : t("shimu.download") }}
+              </button>
+              <button
+                v-if="att.kind === 'schematic'"
+                class="mini-btn primary"
+                :disabled="downloading === att.url"
+                @click="download(att, true)"
+              >
+                {{ downloading === att.url ? t("common.loading") : t("shimu.downloadPreview") }}
+              </button>
+            </div>
+          </template>
+          <p v-else-if="contentLocked" class="locked">
+            {{ t("shimu.attachmentsLockedPay") }}
+            <button class="locked-link" @click="openOnSite">{{ t("shimu.openPost") }} →</button>
+          </p>
+          <p v-else class="locked">
+            {{ t("shimu.attachmentsLockedReply") }}
+            <button class="locked-link" @click="openOnSite">{{ t("shimu.openPost") }} →</button>
+          </p>
         </div>
       </div>
     </div>
@@ -742,6 +793,34 @@ function paidDetailLabel(p: ShimuPost): string {
     </template>
 
     <ShimuLoginDialog ref="loginRef" />
+
+    <!-- 投影下载完成后：选择要复制到的实例 -->
+    <NModal
+      v-model:show="instancePickerVisible"
+      preset="card"
+      :title="t('shimu.selectInstance')"
+      style="max-width: 420px"
+      :bordered="false"
+      size="small"
+    >
+      <div v-if="!instanceOptions.length" class="muted">{{ t("shimu.noInstance") }}</div>
+      <div v-else class="picker-row">
+        <n-select
+          v-model:value="pickerInstanceId"
+          :options="instanceOptions"
+          :placeholder="t('shimu.selectInstance')"
+          filterable
+        />
+        <n-button
+          type="primary"
+          :loading="pickerBusy"
+          :disabled="!pickerInstanceId"
+          @click="confirmAddToInstance"
+        >
+          {{ t("shimu.addToInstance") }}
+        </n-button>
+      </div>
+    </NModal>
 
     <!-- 图片放大查看（teleport 到 body，避免被内容区的 overflow 裁剪） -->
     <Teleport to="body">
@@ -963,7 +1042,7 @@ function paidDetailLabel(p: ShimuPost): string {
   transition: border-color 0.15s;
 }
 .gallery img:hover { border-color: var(--accent); }
-.detail-body { font-size: 13px; line-height: 1.75; color: var(--text-1); overflow-wrap: anywhere; }
+.detail-body { font-size: 13px; line-height: 1.75; color: var(--text-1); overflow-wrap: anywhere; user-select: text; cursor: text; }
 /* —— 富文本排版（帖子正文由站内编辑器生成） —— */
 .detail-body :deep(img) { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 8px 0; cursor: zoom-in; }
 .detail-body :deep(a) { color: var(--accent); text-decoration: none; }
@@ -1040,28 +1119,46 @@ function paidDetailLabel(p: ShimuPost): string {
 .detail-body :deep(.re-file-tag) { color: var(--text-3); font-size: 11px; }
 .detail-body :deep(:first-child) { margin-top: 0; }
 .detail-body :deep(:last-child) { margin-bottom: 0; }
-.locked { font-size: 12px; line-height: 1.7; color: var(--accent); }
-.files { display: flex; flex-direction: column; gap: 6px; }
+.locked {
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+.locked-link {
+  margin-left: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.locked-link:hover { color: var(--accent-hover); }
+.files { display: flex; flex-direction: column; gap: 8px; }
 .files-head { font-size: 12px; color: var(--text-3); }
 .file {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 10px;
+  gap: 8px;
+  padding: 8px 12px;
   border-radius: 8px;
-  border: 1px solid var(--border);
   background: var(--panel);
 }
 .file-kind {
   flex: none;
-  padding: 1px 7px;
+  padding: 2px 8px;
   border-radius: 5px;
-  font-size: 10px;
+  font-size: 11px;
   color: var(--text-3);
   background: var(--bg-2);
-  border: 1px solid var(--border);
 }
 .file-size { flex: none; font-size: 11px; color: var(--text-3); }
+.file .mini-btn { padding: 4px 10px; font-size: 11px; }
 
 /* —— 图片放大查看 —— */
 .img-viewer {
@@ -1119,4 +1216,6 @@ function paidDetailLabel(p: ShimuPost): string {
   font-size: 12px;
   color: var(--text-1);
 }
+.picker-row { display: flex; gap: 8px; align-items: center; }
+.picker-row .n-select { flex: 1; min-width: 200px; }
 </style>

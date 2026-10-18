@@ -299,7 +299,7 @@ function save() {
 }
 .ip-img-ok {
   font-size: 12px;
-  color: #4ec9a0;
+  color: var(--success);
 }
 .ip-footer {
   display: flex;
@@ -321,8 +321,8 @@ function save() {
   font-family: inherit;
 }
 .ip-btn.primary {
-  background: linear-gradient(135deg, #e89a4b, #d97f33);
-  color: #1a1208;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--accent-contrast);
   border: none;
 }
 </style>

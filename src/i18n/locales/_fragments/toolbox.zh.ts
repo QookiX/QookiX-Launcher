@@ -33,6 +33,11 @@ export default {
     schematicWalkSpeed: "速度",
     schematicAttribution:
       "方块模型与纹理资源来自本地 Minecraft 客户端",
+    schematicAddToGame: "投影添加到实例",
+    schematicSelectInstance: "选择实例",
+    schematicNoInstance: "暂无可用实例",
+    schematicAdded: "已添加到实例「{name}」",
+    schematicNotOpened: "请先打开一个投影文件",
     nbtTitle: "NBT 存档编辑器",
     nbtDesc: "查看并修改世界存档：游戏模式、难度、种子、时间、天气、出生点、世界边界等",
     moreTitle: "更多功能",

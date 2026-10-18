@@ -1833,7 +1833,7 @@ onBeforeUnmount(() => {
 .chip.red.active {
   background: var(--danger-14);
   border-color: var(--danger-40);
-  color: #e5534b;
+  color: var(--danger);
 }
 .chip.gold.active {
   background: var(--accent-14);
@@ -1843,7 +1843,7 @@ onBeforeUnmount(() => {
 .chip.teal.active {
   background: var(--success-12);
   border-color: rgba(78, 201, 160, 0.45);
-  color: #4ec9a0;
+  color: var(--success);
 }
 .chip.purple.active {
   background: rgba(127, 119, 221, 0.16);

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, onBeforeRouteLeave } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useInstancesStore } from "../stores/instances";
@@ -206,6 +206,32 @@ onMounted(() => {
   accounts.load();
   settingsStore.load();
   pinsStore.items.filter((p) => p.type === "server").forEach((p) => pingPin(p));
+  // pin-card 逐个进入：每个延迟递增 60ms；section 在最后一个 pin-card 之后
+  requestAnimationFrame(() => {
+    const cards = document.querySelectorAll<HTMLElement>(".pin-card");
+    cards.forEach((card, i) => {
+      card.style.animationDelay = `${0.32 + i * 0.06}s`;
+    });
+    if (sectionEl.value) {
+      const sectionGlass = sectionEl.value.querySelector<HTMLElement>(".glass");
+      if (sectionGlass) {
+        sectionGlass.style.animationDelay = `${0.32 + cards.length * 0.06 + 0.1}s`;
+      }
+    }
+  });
+});
+
+// 离开首页时让 .section 往下滑出：先取消进场 animation 让 transform 回到默认值，
+// reflow 后下一帧加 leaving class 触发 transition（translateY 抵消整页上移后净往下）
+const sectionEl = ref<HTMLElement>();
+onBeforeRouteLeave(() => {
+  const glass = sectionEl.value?.querySelector<HTMLElement>(".glass");
+  if (!glass) return;
+  glass.style.animation = "none";
+  void glass.offsetHeight;
+  requestAnimationFrame(() => {
+    glass.classList.add("leaving");
+  });
 });
 </script>
 
@@ -219,7 +245,7 @@ onMounted(() => {
         <h1>{{ t("home.hero.titlePre") }} <span class="accent">{{ t("home.hero.titleHighlight") }}</span></h1>
         <p>{{ t("home.hero.subtitle") }}</p>
         <div class="hero-actions">
-          <button class="btn ghost big" @click="router.push('/browse')">
+          <button class="btn primary big" @click="router.push('/browse')">
             <IconCompass /> {{ t("home.hero.browseContent") }}
           </button>
           <button class="btn ghost big" @click="accounts.showManager = true">
@@ -281,7 +307,7 @@ onMounted(() => {
       </div>
     </section>
 
-    <section class="section">
+    <section ref="sectionEl" class="section">
       <div v-if="!instances.instances.length" class="empty glass">
         <p>{{ t("home.empty.noInstance") }}</p>
         <div class="home-empty-actions">
@@ -372,6 +398,7 @@ onMounted(() => {
   justify-content: space-between;
   align-items: center;
   gap: 16px;
+  animation: home-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) 0.24s backwards;
 }
 .hero-glow {
   position: absolute;
@@ -433,7 +460,7 @@ onMounted(() => {
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
 }
 .btn.primary:hover {
   filter: brightness(1.08);
@@ -465,14 +492,55 @@ onMounted(() => {
   border-radius: 24px;
   object-fit: contain;
 }
-/* 页面整体不再限宽；只有下方这张实例启动卡片保持限宽居中，
-   否则超宽屏上会被拉成一条很长的横条 */
+/* 常驻实例卡片固定在窗口底部（sticky footer）。
+    #app-content 是统一滚动容器，.section 用 sticky bottom:0 贴底，
+    内容少时 min-height:100% 撑满，内容多时滚动始终可见。 */
 .section {
-  margin-top: auto;
+  position: sticky;
+  bottom: 0;
   width: 100%;
   max-width: 1080px;
+  margin-top: auto;
   margin-left: auto;
   margin-right: auto;
+  padding-top: 8px;
+  z-index: 1;
+}
+/* 进场动画在 .section > .glass 上而非 .section 上：
+   父元素 transform 会隔离子元素 backdrop-filter，自身 transform 则不会 */
+.section > .glass {
+  animation: home-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) 0.40s backwards;
+}
+@keyframes home-card-enter {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+.section::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: -24px;
+  bottom: 0;
+  z-index: -1;
+  pointer-events: none;
+}
+/* 离开首页时 .section 往下滑出。
+   取消整页 overflow:hidden 让位移可见；
+   translateY(64px) 抵消整页 translateY(-32px) 后净 +32px 往下 */
+.slide-forward-leave-active {
+  overflow: visible;
+}
+.section > .glass.leaving {
+  transition: transform 0.22s ease-in, opacity 0.22s ease-in;
+  transform: translateY(64px);
+  opacity: 0;
 }
 /* 固定快捷启动 */
 .pin-block {
@@ -493,12 +561,7 @@ onMounted(() => {
   gap: 14px;
   padding: 18px;
   cursor: pointer;
-  transition: border-color 0.15s, transform 0.15s, background 0.15s;
-}
-.pin-card:hover {
-  border-color: var(--accent-45);
-  background: var(--w-06);
-  transform: translateY(-1px);
+  animation: home-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
 .pin-icon {
   width: 46px;
@@ -545,7 +608,7 @@ onMounted(() => {
 }
 .pin-type.world {
   background: rgba(122, 208, 138, 0.15);
-  color: #7ad08a;
+  color: var(--success);
 }
 .pin-type.instance {
   background: var(--accent-16);
@@ -580,13 +643,13 @@ onMounted(() => {
   background: currentColor;
 }
 .pin-status .latency.good {
-  color: #7ad08a;
+  color: var(--success);
 }
 .pin-status .latency.mid {
-  color: #ffc34d;
+  color: var(--warn);
 }
 .pin-status .latency.bad {
-  color: #ff6b6b;
+  color: var(--danger);
 }
 .pin-status .latency.off {
   color: var(--text-3);
@@ -618,7 +681,7 @@ onMounted(() => {
 }
 .pin-unpin:hover {
   background: var(--w-08);
-  color: #ff6b6b;
+  color: var(--danger);
 }
 .section-head {
   display: flex;

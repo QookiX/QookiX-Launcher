@@ -272,8 +272,7 @@ onMounted(async () => {
 .tb-action.primary {
   border: none;
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
-  box-shadow: 0 4px 16px var(--accent-03);
+  color: var(--accent-contrast);
 }
 .tb-action.primary:hover:not(:disabled) {
   filter: brightness(1.08);

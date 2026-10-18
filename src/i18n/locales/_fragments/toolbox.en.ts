@@ -34,6 +34,11 @@ export default {
     schematicWalkSpeed: "Speed",
     schematicAttribution:
       "Block models and textures from local Minecraft client.",
+    schematicAddToGame: "Add schematic to instance",
+    schematicSelectInstance: "Select instance",
+    schematicNoInstance: "No instances available",
+    schematicAdded: "Added to instance \"{name}\"",
+    schematicNotOpened: "Open a schematic file first",
     moreTitle: "More",
     moreDesc: "More tools coming soon.",
     nbtTitle: "NBT Editor",

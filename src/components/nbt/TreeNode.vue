@@ -154,7 +154,7 @@ const showRawKey = computed(() => label.value !== props.node.name);
   cursor: pointer;
 }
 .tn-act.danger {
-  color: #e5534b;
+  color: var(--danger);
   font-size: 13px;
 }
 </style>

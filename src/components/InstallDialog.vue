@@ -1173,7 +1173,7 @@ async function install() {
 }
 .id-ver-type.release {
   background: rgba(78, 201, 160, 0.14);
-  color: #4ec9a0;
+  color: var(--success);
 }
 .id-ver-type.beta {
   background: var(--accent-soft);
@@ -1181,7 +1181,7 @@ async function install() {
 }
 .id-ver-type.alpha {
   background: var(--danger-14);
-  color: #e5534b;
+  color: var(--danger);
 }
 .id-ver-mc {
   font-size: 11px;
@@ -1256,7 +1256,7 @@ async function install() {
 }
 .id-dep-chip.required .id-dep-tag {
   background: var(--danger-16);
-  color: #e5534b;
+  color: var(--danger);
 }
 .id-dep-chip.optional .id-dep-tag {
   background: var(--info-15);

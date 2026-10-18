@@ -45,12 +45,25 @@ const tools = computed(() => [
 function go(to: string) {
   router.push(to);
 }
+
+// 工具卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发。
+// 数量多时自动收紧步长，整批级联 ~0.7s 内跑完。
+function cardDelay(i: number): string {
+  const step = Math.min(0.045, 0.6 / Math.max(1, tools.value.length));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
 </script>
 
 <template>
   <div id="toolbox-root" class="toolbox-view">
     <div class="grid">
-      <section v-for="tool in tools" :key="tool.key" class="tool-card glass clickable" @click="go(tool.to)">
+      <section
+        v-for="(tool, i) in tools"
+        :key="tool.key"
+        class="tool-card glass clickable"
+        :style="{ animationDelay: cardDelay(i) }"
+        @click="go(tool.to)"
+      >
         <div class="tool-cover" :style="tool.coverImg ? { backgroundImage: `url(${tool.coverImg})` } : { background: tool.cover }">
           <component :is="tool.icon" class="tool-cover-icon" />
           <span v-if="tool.beta" class="beta-tag">BETA</span>
@@ -67,7 +80,24 @@ function go(to: string) {
 <style scoped>
 .toolbox-view { display: flex; flex-direction: column; gap: 16px; }
 .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
-.tool-card { overflow: hidden; display: flex; flex-direction: column; }
+.tool-card {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
+     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
+  animation: tool-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes tool-card-enter {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
 .tool-cover {
   height: 124px;
   display: flex;

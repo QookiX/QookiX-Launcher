@@ -162,6 +162,30 @@ const filtered = computed<Instance[]>(() => {
   return instances.inGroup(filter.value);
 });
 
+// 实例卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：按展示顺序给每张
+// 卡片分配全局序号，分组视图下跨分组连续编号（跳过已折叠分组，避免空洞），
+// 单分组视图按列表顺序。切换筛选/展开分组导致卡片重新挂载时重播级联。
+const enterIndex = computed(() => {
+  const map = new Map<string, number>();
+  let i = 0;
+  if (filter.value === "all") {
+    for (const s of sections.value) {
+      if (collapsed.value[s.key]) continue;
+      for (const inst of s.items) map.set(inst.id, i++);
+    }
+  } else {
+    for (const inst of filtered.value) map.set(inst.id, i++);
+  }
+  return map;
+});
+
+// 数量多时自动收紧步长，保证整批级联在 ~0.7s 内跑完
+function cardDelay(id: string): string {
+  const i = enterIndex.value.get(id) ?? 0;
+  const step = Math.min(0.045, 0.6 / Math.max(1, enterIndex.value.size));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
+
 const totalCount = computed(() => instances.instances.length);
 
 function openCreateGroup() {
@@ -303,6 +327,7 @@ async function moveTo(groupId: string | null) {
               v-for="inst in s.items"
               :key="inst.id"
               :instance="inst"
+              :style="{ animationDelay: cardDelay(inst.id) }"
               @move="movingInstance = $event"
             />
             <p v-if="!s.items.length" class="group-empty">{{ t("instances.groupEmpty") }}</p>
@@ -316,6 +341,7 @@ async function moveTo(groupId: string | null) {
           v-for="inst in filtered"
           :key="inst.id"
           :instance="inst"
+          :style="{ animationDelay: cardDelay(inst.id) }"
           @move="movingInstance = $event"
         />
         <p v-if="!filtered.length" class="group-empty">{{ t("instances.filteredGroupEmpty") }}</p>
@@ -494,7 +520,7 @@ async function moveTo(groupId: string | null) {
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
 }
 .btn.primary:hover {
   filter: brightness(1.08);
@@ -567,13 +593,28 @@ async function moveTo(groupId: string | null) {
   background: var(--w-08);
 }
 .op.danger:hover {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-50);
 }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
+}
+/* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
+   未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
+.grid :deep(.inst-card) {
+  animation: inst-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes inst-card-enter {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }
 .group-empty {
   grid-column: 1 / -1;

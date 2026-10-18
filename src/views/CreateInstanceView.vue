@@ -1013,7 +1013,7 @@ onUnmounted(() => {
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
 }
 .btn.primary:hover:not(:disabled) {
   filter: brightness(1.08);

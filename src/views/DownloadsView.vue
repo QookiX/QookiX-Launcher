@@ -87,6 +87,13 @@ function toggle(t: TaskEntry) {
   expanded.value = next;
 }
 
+// 任务卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发。
+// 新任务出现时单张进场提示下载开始；切换 tab / 任务在活跃与已完成间移动时重播。
+function cardDelay(i: number): string {
+  const step = Math.min(0.045, 0.6 / Math.max(1, visibleTasks.value.length));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
+
 // 整合包会自动创建新实例，不是用户选择的目标实例，所以不显示"目标实例"
 function isModpackTask(t: TaskEntry) {
   return (t.source ?? "").startsWith("整合包");
@@ -145,7 +152,12 @@ const { onEnter: onExpandEnter, onLeave: onExpandLeave } = useHeightTransition({
     </div>
 
     <div v-else class="task-list">
-      <div v-for="task in visibleTasks" :key="task.id" class="task-card glass">
+      <div
+        v-for="(task, i) in visibleTasks"
+        :key="task.id"
+        class="task-card glass"
+        :style="{ animationDelay: cardDelay(i) }"
+      >
         <div class="task-top" @click="toggle(task)">
           <div class="task-main">
             <div class="task-title text-ellipsis">
@@ -368,6 +380,19 @@ const { onEnter: onExpandEnter, onLeave: onExpandLeave } = useHeightTransition({
   display: flex;
   flex-direction: column;
   gap: 10px;
+  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
+     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
+  animation: dl-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes dl-card-enter {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }
 .task-top {
   display: flex;
@@ -416,11 +441,11 @@ const { onEnter: onExpandEnter, onLeave: onExpandLeave } = useHeightTransition({
   background: var(--accent-soft);
 }
 .status.ok {
-  color: #4ec9a0;
+  color: var(--success);
   background: var(--success-12);
 }
 .status.fail {
-  color: #e5534b;
+  color: var(--danger);
   background: var(--danger-12);
 }
 .task-meta {
@@ -487,7 +512,7 @@ const { onEnter: onExpandEnter, onLeave: onExpandLeave } = useHeightTransition({
   border-radius: 8px;
   padding: 8px 12px;
   font-size: 13px;
-  color: #e5534b;
+  color: var(--danger);
   word-break: break-all;
   user-select: text;
   -webkit-user-select: text;
@@ -605,10 +630,10 @@ const { onEnter: onExpandEnter, onLeave: onExpandLeave } = useHeightTransition({
   text-align: center;
 }
 .file-row.ok .file-status {
-  color: #4ec9a0;
+  color: var(--success);
 }
 .file-row.fail .file-status {
-  color: #e5534b;
+  color: var(--danger);
 }
 .file-row.active .file-status {
   color: var(--accent, #e89a4b);

@@ -158,7 +158,7 @@ onBeforeUnmount(unbind);
   cursor: default;
 }
 .ctx-item.danger {
-  color: #e5534b;
+  color: var(--danger);
 }
 .ctx-item.danger:hover:not(:disabled) {
   background: var(--danger-14);
@@ -174,7 +174,7 @@ onBeforeUnmount(unbind);
   color: var(--text-3);
 }
 .ctx-item.danger .ctx-icon {
-  color: #e5534b;
+  color: var(--danger);
 }
 
 .ctx-label {

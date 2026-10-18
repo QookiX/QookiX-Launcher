@@ -1118,7 +1118,7 @@ onBeforeUnmount(() => {
   background: var(--w-08);
 }
 .act.danger:hover {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-50);
 }
 
@@ -1340,7 +1340,7 @@ onBeforeUnmount(() => {
 }
 .btn.danger {
   background: var(--danger-14);
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-45);
 }
 .btn:disabled {

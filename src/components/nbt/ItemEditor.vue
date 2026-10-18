@@ -495,7 +495,7 @@ watch(() => props.uuid, () => load(), { immediate: true });
   border-color: var(--accent-04);
 }
 .mini-btn.danger {
-  color: #e5534b;
+  color: var(--danger);
 }
 .mini-btn:disabled {
   opacity: 0.5;

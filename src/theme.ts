@@ -48,6 +48,23 @@ export function rgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
+/**
+ * Pick a readable text color (dark ink or white) for a filled button of the
+ * given accent. Uses W3C relative luminance; the 0.55 threshold favors dark
+ * ink for warm/light accents (amber, gold) and white for dark/saturated ones
+ * (blue, violet, deep green) so contrast stays legible when the user picks a
+ * custom theme color.
+ */
+export function accentContrast(hex: string): string {
+  const { r, g, b } = hexToRgb(hex);
+  const toLin = (v: number) => {
+    const s = v / 255;
+    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+  };
+  const L = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
+  return L > 0.55 ? "#1a1208" : "#ffffff";
+}
+
 export const ACCENT = DEFAULT_ACCENT;
 export const ACCENT_DEEP = darken(DEFAULT_ACCENT);
 export const ACCENT_SOFT = rgba(DEFAULT_ACCENT, 0.14);

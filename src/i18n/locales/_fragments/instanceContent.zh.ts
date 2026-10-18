@@ -61,4 +61,6 @@ export default {
   loading: "加载中…",
   noVersions: "没有可用的版本",
   switch: "切换",
+  dropHint: "松开以添加到{target}",
+  droppedCount: "已添加 {n} 个文件",
 };

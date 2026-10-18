@@ -797,7 +797,7 @@ watch(
   transition: all 0.12s;
 }
 .bk-del:hover {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-50);
 }
 </style>

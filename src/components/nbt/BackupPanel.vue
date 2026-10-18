@@ -240,7 +240,7 @@ watch(
   background: var(--w-08);
 }
 .mini-btn.danger {
-  color: #e5534b;
+  color: var(--danger);
 }
 .mini-btn:disabled {
   opacity: 0.5;

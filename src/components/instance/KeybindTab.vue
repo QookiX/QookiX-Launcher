@@ -1008,7 +1008,7 @@ async function save() {
 }
 .conflict-badge {
   font-size: 12px;
-  color: #e5534b;
+  color: var(--danger);
   cursor: help;
 }
 .dirty {
@@ -1131,7 +1131,7 @@ async function save() {
 }
 .kb-key.conflict {
   background: rgba(229, 83, 75, 0.28);
-  border-color: #e5534b;
+  border-color: var(--danger);
   color: #ffb4ad;
 }
 /* 多媒体键：纯装饰，游戏内无法绑定 */
@@ -1549,7 +1549,7 @@ async function save() {
 }
 .row.conflict .label,
 .row.conflict .row-key {
-  color: #e5534b;
+  color: var(--danger);
 }
 .names {
   display: flex;

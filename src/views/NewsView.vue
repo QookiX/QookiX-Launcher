@@ -11,6 +11,13 @@ const { t } = useI18n();
 const message = useMessage();
 const newsStore = useNewsStore();
 
+// 资讯卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发。
+// 数量多时自动收紧步长，保证整批级联在 ~0.7s 内跑完；刷新换一批新闻时重播。
+function cardDelay(i: number): string {
+  const step = Math.min(0.045, 0.6 / Math.max(1, newsStore.news.length));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
+
 
 async function refresh() {
   try {
@@ -42,9 +49,10 @@ onMounted(async () => {
     <div v-else-if="!newsStore.news.length" class="empty glass">{{ t("news.empty") }}</div>
     <div v-else class="news-list">
       <div
-        v-for="n in newsStore.news"
+        v-for="(n, i) in newsStore.news"
         :key="n.url"
         class="news-card glass"
+        :style="{ animationDelay: cardDelay(i) }"
         @click="n.url && openUrl(n.url).catch(() => {})"
       >
         <div v-if="n.image" class="news-image">
@@ -119,6 +127,19 @@ onMounted(async () => {
   overflow: hidden;
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
+  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
+     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
+  animation: news-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes news-card-enter {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }
 .news-card:hover {
   transform: translateY(-2px);

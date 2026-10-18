@@ -701,7 +701,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .cw-inst.missing {
-  color: #e5534b;
+  color: var(--danger);
   background: rgba(229, 83, 75, 0.14);
 }
 /* 行内标签不要被挤成竖排 */
@@ -769,7 +769,7 @@ onBeforeUnmount(() => {
 }
 .auth-err {
   font-size: 12px;
-  color: #e5534b;
+  color: var(--danger);
   text-align: center;
   line-height: 1.8;
 }
@@ -822,7 +822,7 @@ onBeforeUnmount(() => {
   padding: 0;
 }
 .link-btn:hover {
-  color: #e5534b;
+  color: var(--danger);
 }
 .toolbar {
   display: flex;
@@ -975,7 +975,7 @@ onBeforeUnmount(() => {
   font-size: 13px;
 }
 .snap-del:hover {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-50);
 }
 .cw-warn {

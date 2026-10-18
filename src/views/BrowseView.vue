@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { NButton, NDrawer, NDrawerContent, NSelect, useMessage, type SelectOption } from "naive-ui";
@@ -195,6 +195,14 @@ function onPage(p: number) {
   search();
 }
 
+// 结果卡片逐个进场（学习首页 pin-card 的做法）：延迟由内联 style 下发给每张卡片。
+// 数量多时自动收紧步长，保证整批级联在 ~0.7s 内跑完；loading 隐藏/显示、
+// 换页/换筛选导致 key 更换时都会重新触发一次级联。
+function cardDelay(i: number): string {
+  const step = Math.min(0.045, 0.6 / Math.max(1, results.value.length));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
+
 const hasFilter = computed(() => !!category.value || !!gameVersion.value || !!loader.value);
 
 function resetFilters() {
@@ -278,7 +286,54 @@ watch(query, () => {
   }, 450);
 });
 
-watch([provider, type], async () => {
+// 按分类保留 UI 状态：切回已访问过的分类直接恢复，不重新加载
+interface TypeTab {
+  category: string;
+  page: number;
+  loader: string;
+  results: ProjectHit[];
+  total: number;
+  cfError: string;
+  cfCount: number;
+  catOptions: { label: string; value: string }[];
+}
+const typeTabs = reactive<Record<string, TypeTab>>({});
+function saveTypeTab() {
+  typeTabs[type.value] = {
+    category: category.value,
+    page: page.value,
+    loader: loader.value,
+    results: results.value,
+    total: total.value,
+    cfError: cfError.value,
+    cfCount: cfCount.value,
+    catOptions: catOptions.value,
+  };
+}
+function restoreTypeTab(key: string): boolean {
+  const tab = typeTabs[key];
+  if (!tab) return false;
+  category.value = tab.category;
+  page.value = tab.page;
+  loader.value = tab.loader;
+  results.value = tab.results;
+  total.value = tab.total;
+  cfError.value = tab.cfError;
+  cfCount.value = tab.cfCount;
+  catOptions.value = tab.catOptions;
+  return true;
+}
+function switchType(key: string) {
+  if (key === type.value) return;
+  saveTypeTab();
+  type.value = key;
+}
+
+watch([provider, type], async (n, o) => {
+  if (n[0] !== o?.[0]) {
+    for (const k in typeTabs) delete typeTabs[k];
+  }
+  if (restoreTypeTab(type.value)) return;
   category.value = "";
   if (!showLoaderFilter.value) loader.value = "";
   page.value = 0;
@@ -434,7 +489,6 @@ const { indicatorStyle: typeIndicatorStyle, refresh: refreshTypeIndicator } = us
   typeBox,
   () => Array.from(typeBox.value?.querySelectorAll<HTMLElement>(".type-card button") ?? []),
   () => types.value.findIndex((tp) => tp.key === type.value),
-  { axis: "horizontal" }
 );
 watch(type, () => nextTick(() => refreshTypeIndicator()));
 
@@ -476,7 +530,7 @@ onMounted(async () => {
         v-for="tp in types"
         :key="tp.key"
         :class="{ active: type === tp.key }"
-        @click="type = tp.key"
+        @click="switchType(tp.key)"
       >
         {{ tp.label }}
       </button>
@@ -568,13 +622,14 @@ onMounted(async () => {
     <div v-show="!loading && !results.length" class="center">{{ t("browse.search.noResult") }}</div>
     <div v-show="!loading && results.length" class="grid" :class="`view-${view}`">
       <ProjectCard
-        v-for="p in results"
+        v-for="(p, i) in results"
         :key="p.provider + p.id"
         :project="p"
         :view="view"
         :translate-mode="translateMode"
         :translating="translatingSlugs.includes(p.id)"
         :translated-desc="translatedDescs[p.id] ?? null"
+        :style="{ animationDelay: cardDelay(i) }"
         @install="openInstall"
         @translate="translateCard"
       />
@@ -680,34 +735,32 @@ onMounted(async () => {
 }
 .type-card {
   position: relative;
-  display: flex;
-  justify-content: flex-start;
-  flex-wrap: wrap;
-  gap: 8px;
-  padding: 10px 14px;
+  display: inline-flex;
+  gap: 4px;
+  padding: 5px;
+  align-self: flex-start;
 }
 .type-card .indicator {
   position: absolute;
-  top: 10px;
-  bottom: 10px;
+  top: 5px;
+  bottom: 5px;
   border-radius: 9px;
   background: var(--accent-soft);
   pointer-events: none;
 }
 .type-card button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
   border: none;
   background: transparent;
   color: var(--text-2);
-  padding: 8px 20px;
+  padding: 8px 18px;
   border-radius: 9px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
-  transition: all 0.12s;
-}
-.type-card button:hover {
-  background: var(--w-05);
 }
 .type-card button.active {
   color: var(--accent);
@@ -800,6 +853,21 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: 16px;
+}
+/* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
+   未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
+.grid :deep(.p-card) {
+  animation: browse-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes browse-card-enter {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }
 .grid.view-list,
 .grid.view-compact {

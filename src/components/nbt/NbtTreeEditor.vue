@@ -452,6 +452,6 @@ watch(
   background: var(--w-08);
 }
 .menu-item.danger {
-  color: #e5534b;
+  color: var(--danger);
 }
 </style>

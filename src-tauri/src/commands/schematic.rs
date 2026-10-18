@@ -1175,3 +1175,47 @@ pub fn schematic_preview_close(session_id: String) -> Result<(), String> {
         .remove(&session_id);
     Ok(())
 }
+
+/// 把投影文件复制到指定实例的 schematics 目录，返回最终保存路径。
+/// 同名文件自动加 "(1)"/"(2)" 后缀避免覆盖。
+#[tauri::command]
+pub fn copy_file_to_instance_schematics(
+    state: tauri::State<'_, crate::state::AppState>,
+    source_path: String,
+    instance_id: String,
+    filename: Option<String>,
+) -> Result<String, String> {
+    let src = std::path::Path::new(&source_path);
+    if !src.is_file() {
+        return Err(format!("源文件不存在: {}", source_path));
+    }
+    let dir = state.instances_dir().join(&instance_id).join("schematics");
+    std::fs::create_dir_all(&dir).map_err(|e| format!("创建目录失败: {e}"))?;
+    let raw_name = filename
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .or_else(|| src.file_name().map(|f| f.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "schematic".to_string());
+    let mut dest = dir.join(&raw_name);
+    if dest.exists() {
+        let p = std::path::Path::new(&raw_name);
+        let stem = p
+            .file_stem()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| raw_name.clone());
+        let ext = p
+            .extension()
+            .map(|s| format!(".{}", s.to_string_lossy()))
+            .unwrap_or_default();
+        let mut i = 1;
+        loop {
+            dest = dir.join(format!("{stem} ({i}){ext}"));
+            if !dest.exists() {
+                break;
+            }
+            i += 1;
+        }
+    }
+    std::fs::copy(&src, &dest).map_err(|e| format!("复制失败: {e}"))?;
+    Ok(dest.to_string_lossy().to_string())
+}

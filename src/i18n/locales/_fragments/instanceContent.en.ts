@@ -61,4 +61,6 @@ export default {
   loading: "Loading…",
   noVersions: "No versions available",
   switch: "Switch",
+  dropHint: "Release to add to {target}",
+  droppedCount: "Added {n} file(s)",
 };

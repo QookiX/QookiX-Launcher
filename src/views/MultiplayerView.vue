@@ -173,6 +173,14 @@ async function toggleRun(id: string, running: boolean) {
   }
 }
 
+// 服务器卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发给每张卡片。
+// 初次加载、切标签页回来时整批挂载播放级联；新建单个服务器时只有新卡片进场。
+// 数量多时自动收紧步长，保证整批级联在 ~0.7s 内跑完。
+function cardDelay(i: number): string {
+  const step = Math.min(0.045, 0.6 / Math.max(1, servers.servers.length));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
+
 // ---- 陶瓦联机（联机房间）----
 const tc = ref<TerracottaInfo | null>(null);
 const tcLoading = ref(false);
@@ -465,9 +473,10 @@ onUnmounted(() => stopTcPoll());
     <template v-if="tab === 'servers'">
       <div v-if="servers.count" class="grid">
         <div
-          v-for="s in servers.servers"
+          v-for="(s, i) in servers.servers"
           :key="s.id"
           class="server-card glass clickable"
+          :style="{ animationDelay: cardDelay(i) }"
           @click="router.push(`/multiplayer/${s.id}`)"
         >
           <div class="card-head">
@@ -937,7 +946,7 @@ onUnmounted(() => stopTcPoll());
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
 }
 .btn.primary:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -952,7 +961,7 @@ onUnmounted(() => stopTcPoll());
 }
 .btn.danger {
   background: var(--danger-16);
-  color: #f0907f;
+  color: var(--danger-text);
   border: 1px solid var(--danger-40);
 }
 .btn.danger:hover {
@@ -973,6 +982,19 @@ onUnmounted(() => stopTcPoll());
   flex-direction: column;
   gap: 14px;
   cursor: pointer;
+  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
+     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
+  animation: mp-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes mp-card-enter {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
 }
 .card-head {
   display: flex;
@@ -1088,7 +1110,7 @@ onUnmounted(() => stopTcPoll());
   background: rgba(224, 168, 90, 0.12);
 }
 .op.danger:hover {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-50);
 }
 .empty {

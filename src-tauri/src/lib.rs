@@ -394,6 +394,7 @@ pub fn run() {
             commands::schematic_preview_read_chunk,
             commands::schematic_preview_block_info,
             commands::schematic_preview_close,
+            commands::copy_file_to_instance_schematics,
             commands::schematic_extract_resources,
         ])
         .on_window_event(|window, event| {

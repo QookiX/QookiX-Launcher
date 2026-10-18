@@ -7,7 +7,7 @@
  * 粘进「手动完成」输入框，效果相同。
  */
 import { computed, ref, watch } from "vue";
-import { NButton, NInput, NModal, useMessage } from "naive-ui";
+import { NButton, NModal, useMessage } from "naive-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useI18n } from "vue-i18n";
 import { shimuErrorMessage, useShimuStore } from "../stores/shimu";
@@ -20,16 +20,10 @@ const store = useShimuStore();
 const show = ref(false);
 /** 已确认第三方平台声明（每次打开弹窗都要重新确认） */
 const agreed = ref(false);
-const advanced = ref(false);
-const clientIdInput = ref("");
-const clientSecretInput = ref("");
-const savingCreds = ref(false);
 /** 浏览器授权页已打开，正在等回调 */
 const waiting = ref(false);
-const manualInput = ref("");
 const busy = ref(false);
 
-const redirectUri = computed(() => store.config?.redirectUri ?? "qookix://oauth/callback");
 /** 只有开发构建才显示「接入设置」（正式包的凭证靠打包时注入） */
 const devMode = computed(() => store.config?.devMode === true);
 /** 正式包且未内置凭证：功能不可用，不给用户填凭证的入口 */
@@ -53,21 +47,11 @@ const balanceText = computed(() => {
 function open() {
   show.value = true;
   void store.init();
-  clientIdInput.value = store.config?.clientId ?? "";
-  clientSecretInput.value = "";
-  manualInput.value = "";
   waiting.value = false;
   // 未登录时先展示第三方平台声明，确认后才继续登录
   agreed.value = false;
-  // 开发构建且还没配凭证时才展开接入设置
-  advanced.value = false;
 }
 defineExpose({ open });
-
-watch(show, (v) => {
-  if (!v) return;
-  if (devMode.value && !store.configured) advanced.value = true;
-});
 
 // 深链回调换 token 成功后自动收起弹窗
 watch(
@@ -83,33 +67,9 @@ watch(
   }
 );
 
-async function saveCreds() {
-  if (!clientIdInput.value.trim()) {
-    message.warning(t("shimu.fillClientId"));
-    return;
-  }
-  savingCreds.value = true;
-  try {
-    await store.setCredentials(clientIdInput.value.trim(), clientSecretInput.value.trim() || undefined);
-    clientSecretInput.value = "";
-    message.success(t("shimu.credsSaved"));
-    advanced.value = false;
-  } catch (e) {
-    message.error(shimuErrorMessage(e));
-  } finally {
-    savingCreds.value = false;
-  }
-}
-
 async function startLogin() {
   if (!store.configured) {
-    // 开发构建：展开面板引导填写；正式包：只提示功能未启用
-    if (devMode.value) {
-      message.warning(t("shimu.needClientId"));
-      advanced.value = true;
-    } else {
-      message.warning(t("shimu.notConfigured"));
-    }
+    message.warning(t("shimu.notConfigured"));
     return;
   }
   busy.value = true;
@@ -117,26 +77,6 @@ async function startLogin() {
     const url = await store.startAuth();
     await openUrl(url);
     waiting.value = true;
-  } catch (e) {
-    message.error(shimuErrorMessage(e));
-  } finally {
-    busy.value = false;
-  }
-}
-
-async function submitManual() {
-  if (!manualInput.value.trim()) return;
-  busy.value = true;
-  try {
-    const r = await store.handleCallback(manualInput.value);
-    if (r === "denied") {
-      message.warning(t("shimu.denied"));
-      return;
-    }
-    manualInput.value = "";
-    show.value = false;
-    message.success(t("shimu.loginSuccess"));
-    emit("loggedIn");
   } catch (e) {
     message.error(shimuErrorMessage(e));
   } finally {
@@ -156,13 +96,6 @@ async function logout() {
 function openSite() {
   const host = store.config?.host ?? "https://www.mcimg.com";
   openUrl(host).catch((e: unknown) => message.error(String(e)));
-}
-
-function copyRedirectUri() {
-  navigator.clipboard
-    ?.writeText(redirectUri.value)
-    .then(() => message.success(t("shimu.redirectCopied")))
-    .catch(() => {});
 }
 </script>
 
@@ -228,50 +161,6 @@ function copyRedirectUri() {
             <n-button type="primary" block :loading="busy" @click="startLogin">
               {{ t("shimu.login") }}
             </n-button>
-          </template>
-
-          <!-- 手动完成：仅开发构建可见（本地未注册 qookix:// 协议时用） -->
-          <div v-if="devMode" class="shimu-manual">
-            <n-input
-              v-model:value="manualInput"
-              size="small"
-              :placeholder="t('shimu.manualPlaceholder')"
-              @keyup.enter="submitManual"
-            />
-            <n-button size="small" :loading="busy" :disabled="!manualInput.trim()" @click="submitManual">
-              {{ t("shimu.manualDone") }}
-            </n-button>
-          </div>
-
-          <!-- 接入设置：仅开发构建可见 -->
-          <template v-if="devMode">
-            <button class="shimu-toggle" @click="advanced = !advanced">
-              {{ advanced ? "▾" : "▸" }} {{ t("shimu.advanced") }}
-            </button>
-            <div v-if="advanced" class="shimu-advanced">
-              <n-input
-                v-model:value="clientIdInput"
-                size="small"
-                :placeholder="t('shimu.clientIdPlaceholder')"
-              />
-              <n-input
-                v-model:value="clientSecretInput"
-                size="small"
-                type="password"
-                show-password-on="click"
-                :placeholder="
-                  store.config?.secretConfigured ? t('shimu.secretKeep') : t('shimu.clientSecretPlaceholder')
-                "
-              />
-              <n-button size="small" :loading="savingCreds" @click="saveCreds">
-                {{ t("shimu.saveCreds") }}
-              </n-button>
-              <p class="shimu-hint">{{ t("shimu.secretHint") }}</p>
-              <p class="shimu-hint">
-                {{ t("shimu.redirectHint") }}
-                <a class="shimu-link" @click.prevent="copyRedirectUri">{{ redirectUri }}</a>
-              </p>
-            </div>
           </template>
         </template>
       </template>
@@ -360,33 +249,5 @@ function copyRedirectUri() {
 .shimu-row {
   display: flex;
   gap: 8px;
-}
-.shimu-manual {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.shimu-toggle {
-  align-self: flex-start;
-  padding: 2px 0;
-  border: none;
-  background: none;
-  color: var(--accent);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.shimu-advanced {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.shimu-advanced .shimu-hint {
-  word-break: break-all;
-}
-.shimu-link {
-  color: var(--accent);
-  cursor: pointer;
-  font-family: "Cascadia Code", Consolas, monospace;
 }
 </style>

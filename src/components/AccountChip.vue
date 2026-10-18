@@ -559,7 +559,7 @@ function onYggAdded(acc: Account) {
   opacity: 1;
 }
 .acctm-remove:hover {
-  color: #e5534b;
+  color: var(--danger);
   background: var(--danger-12);
 }
 .acctm-divider {

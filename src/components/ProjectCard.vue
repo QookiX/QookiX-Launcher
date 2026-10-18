@@ -354,7 +354,7 @@ async function copyName() {
   gap: 6px;
   border: none;
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
   border-radius: 8px;
   padding: 6px 13px;
   font-size: 12px;

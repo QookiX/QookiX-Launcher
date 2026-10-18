@@ -852,6 +852,9 @@ export const api = {
   /** 下载附件到数据目录（付费资源自动先购买），返回本地路径 */
   shimuDownloadFile: (url: string, fileName?: string, fileId?: number) =>
     invoke<ShimuDownloadResult>("shimu_download_file", { url, fileName, fileId }),
+  /** 把投影文件复制到指定实例的 schematics 目录，返回最终保存路径 */
+  copyFileToInstanceSchematics: (sourcePath: string, instanceId: string, filename?: string) =>
+    invoke<string>("copy_file_to_instance_schematics", { sourcePath, instanceId, filename }),
   /** 正文：translate=false 仅拉原文，true 时翻译（内置服务仅 Modrinth） */
   translateBody: (provider: string, slug: string, translate: boolean) =>
     invoke<{

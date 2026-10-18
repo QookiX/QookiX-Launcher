@@ -139,7 +139,7 @@ async function retry() {
   color: #e89a4b;
 }
 .qkms-error-box {
-  color: #e5534b;
+  color: var(--danger);
   font-size: 13px;
   line-height: 1.6;
   word-break: break-all;

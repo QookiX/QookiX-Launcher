@@ -496,14 +496,14 @@ async function stopAll() {
   border: 1px solid var(--danger-40);
   border-radius: 10px;
   background: var(--danger-12);
-  color: #f0907f;
+  color: var(--danger-text);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.14s;
 }
 .stop-all-btn:hover {
-  background: rgba(229, 83, 75, 0.2);
+  background: var(--danger-26);
 }
 .sidebar.collapsed .stop-all-btn {
   justify-content: center;

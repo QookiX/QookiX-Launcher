@@ -90,6 +90,14 @@ const appliedToCurrent = computed(() => {
   return currentSrc.value === lastAppliedSrc.value;
 });
 
+// 皮肤卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发。
+// 已保存列表开头的上传卡片占 0 号位，皮肤从 1 号起算；数量多时自动收紧步长，
+// 整批级联 ~0.7s 内跑完。切换「已保存 / 默认皮肤」tab 时网格重新挂载，级联重播。
+function skinDelay(i: number, total: number): string {
+  const step = Math.min(0.045, 0.6 / Math.max(1, total));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
+
 let skinLoadToken = 0;
 
 function detectSkinModel(dataUrl: string): Promise<"classic" | "slim"> {
@@ -717,10 +725,11 @@ onMounted(async () => {
                 </div>
               </button>
               <div
-                v-for="s in skins"
+                v-for="(s, i) in skins"
                 :key="s.id"
                 class="skin-card"
                 :class="{ active: isCurrentSkin(skinDataUrls[s.id]) }"
+                :style="{ animationDelay: skinDelay(i + 1, skins.length + 1) }"
                 @click="selectLocal(s)"
               >
                 <div class="thumb-wrap">
@@ -746,10 +755,11 @@ onMounted(async () => {
             </div>
             <div class="skin-grid">
               <div
-                v-for="s in BUILTIN_SKINS"
+                v-for="(s, i) in BUILTIN_SKINS"
                 :key="s.name"
                 class="skin-card"
                 :class="{ active: currentKind === 'official' && isCurrentSkin(s.dataUrl) }"
+                :style="{ animationDelay: skinDelay(i, BUILTIN_SKINS.length) }"
                 @click="selectOfficial(s)"
               >
                 <div class="thumb-wrap">
@@ -1173,7 +1183,7 @@ onMounted(async () => {
 }
 .mini-btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
   border: none;
 }
 .mini-btn.primary:hover:not(:disabled) {
@@ -1234,6 +1244,23 @@ onMounted(async () => {
   transition: all 0.14s;
   font-family: inherit;
   text-align: left;
+  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
+     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
+  animation: skin-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes skin-card-enter {
+  from {
+    transform: translateY(28px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+/* 披风弹窗整体已有 scale 入场动画，内部卡片不再级联，避免双重位移 */
+.cape-dialog .skin-card {
+  animation: none;
 }
 .skin-card:hover {
   background: var(--w-07);
@@ -1298,7 +1325,7 @@ onMounted(async () => {
   border-radius: 6px;
   border: none;
   background: var(--k-45);
-  color: #f0907f;
+  color: var(--danger-text);
   font-size: 12px;
   cursor: pointer;
   display: flex;

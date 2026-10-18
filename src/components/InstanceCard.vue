@@ -308,11 +308,11 @@ function confirmDelete() {
   flex-shrink: 0;
 }
 .state.ok {
-  color: #4ec9a0;
+  color: var(--success);
   background: var(--success-12);
 }
 .state.warn {
-  color: #e0a030;
+  color: var(--warn);
   background: rgba(224, 160, 48, 0.12);
 }
 .card-foot {
@@ -359,7 +359,7 @@ function confirmDelete() {
   background: var(--accent-soft);
 }
 .icon-btn.danger:hover {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-50);
 }
 .icon-btn:disabled {
@@ -425,7 +425,7 @@ function confirmDelete() {
   color: var(--accent);
 }
 .more-item.danger:hover {
-  color: #e5534b;
+  color: var(--danger);
   background: var(--danger-12);
 }
 .more-divider {

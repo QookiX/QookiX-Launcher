@@ -167,7 +167,7 @@ onBeforeUnmount(() => {
 }
 .cc-option.is-danger .cc-icon {
   background: var(--danger-12);
-  color: #e5534b;
+  color: var(--danger);
 }
 .cc-option.is-danger:hover:not(:disabled) {
   border-color: rgba(229, 83, 75, 0.65);

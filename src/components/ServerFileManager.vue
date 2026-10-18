@@ -1059,7 +1059,7 @@ onBeforeUnmount(() => {
 }
 .btn.danger {
   background: var(--danger-14);
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-45);
 }
 .btn:disabled {

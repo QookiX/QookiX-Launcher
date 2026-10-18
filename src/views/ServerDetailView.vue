@@ -1043,7 +1043,7 @@ onBeforeUnmount(() => {
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
 }
 .btn.primary:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -1066,7 +1066,7 @@ onBeforeUnmount(() => {
 }
 .btn.danger {
   background: var(--danger-16);
-  color: #f0907f;
+  color: var(--danger-text);
   border: 1px solid var(--danger-40);
 }
 .btn.danger:hover {
@@ -1325,7 +1325,7 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 .log-line.err {
-  color: #f0907f;
+  color: var(--danger-text);
 }
 .file-shortcuts {
   display: flex;
@@ -1415,7 +1415,7 @@ onBeforeUnmount(() => {
   color: var(--text-3);
 }
 .editor-error {
-  color: #f0907f;
+  color: var(--danger-text);
 }
 .editor-textarea {
   width: 100%;

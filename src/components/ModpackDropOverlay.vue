@@ -16,9 +16,11 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { useI18n } from "vue-i18n";
 import { api } from "../api";
 import { useInstancesStore } from "../stores/instances";
+import { instanceDetailActive } from "../composables/instanceDetailDrag";
 import { IconPackage } from "./icons";
 
 const MODPACK_RE = /\.(mrpack|zip)$/i;
+const ZIP_RE = /\.zip$/i;
 
 const router = useRouter();
 const dialog = useDialog();
@@ -38,7 +40,8 @@ function basename(p: string): string {
 }
 
 function findModpack(paths: string[]): string | null {
-  return paths.find((p) => MODPACK_RE.test(p)) ?? null;
+  // 实例详情页激活时让出 .zip（交给实例详情页当光影/材质包），只认 .mrpack
+  return paths.find((p) => MODPACK_RE.test(p) && (!instanceDetailActive.value || !ZIP_RE.test(p))) ?? null;
 }
 
 async function doImport(file: string) {

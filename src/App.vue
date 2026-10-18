@@ -32,6 +32,7 @@ import {
   darken,
   lighten,
   rgba,
+  accentContrast,
   ACCENT_ALPHAS,
 } from "./theme";
 
@@ -89,6 +90,7 @@ watch(accentColor, (hex) => {
   root.style.setProperty("--accent-deep", darken(hex));
   root.style.setProperty("--accent-hover", lighten(hex));
   root.style.setProperty("--accent-soft", rgba(hex, 0.14));
+  root.style.setProperty("--accent-contrast", accentContrast(hex));
   for (const a of ACCENT_ALPHAS) {
     root.style.setProperty(`--accent-${String(Math.round(a * 100)).padStart(2, "0")}`, rgba(hex, a));
   }
@@ -233,10 +235,6 @@ onBeforeUnmount(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
-}
-.app.light {
-  background: radial-gradient(900px 480px at 85% -10%, var(--accent-12), transparent 60%),
-    linear-gradient(180deg, #f7f6f4, #eceef2);
 }
 .body {
   flex: 1;

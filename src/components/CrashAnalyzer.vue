@@ -655,7 +655,7 @@ async function handleSelect(filename: string) {
   opacity: 1;
 }
 .crash-log-del:hover {
-  color: #e5534b;
+  color: var(--danger);
   background: var(--danger-10);
 }
 

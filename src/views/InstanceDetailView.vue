@@ -18,6 +18,8 @@ import { useMessage, NButton, NModal, NPopover } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { api } from "../api";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { instanceDetailActive } from "../composables/instanceDetailDrag";
 import LogViewer from "../components/LogViewer.vue";
 import FileManager from "../components/FileManager.vue";
 import CrashAnalyzer from "../components/CrashAnalyzer.vue";
@@ -33,6 +35,8 @@ import { fmtDateLocale as fmtDate, fmtSize } from "../utils/format";
 import {
   IconBox,
   IconCamera,
+  IconCheck,
+  IconDownload,
   IconExternal,
   IconFile,
   IconFolder,
@@ -321,13 +325,78 @@ function onDocMouseDown(e: MouseEvent) {
   }
 }
 
+// ---- 拖拽添加模组/光影/材质包 ----
+const JAR_RE = /\.(jar|litemod)$/i;
+const ZIP_RE = /\.zip$/i;
+const dropOverlay = ref(false);
+const dropTargetLabel = computed(() => {
+  const k = tab.value;
+  if (k === "mods") return t("instanceDetail.tabMods");
+  if (k === "shaders") return t("instanceDetail.tabShaders");
+  if (k === "resourcepacks") return t("instanceDetail.tabResourcePacks");
+  return "";
+});
+/** 当前 tab 接受的文件扩展名正则 */
+function acceptedReForCurrentTab(): RegExp | null {
+  const k = tab.value;
+  if (k === "mods") return JAR_RE;
+  if (k === "shaders" || k === "resourcepacks") return ZIP_RE;
+  return null;
+}
+function filterDropPaths(paths: string[]): string[] {
+  const re = acceptedReForCurrentTab();
+  if (!re) return [];
+  return paths.filter((p) => re.test(p));
+}
+const dropBusy = ref(false);
+async function handleDrop(paths: string[]) {
+  const files = filterDropPaths(paths);
+  if (!files.length) return;
+  const kind = kindOf(tab.value);
+  dropBusy.value = true;
+  let ok = 0;
+  for (const p of files) {
+    try {
+      await api.importLocalFile(instanceId, kind, p);
+      ok++;
+    } catch (e) {
+      message.error(`${p.split(/[\\/]/).pop()}: ${String(e)}`);
+    }
+  }
+  dropBusy.value = false;
+  if (ok > 0) {
+    message.success(t("instanceContent.droppedCount", { n: ok }));
+    await contentRef.value?.reload();
+  }
+}
+
+let unlistenDrag: (() => void) | null = null;
+
 onMounted(() => {
   document.addEventListener("mousedown", onDocMouseDown);
   loadFolders();
+  instanceDetailActive.value = true;
+  void getCurrentWebview()
+    .onDragDropEvent((event) => {
+      const p = event.payload;
+      if (p.type === "enter") {
+        if (filterDropPaths(p.paths).length) dropOverlay.value = true;
+      } else if (p.type === "drop") {
+        dropOverlay.value = false;
+        void handleDrop(p.paths);
+      } else if (p.type === "leave") {
+        dropOverlay.value = false;
+      }
+    })
+    .then((fn) => { unlistenDrag = fn; })
+    .catch(() => { /* 拖放监听不可用时忽略 */ });
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("mousedown", onDocMouseDown);
+  instanceDetailActive.value = false;
+  unlistenDrag?.();
+  unlistenDrag = null;
 });
 
 // tab 切换时：只有截图需要父组件加载数据，其余 tab 由子组件自行加载
@@ -475,16 +544,20 @@ watch(
       </button>
       <div class="tab-right">
         <template v-if="CONTENT_TABS.includes(tab)">
-          <button class="mini-btn" :disabled="contentRef?.checkingUpdates" @click="contentRef?.checkUpdates()">
-            <IconRefresh /> {{ t("instanceDetail.checkUpdates") }}
-            <span v-if="contentRef?.updatesCount" class="upd-n">{{ contentRef?.updatesCount }}</span>
+          <button v-if="tab === 'mods'" class="mini-btn icon-only" :title="t('instanceContent.depCheck')" :disabled="contentRef?.checkingDeps" @click="contentRef?.runDepCheck()">
+            <IconCheck />
           </button>
-          <button class="mini-btn" @click="contentRef?.importLocal()"><IconPlus /> {{ t("instanceDetail.importLocal") }}</button>
+          <button v-if="contentRef?.updatesCount" class="mini-btn icon-only" :title="t('instanceContent.updateAll')" :disabled="contentRef?.updatingAll" @click="contentRef?.updateAll()">
+            <IconDownload />
+            <span class="upd-n">{{ contentRef?.updatesCount }}</span>
+          </button>
+          <button class="mini-btn icon-only" :title="t('instanceDetail.checkUpdates')" :disabled="contentRef?.checkingUpdates" @click="contentRef?.checkUpdates()">
+            <IconRefresh />
+          </button>
+          <button class="mini-btn icon-only" :title="t('instanceDetail.importLocal')" @click="contentRef?.importLocal()"><IconPlus /></button>
         </template>
         <template v-if="tab !== 'logs' && tab !== 'settings'">
-          <button class="mini-btn" :title="t('instanceDetail.openFolder')" @click="openTabFolder">
-            <IconFolder /> {{ t("instanceDetail.openFolder") }}
-          </button>
+          <button class="mini-btn icon-only" :title="t('instanceDetail.openFolder')" @click="openTabFolder"><IconFolder /></button>
         </template>
       </div>
     </div>
@@ -586,6 +659,16 @@ watch(
       :instance-id="instanceId"
       :instance-name="instance?.name ?? null"
     />
+
+    <!-- 拖拽添加模组/光影/材质包遮罩 -->
+    <Teleport to="body">
+      <div v-if="dropOverlay" class="drop-overlay">
+        <div class="drop-card glass">
+          <IconPlus />
+          <span>{{ t("instanceContent.dropHint", { target: dropTargetLabel }) }}</span>
+        </div>
+      </div>
+    </Teleport>
   </div>
   <div v-else class="center">{{ t("instanceDetail.notFound") }}</div>
 </template>
@@ -700,7 +783,7 @@ watch(
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
 }
 .btn.primary:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -724,7 +807,7 @@ watch(
   border: 1px solid var(--border);
 }
 .btn.danger:hover {
-  color: #e5534b;
+  color: var(--danger);
   border-color: var(--danger-50);
 }
 .btn:disabled {
@@ -742,7 +825,7 @@ watch(
 .not-installed h3 {
   margin: 0 0 4px;
   font-size: 15px;
-  color: #e0a030;
+  color: var(--warn);
 }
 .not-installed p {
   margin: 0;
@@ -759,7 +842,7 @@ watch(
   border-color: var(--danger-40);
 }
 .not-installed.failed h3 {
-  color: #e5534b;
+  color: var(--danger);
 }
 .install-progress {
   flex: 1;
@@ -795,6 +878,7 @@ watch(
 .tabs {
   position: relative;
   display: flex;
+  flex-wrap: nowrap;
   align-items: center;
   gap: 4px;
   padding: 6px;
@@ -825,6 +909,8 @@ watch(
   cursor: pointer;
   font-family: inherit;
   transition: all 0.12s;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .tab:hover {
   background: var(--w-05);
@@ -835,7 +921,12 @@ watch(
 .tab-right {
   margin-left: auto;
   display: flex;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.mini-btn.icon-only {
+  padding: 7px 9px;
+  position: relative;
 }
 .mini-btn {
   display: inline-flex;
@@ -851,6 +942,7 @@ watch(
   cursor: pointer;
   font-family: inherit;
   transition: all 0.12s;
+  white-space: nowrap;
 }
 .mini-btn:hover {
   background: var(--w-08);
@@ -858,7 +950,7 @@ watch(
 }
 .upd-n {
   background: var(--accent);
-  color: #1a1208;
+  color: var(--accent-contrast);
   border-radius: 10px;
   font-size: 11px;
   padding: 0 6px;
@@ -912,4 +1004,28 @@ watch(
   gap: 14px;
   align-items: center;
 }
+
+/* —— 拖拽遮罩 —— */
+.drop-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 2500;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+}
+.drop-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 20px 28px;
+  border-radius: 14px;
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--accent);
+  box-shadow: 0 12px 40px var(--k-50);
+}
+.drop-card svg { width: 22px; height: 22px; }
 </style>

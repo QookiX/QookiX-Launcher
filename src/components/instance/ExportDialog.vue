@@ -566,7 +566,7 @@ function toggleCollapsed(g: ExportGroup) {
   background: rgba(224, 164, 75, 0.12);
 }
 .badge-green {
-  color: #4ec9a0;
+  color: var(--success);
   background: var(--success-12);
 }
 .ex-size {

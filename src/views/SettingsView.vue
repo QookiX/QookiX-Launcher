@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fmtMem, fmtSize, fmtTime } from "../utils/format";
 import { useRouter } from "vue-router";
@@ -450,6 +450,17 @@ const tabs = computed(() => {
   }
   return list;
 });
+
+// 面板切换方向（同主导航 slide-forward/back 的思路）：按目标页在侧边栏中的
+// 排序决定新面板从下升起还是从上落下。watcher 在渲染前更新方向，Transition
+// 换 key 触发过渡时读到的就是新方向。
+const paneDir = ref<"forward" | "back">("forward");
+watch(tab, (nv, ov) => {
+  if (nv === ov) return;
+  const order = (k: string) => tabs.value.findIndex((tp) => tp.key === k);
+  paneDir.value = order(nv) > order(ov) ? "forward" : "back";
+});
+const paneTransitionName = computed(() => `settings-pane-${paneDir.value}`);
 
 const searchQuery = ref("");
 
@@ -990,12 +1001,12 @@ onUnmounted(() => {
         <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
         <div class="nav-brand-info">
           <span class="nav-brand-name">QookiX Launcher</span>
-          <span class="nav-brand-ver">v0.14.1</span>
+          <span class="nav-brand-ver">v0.15.0</span>
         </div>
       </div>
     </div>
 
-    <Transition :name="skipPaneTransition ? '' : 'settings-pane'" mode="out-in" @after-enter="onPaneAfterEnter">
+    <Transition :name="skipPaneTransition ? '' : paneTransitionName" mode="out-in" @after-enter="onPaneAfterEnter">
     <div :key="tab" class="settings-body">
       <!-- 常规 -->
       <div v-show="tab === 'general'" class="settings-pane">
@@ -1750,7 +1761,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.14.1</span>
+            <span class="about-ver">v0.15.0</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
@@ -1866,7 +1877,7 @@ onUnmounted(() => {
               <span class="link-left"><IconUsers /> {{ t("settings.about.qqGroup") }}</span>
               <span class="link-arrow">→</span>
             </button>
-            <button class="about-link" @click="openUrl('https://afdian.com/a/qookix')">
+            <button class="about-link" @click="openUrl('https://afdian.com/a/weimosheng')">
               <span class="link-left"><IconHeart /> {{ t("settings.about.sponsor") }}</span>
               <span class="link-arrow">→</span>
             </button>
@@ -2299,20 +2310,36 @@ onUnmounted(() => {
   flex: 1;
   min-width: 0;
 }
-/* 子标签页切换动画 */
-.settings-pane-enter-active {
+/* 子标签页切换动画：方向跟随侧边栏排序。
+   forward（目标在侧边栏更下方）：新面板从下方升起、旧面板向上离开；
+   back（目标在侧边栏更上方）：新面板从上方落下、旧面板向下离开。 */
+.settings-pane-forward-enter-active {
   transition: opacity 0.22s ease, transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.settings-pane-leave-active {
+.settings-pane-forward-leave-active {
   transition: opacity 0.13s ease, transform 0.13s ease-in;
 }
-.settings-pane-enter-from {
+.settings-pane-forward-enter-from {
   opacity: 0;
   transform: translateY(10px);
 }
-.settings-pane-leave-to {
+.settings-pane-forward-leave-to {
   opacity: 0;
   transform: translateY(-6px);
+}
+.settings-pane-back-enter-active {
+  transition: opacity 0.22s ease, transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.settings-pane-back-leave-active {
+  transition: opacity 0.13s ease, transform 0.13s ease-in;
+}
+.settings-pane-back-enter-from {
+  opacity: 0;
+  transform: translateY(-10px);
+}
+.settings-pane-back-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
 }
 .settings-pane {
   display: flex;
@@ -2334,7 +2361,7 @@ onUnmounted(() => {
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: #1a1208;
+  color: var(--accent-contrast);
 }
 .btn.primary:hover:not(:disabled) {
   filter: brightness(1.08);
@@ -2412,7 +2439,7 @@ textarea.text-input {
 }
 .mini-btn.danger {
   border-color: var(--danger-35);
-  color: #e5534b;
+  color: var(--danger);
   background: var(--danger-08);
 }
 .mini-btn.danger:hover {
@@ -3393,7 +3420,7 @@ textarea.text-input {
   font-variant-numeric: tabular-nums;
 }
 .mirror-ms.bad {
-  color: #e5534b;
+  color: var(--danger);
 }
 .mirror-btn {
   font-size: 12px;
@@ -3425,7 +3452,7 @@ textarea.text-input {
 .proxy-test-btn:hover:not(.disabled) {
   background: var(--accent);
   border-color: var(--accent);
-  color: #1a1208;
+  color: var(--accent-contrast);
 }
 .proxy-row {
   display: flex;
@@ -3514,12 +3541,12 @@ textarea.text-input {
   flex: 1;
 }
 .mini-btn.danger {
-  color: #e5534b;
+  color: var(--danger);
   border-color: rgba(229, 83, 75, 0.45);
 }
 .mini-btn.danger:hover {
   color: #ff7a70;
-  border-color: #e5534b;
+  border-color: var(--danger);
 }
 
 .update-modal-body {
@@ -3699,7 +3726,7 @@ textarea.text-input {
   white-space: nowrap;
 }
 .cl-tag.cat-fix {
-  color: #e5534b;
+  color: var(--danger);
   background: rgba(229, 83, 75, 0.12);
 }
 .cl-tag.cat-feature {

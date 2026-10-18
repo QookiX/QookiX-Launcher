@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick } from "vue";
+import { ref, onMounted, onUnmounted, watch, nextTick, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
-import { NPopover, NModal } from "naive-ui";
+import { NPopover, NModal, NSelect, NButton, useMessage } from "naive-ui";
 import { IconFolder, IconClock } from "../components/icons";
 import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
 import { useShimuStore } from "../stores/shimu";
+import { useInstancesStore } from "../stores/instances";
+import { api } from "../api";
 import {
   loadSchematicResources,
   type SchematicResources,
@@ -22,12 +24,48 @@ import {
 import { createSchematicWorkerPool, type SchematicWorkerPool } from "../composables/useSchematicWorkerPool";
 
 const { t } = useI18n();
+const message = useMessage();
 
 // 拾木空间（投影帖子来源）：账号弹窗 + 独立的投影库页面
 const shimu = useShimuStore();
+const instancesStore = useInstancesStore();
 const shimuLoginRef = ref<InstanceType<typeof ShimuLoginDialog> | null>(null);
 const route = useRoute();
 const router = useRouter();
+
+/** 「添加到游戏」：把当前打开的投影复制到所选实例的 schematics 目录 */
+const addToGameModal = ref(false);
+const addToGameInstanceId = ref<string | null>(null);
+const addToGameBusy = ref(false);
+const instanceOptions = computed(() =>
+  instancesStore.instances.map((i) => ({ label: i.name, value: i.id }))
+);
+
+async function openAddToGame() {
+  if (!currentPath) {
+    message.warning(t("toolbox.schematicNotOpened"));
+    return;
+  }
+  void instancesStore.load();
+  addToGameInstanceId.value = null;
+  addToGameModal.value = true;
+}
+
+async function confirmAddToGame() {
+  if (!currentPath || !addToGameInstanceId.value) return;
+  addToGameBusy.value = true;
+  try {
+    const filename = manifest.value?.fileName ?? undefined;
+    await api.copyFileToInstanceSchematics(currentPath, addToGameInstanceId.value, filename);
+    const inst = instancesStore.get(addToGameInstanceId.value);
+    message.success(t("toolbox.schematicAdded", { name: inst?.name ?? addToGameInstanceId.value }));
+    addToGameModal.value = false;
+  } catch (e) {
+    message.error(String(e));
+  } finally {
+    addToGameBusy.value = false;
+  }
+}
 
 /** 打开拾木空间投影库（独立页面；浏览不需要登录，默认只筛「投影相关」板块） */
 function openShimuLibrary() {
@@ -463,6 +501,17 @@ onUnmounted(() => {
             {{ t("toolbox.schematicMaterials") }} ({{ manifest.materials.length }})
           </button>
         </div>
+
+        <div class="add-to-game-section">
+          <div class="layer-sep" />
+          <button
+            class="mini-btn primary materials-btn"
+            @click="openAddToGame"
+            :disabled="!manifest || loading"
+          >
+            {{ t("toolbox.schematicAddToGame") }}
+          </button>
+        </div>
       </aside>
     </div>
 
@@ -487,6 +536,34 @@ onUnmounted(() => {
 
     <!-- 拾木空间账号（投影库是独立页面 /toolbox/shimu） -->
     <ShimuLoginDialog ref="shimuLoginRef" />
+
+    <!-- 添加到游戏：选择实例 -->
+    <NModal
+      v-model:show="addToGameModal"
+      preset="card"
+      :title="t('toolbox.schematicSelectInstance')"
+      style="max-width: 420px"
+      :bordered="false"
+      size="small"
+    >
+      <div v-if="!instanceOptions.length" class="muted">{{ t("toolbox.schematicNoInstance") }}</div>
+      <div v-else class="picker-row">
+        <n-select
+          v-model:value="addToGameInstanceId"
+          :options="instanceOptions"
+          :placeholder="t('toolbox.schematicSelectInstance')"
+          filterable
+        />
+        <n-button
+          type="primary"
+          :loading="addToGameBusy"
+          :disabled="!addToGameInstanceId"
+          @click="confirmAddToGame"
+        >
+          {{ t("toolbox.schematicAddToGame") }}
+        </n-button>
+      </div>
+    </NModal>
 
     <!-- 空状态：最近打开 -->
     <div v-if="!manifest && !loading && !error" class="empty-state glass">
@@ -636,4 +713,8 @@ onUnmounted(() => {
 .rc-format { font-size: 11px; color: var(--accent); }
 .rc-size { font-size: 12px; color: var(--text-2); }
 .rc-blocks { font-size: 11px; color: var(--text-3); }
+
+/* —— 添加到游戏：实例选择 —— */
+.picker-row { display: flex; gap: 8px; align-items: center; }
+.picker-row .n-select { flex: 1; min-width: 200px; }
 </style>
