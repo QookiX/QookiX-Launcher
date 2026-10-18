@@ -9,6 +9,16 @@ on:
         description: "要同步的 Release 标签（例如 v0.15.0）"
         required: true
         type: string
+      manifest_base:
+        description: "可选：清单里的下载地址前缀。留空则指向对象存储；填 GitHub Release 地址可在桶无法上传大文件时兜底"
+        required: false
+        default: ""
+        type: string
+      only_manifest:
+        description: "仅上传 latest.json（安装包不重新上传）"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -44,10 +54,28 @@ jobs:
 
       - name: Generate update manifests
         run: |
-          node scripts/create-bucket-manifest.mjs release "${GITHUB_TAG}" bucket-latest.json
-          cp bucket-latest.json release/latest.json
-          node scripts/fetch-release-json.mjs release/release.json
+          if [ -n "${{ inputs.manifest_base }}" ]; then
+            node scripts/create-bucket-manifest.mjs release "${GITHUB_TAG}" release/latest.json "${{ inputs.manifest_base }}"
+          else
+            node scripts/create-bucket-manifest.mjs release "${GITHUB_TAG}" bucket-latest.json
+            cp bucket-latest.json release/latest.json
+          fi
+          if [ "${{ inputs.only_manifest }}" != "true" ]; then
+            node scripts/fetch-release-json.mjs release/release.json
+          fi
 
       - name: Push update artifacts to object storage bucket
         if: env.QOOKIX_BUCKET_UPDATE_URL != ''
-        run: bash scripts/push-bucket.sh release
+        run: |
+          if [ "${{ inputs.only_manifest }}" = "true" ]; then
+            aws configure set default.s3.max_concurrent_requests 1
+            endpoint_args=()
+            if [ -n "${AWS_ENDPOINT_URL:-}" ]; then
+              endpoint_args=(--endpoint-url "${AWS_ENDPOINT_URL}")
+            fi
+            aws "${endpoint_args[@]}" s3 cp release/latest.json \
+              "s3://${QOOKIX_S3_BUCKET}/latest.json" \
+              --no-progress --checksum-algorithm CRC32
+          else
+            bash scripts/push-bucket.sh release
+          fi
