@@ -108,3 +108,12 @@ npm run tauri build
 ```
 
 产物位于 `src-tauri/target/release/bundle/`。
+
+发布更新：
+
+1. 在 `CHANGELOG.md` 的 `[Unreleased]` 里补好本次条目，再把标题改成 `## [X.Y.Z] - YYYY-MM-DD`
+2. 同步版本号：`npm run version -- X.Y.Z`（同时更新 `Cargo.lock`）
+3. 提交后打标签并推送：`git tag -a vX.Y.Z -m "vX.Y.Z"`，然后 `git push origin main vX.Y.Z`
+4. 标签会触发 `.github/workflows/build.yml` 构建三平台产物、发布 GitHub Release，并同步到对象存储更新源
+
+如果对象存储端点拒绝大文件写入（`SlowDownWrite`），Release 本身仍然可用；运行 **Sync update bucket** 工作流并填写标签即可稍后补传。紧急情况下可勾选 `only_manifest` 并把下载地址前缀填成 GitHub Release 地址，让默认更新源临时指向 GitHub。

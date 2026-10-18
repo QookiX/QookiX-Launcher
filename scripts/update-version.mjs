@@ -64,4 +64,12 @@ patch("src/views/SettingsView.vue", (c) =>
   c.replace(/v\d+\.\d+\.\d+/g, `v${newVersion}`),
 );
 
+// 5. Cargo.lock 里本包的 version
+patch("src-tauri/Cargo.lock", (c) =>
+  c.replace(
+    /(\[\[package\]\]\r?\nname = "qookix-launcher"\r?\nversion = ")[^"]+(")/,
+    `$1${newVersion}$2`,
+  ),
+);
+
 console.log("完成。");
