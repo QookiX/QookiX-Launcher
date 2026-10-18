@@ -8,6 +8,10 @@
 //  so every platform URL points at the artifact on the bucket (`<base>/<name>`),
 //  and CI uploads it (as `latest.json`) together with the installers.
 //
+//  Exception: targets flagged `githubHosted` in shared/updater-targets.mjs
+//  (the Linux AppImages) keep pointing at the GitHub Release download URL,
+//  because the bucket endpoint throttles uploads of those large files.
+//
 //  Usage:
 //    node scripts/create-bucket-manifest.mjs <artifacts-dir> <version-tag> <output.json> [base-url]
 //    env: QOOKIX_BUCKET_UPDATE_URL 更新目录的公开根 URL（缺省时用第 4 个参数）
@@ -15,7 +19,7 @@
 // ============================================================================
 import fs from 'node:fs'
 import path from 'node:path'
-import { UPDATER_TARGETS } from './shared/updater-targets.mjs'
+import { UPDATER_TARGETS, githubReleaseAssetUrl } from './shared/updater-targets.mjs'
 
 const [dir, tag, outputPath, baseUrlArg] = process.argv.slice(2)
 if (!dir || !tag || !outputPath) {
@@ -53,7 +57,10 @@ for (const t of targets) {
   const sigPath = path.join(dir, `${name}.sig`)
   if (!fs.existsSync(sigPath)) continue // unsigned bundle -> skip
   const signature = fs.readFileSync(sigPath, 'utf8')
-  const url = `${base}/${encodeURIComponent(name)}`
+  // 大文件（AppImage）不走对象存储：端点对它限流（SlowDownWrite），直接指向 GitHub 附件
+  const url = t.githubHosted
+    ? githubReleaseAssetUrl(name, tag)
+    : `${base}/${encodeURIComponent(name)}`
   for (const p of t.platforms) {
     platforms[p] = { signature, url }
   }

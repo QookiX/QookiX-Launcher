@@ -30,9 +30,19 @@ upload() {
 }
 
 # Binaries first, manifests last: a manifest must never point at missing assets.
+# Files listed by list-external-assets.mjs (large AppImages) are served straight
+# from GitHub Releases and skipped here, because the endpoint throttles them.
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+skip_list="$(mktemp)"
+node "${script_dir}/list-external-assets.mjs" "${release_dir}" | sort -u > "${skip_list}"
+
 find "${release_dir}" -type f \
   ! -name 'latest.json' ! -name 'release.json' ! -name 'changelog.json' \
   -print0 | sort -z | while IFS= read -r -d '' file; do
+  if grep -Fxq "$(basename "${file}")" "${skip_list}"; then
+    echo "Skipping $(basename "${file}") (served from GitHub Releases)"
+    continue
+  fi
   upload "${file}"
 done
 
@@ -41,6 +51,8 @@ for file in changelog.json release.json latest.json; do
     upload "${release_dir}/${file}"
   fi
 done
+
+rm -f "${skip_list}"
 
 # Remove objects that are not part of this release (latest.json is overwritten).
 aws "${endpoint_args[@]}" s3 ls "s3://${bucket}" --recursive \
