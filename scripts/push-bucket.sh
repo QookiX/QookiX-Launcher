@@ -5,8 +5,9 @@
 # Required env: QOOKIX_S3_BUCKET
 # Optional env: AWS_ENDPOINT_URL, QOOKIX_BUCKET_UPDATE_URL
 #
-# Uploads are sequential: S3-compatible endpoints throttle concurrent writes
-# (SlowDownWrite), especially for multipart uploads of the installers.
+# Uploads are sequential and each file goes up as a single PUT, so the endpoint
+# sees one write per file instead of many multipart `UploadPart` calls — those
+# are what trip its write-rate limit (SlowDownWrite) even for ~10 MB installers.
 set -euo pipefail
 
 release_dir="${1:?usage: push-bucket.sh <release-dir>}"
@@ -14,7 +15,6 @@ bucket="${QOOKIX_S3_BUCKET:?QOOKIX_S3_BUCKET is not set}"
 
 export AWS_MAX_ATTEMPTS="${AWS_MAX_ATTEMPTS:-10}"
 export AWS_RETRY_MODE="${AWS_RETRY_MODE:-standard}"
-aws configure set default.s3.max_concurrent_requests 1
 
 endpoint_args=()
 if [ -n "${AWS_ENDPOINT_URL:-}" ]; then
@@ -23,9 +23,15 @@ fi
 
 upload() {
   local file="$1"
-  echo "Uploading ${file}"
-  aws "${endpoint_args[@]}" s3 cp "${file}" "s3://${bucket}/" \
-    --no-progress --checksum-algorithm CRC32
+  local key
+  key="$(basename "${file}")"
+  echo "Uploading ${key}"
+  aws "${endpoint_args[@]}" s3api put-object \
+    --bucket "${bucket}" \
+    --key "${key}" \
+    --body "${file}" \
+    --checksum-algorithm CRC32 \
+    --no-cli-pager >/dev/null
   sleep 2
 }
 
