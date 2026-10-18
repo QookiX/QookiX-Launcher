@@ -53,21 +53,26 @@ jobs:
           gh release download "${GITHUB_TAG}" --dir release --clobber
 
       - name: Generate update manifests
+        env:
+          MANIFEST_BASE: ${{ inputs.manifest_base }}
+          ONLY_MANIFEST: ${{ inputs.only_manifest }}
         run: |
-          if [ -n "${{ inputs.manifest_base }}" ]; then
-            node scripts/create-bucket-manifest.mjs release "${GITHUB_TAG}" release/latest.json "${{ inputs.manifest_base }}"
+          if [ -n "${MANIFEST_BASE}" ]; then
+            node scripts/create-bucket-manifest.mjs release "${GITHUB_TAG}" release/latest.json "${MANIFEST_BASE}"
           else
             node scripts/create-bucket-manifest.mjs release "${GITHUB_TAG}" bucket-latest.json
             cp bucket-latest.json release/latest.json
           fi
-          if [ "${{ inputs.only_manifest }}" != "true" ]; then
+          if [ "${ONLY_MANIFEST}" != "true" ]; then
             node scripts/fetch-release-json.mjs release/release.json
           fi
 
       - name: Push update artifacts to object storage bucket
         if: env.QOOKIX_BUCKET_UPDATE_URL != ''
+        env:
+          ONLY_MANIFEST: ${{ inputs.only_manifest }}
         run: |
-          if [ "${{ inputs.only_manifest }}" = "true" ]; then
+          if [ "${ONLY_MANIFEST}" = "true" ]; then
             aws configure set default.s3.max_concurrent_requests 1
             endpoint_args=()
             if [ -n "${AWS_ENDPOINT_URL:-}" ]; then
