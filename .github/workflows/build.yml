@@ -299,22 +299,5 @@ jobs:
           node scripts/create-bucket-manifest.mjs release "${GITHUB_REF_NAME}" bucket-latest.json
           cp bucket-latest.json release/latest.json
           node scripts/fetch-release-json.mjs release/release.json
-          ENDPOINT_ARGS=""
-          if [ -n "${AWS_ENDPOINT_URL}" ]; then ENDPOINT_ARGS="--endpoint-url ${AWS_ENDPOINT_URL}"; fi
-          # 4 路并行上传，比 s3 sync 串行快数倍；
-          # CRC32 是兼容端点（R2/MinIO）的要求，默认的 CRC64NVME 会报 invalid checksum
-          find release -type f -print0 | xargs -0 -P 4 -I {} \
-            aws $ENDPOINT_ARGS s3 cp {} "s3://${QOOKIX_S3_BUCKET}/" --no-progress --checksum-algorithm CRC32
-          # 删除桶里本次 release 没有的旧版本文件（latest.json 每次覆盖，不受影响）
-          aws $ENDPOINT_ARGS s3 ls "s3://${QOOKIX_S3_BUCKET}" --recursive \
-            | awk '{print $4}' | sort -u > /tmp/remote-keys.txt
-          find release -type f -printf '%f\n' | sort -u > /tmp/local-names.txt
-          comm -23 /tmp/remote-keys.txt /tmp/local-names.txt > /tmp/stale-keys.txt
-          if [ -s /tmp/stale-keys.txt ]; then
-            echo "Removing stale objects:"
-            cat /tmp/stale-keys.txt
-            while IFS= read -r key; do
-              [ -n "$key" ] && aws $ENDPOINT_ARGS s3 rm "s3://${QOOKIX_S3_BUCKET}/${key}"
-            done < /tmp/stale-keys.txt
-          fi
-          echo "Uploaded update artifacts to ${QOOKIX_BUCKET_UPDATE_URL}"
+          # 串行上传 + 自动重试：兼容端点对并发写入限流（SlowDownWrite）
+          bash scripts/push-bucket.sh release

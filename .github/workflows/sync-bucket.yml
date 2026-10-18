@@ -1,0 +1,53 @@
+name: Sync update bucket
+
+# 手动把已发布的 Release 产物重新同步到对象存储桶。
+# 通常在 push-bucket 因端点限流（SlowDownWrite）失败后使用。
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "要同步的 Release 标签（例如 v0.15.0）"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qookix-bucket-sync-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+      GITHUB_TAG: ${{ inputs.tag }}
+      QOOKIX_BUCKET_UPDATE_URL: ${{ secrets.QOOKIX_BUCKET_UPDATE_URL }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.QOOKIX_S3_ACCESS_KEY }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.QOOKIX_S3_SECRET_KEY }}
+      AWS_ENDPOINT_URL: ${{ secrets.QOOKIX_S3_ENDPOINT }}
+      QOOKIX_S3_BUCKET: ${{ secrets.QOOKIX_S3_BUCKET }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Download release assets
+        run: |
+          mkdir -p release
+          gh release download "${GITHUB_TAG}" --dir release --clobber
+
+      - name: Generate update manifests
+        run: |
+          node scripts/create-bucket-manifest.mjs release "${GITHUB_TAG}" bucket-latest.json
+          cp bucket-latest.json release/latest.json
+          node scripts/fetch-release-json.mjs release/release.json
+
+      - name: Push update artifacts to object storage bucket
+        if: env.QOOKIX_BUCKET_UPDATE_URL != ''
+        run: bash scripts/push-bucket.sh release
