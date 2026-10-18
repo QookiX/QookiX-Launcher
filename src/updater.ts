@@ -90,6 +90,19 @@ export interface ChangelogRelease {
 }
 
 /**
+ * 根据条目文案里的关键词推断分类，决定条目标签的颜色
+ * （修复=红、新增=绿、优化=蓝、重构=紫、其他=灰）。
+ * 更新弹窗与关于页的更新日志共用，保证配色一致。
+ */
+export function entryTypeClass(text: string): string {
+  if (/修复|修正|解决|补回/.test(text)) return "cat-fix";
+  if (/新增|添加|增加|支持|接入/.test(text)) return "cat-feature";
+  if (/优化|改进|提升|统一|完善|加强|增强/.test(text)) return "cat-improve";
+  if (/重构|调整|改用|取代|移除|删除|过滤/.test(text)) return "cat-refactor";
+  return "cat-other";
+}
+
+/**
  * 版本号比较：按 `.` 分段数值比较（`0.10.0 > 0.9.0`，字符串比较会搞错）。
  * 无法解析的段按 0 处理，返回 -1 / 0 / 1。
  */

@@ -33,11 +33,12 @@ import {
   IconBookOpen,
   IconTerminal,
 } from "../components/icons";
-import { peekUpdate, downloadUpdate, updateReady, updateReadyVersion, loadChangelogReleases, releasesInRange, type ChangelogRelease } from "../updater";
+import { peekUpdate, downloadUpdate, updateReady, updateReadyVersion, loadChangelogReleases, releasesInRange, entryTypeClass, type ChangelogRelease } from "../updater";
 import type { JavaInfo, MirrorPreset, StorageStats } from "../types";
 import devWeimoshengUrl from "../assets/dev-weimosheng.jpg";
 import devZhayiUrl from "../assets/dev-zhayi.jpg";
 import AboutShowcase from "../components/AboutShowcase.vue";
+import UpdateNotes from "../components/UpdateNotes.vue";
 import DiagnosticsDialog from "../components/DiagnosticsDialog.vue";
 import CloudSyncDialog from "../components/CloudSyncDialog.vue";
 import ColorPicker from "../components/ColorPicker.vue";
@@ -107,17 +108,10 @@ function testUpdateModal() {
   updateModalVisible.value = true;
 }
 
-function entryTypeClass(text: string): string {
-  if (/修复|修正|解决|补回/.test(text)) return "cat-fix";
-  if (/新增|添加|增加|支持|接入/.test(text)) return "cat-feature";
-  if (/优化|改进|提升|统一|完善|加强|增强/.test(text)) return "cat-improve";
-  if (/重构|调整|改用|取代|移除|删除|过滤/.test(text)) return "cat-refactor";
-  return "cat-other";
-}
-
 /**
  * 「检查更新」弹窗里展示的更新内容：当前版本 → 最新版本之间跨过的所有版本
  * （受 changelog.json 自身覆盖范围限制，更旧的版本拿不到就省略）。
+ * 渲染走共享组件 UpdateNotes，与启动时自动检查的弹窗保持同一套样式。
  */
 const updateNotes = computed(() =>
   releasesInRange(changelogReleases.value, updateCurrentVersion.value, updateVersion.value)
@@ -1001,7 +995,7 @@ onUnmounted(() => {
         <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
         <div class="nav-brand-info">
           <span class="nav-brand-name">QookiX Launcher</span>
-          <span class="nav-brand-ver">v0.15.0</span>
+          <span class="nav-brand-ver">v0.15.1</span>
         </div>
       </div>
     </div>
@@ -1761,7 +1755,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.15.0</span>
+            <span class="about-ver">v0.15.1</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
@@ -2005,20 +1999,7 @@ onUnmounted(() => {
     <n-modal v-model:show="updateModalVisible" preset="card" :title="t('settings.update.newVersionFound')" class="update-modal" :style="{ width: '420px', maxWidth: '90vw' }">
       <div class="update-modal-body">
         <p class="update-modal-ver">{{ t("settings.update.newVersionContent", { version: updateVersion }) }}</p>
-        <div v-if="updateNotes.length" class="update-modal-notes">
-          <h4 class="update-notes-title">{{ t("settings.update.releaseNotes") }}</h4>
-          <div class="cl-entry-list">
-            <template v-for="r in updateNotes" :key="r.version">
-              <div class="update-notes-ver">
-                v{{ r.version }}<span class="update-notes-date">{{ r.date }}</span>
-              </div>
-              <div v-for="(e, i) in r.entries" :key="i" class="cl-entry">
-                <span class="cl-tag" :class="entryTypeClass(e.text)">{{ e.category }}</span>
-                <span class="cl-text">{{ e.text }}</span>
-              </div>
-            </template>
-          </div>
-        </div>
+        <UpdateNotes v-if="updateNotes.length" :releases="updateNotes" />
         <div class="update-modal-actions">
           <button class="mini-btn" @click="updateModalVisible = false">{{ t("settings.update.later") }}</button>
           <button class="mini-btn primary" :disabled="updateReady" @click="updateModalVisible = false; void doInstall()">
@@ -3559,37 +3540,6 @@ textarea.text-input {
   font-size: 13px;
   color: var(--text-2);
 }
-.update-modal-notes {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 12px 14px;
-  max-height: 320px;
-  overflow-y: auto;
-}
-.update-notes-title {
-  margin: 0 0 8px;
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-1);
-}
-/* 跨版本更新：每个版本一个小标题，条目列在下面 */
-.update-notes-ver {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  margin: 12px 0 6px;
-  font-size: 12px;
-  font-weight: 700;
-  color: var(--text-2);
-}
-.update-notes-ver:first-child {
-  margin-top: 0;
-}
-.update-notes-date {
-  font-size: 11px;
-  font-weight: 400;
-  color: var(--text-3);
-}
 .update-modal-actions {
   display: flex;
   gap: 8px;
@@ -3701,11 +3651,6 @@ textarea.text-input {
 }
 .cl-release-body {
   padding: 8px 12px 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.cl-entry-list {
   display: flex;
   flex-direction: column;
   gap: 6px;

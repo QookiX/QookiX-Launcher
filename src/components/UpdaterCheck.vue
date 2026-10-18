@@ -3,6 +3,7 @@ import { h, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { NButton, useDialog, useMessage } from "naive-ui";
 import { peekUpdate, downloadUpdate, updateReady, loadChangelogReleases, releasesInRange } from "../updater";
+import UpdateNotes from "./UpdateNotes.vue";
 import { useSettingsStore } from "../stores/settings";
 import { error as devError } from "../utils/logger";
 import { useI18n } from "vue-i18n";
@@ -63,56 +64,17 @@ async function runCheck() {
     };
     dlg = dialog.warning({
       title: t("updaterCheck.newVersionTitle"),
-      // 对话框内容由 render 函数产出，拿不到组件的 scoped 样式，故用内联样式
+      // 宽度、间距、正文字号与「设置·关于」手动检查更新弹窗保持一致；
+      // 更新内容直接复用 UpdateNotes 共享组件，样式完全相同。
+      style: { width: "420px", maxWidth: "90vw" },
       content: () =>
-        h("div", { style: "display:flex;flex-direction:column;gap:12px;" }, [
+        h("div", { style: "display:flex;flex-direction:column;gap:14px;" }, [
           h(
             "p",
-            { style: "margin:0;" },
+            { style: "margin:0;font-size:13px;color:var(--text-2);" },
             t("updaterCheck.newVersionContent", { version: update.version }),
           ),
-          notes.length > 0
-            ? h(
-                "div",
-                {
-                  style:
-                    "border:1px solid var(--border);border-radius:10px;padding:10px 12px;" +
-                    "max-height:38vh;overflow-y:auto;",
-                },
-                [
-                  h(
-                    "div",
-                    { style: "font-size:13px;font-weight:700;color:var(--text-1);margin-bottom:8px;" },
-                    t("updaterCheck.releaseNotes"),
-                  ),
-                  ...notes.flatMap((r) => [
-                    h(
-                      "div",
-                      { style: "font-size:12px;font-weight:700;color:var(--text-2);margin:12px 0 6px;" },
-                      `v${r.version}`,
-                    ),
-                    ...r.entries.map((e) =>
-                      h("div", { style: "display:flex;gap:6px;margin-bottom:6px;" }, [
-                        h(
-                          "span",
-                          {
-                            style:
-                              "flex:none;font-size:10px;font-weight:600;padding:1px 6px;border-radius:6px;" +
-                              "background:var(--accent-soft);color:var(--accent);",
-                          },
-                          e.category,
-                        ),
-                        h(
-                          "span",
-                          { style: "font-size:12.5px;line-height:1.5;color:var(--text-2);" },
-                          e.text,
-                        ),
-                      ]),
-                    ),
-                  ]),
-                ],
-              )
-            : null,
+          notes.length > 0 ? h(UpdateNotes, { releases: notes }) : null,
         ]),
       action: () =>
         h("div", { style: "display:flex; gap:8px; justify-content:flex-end;" }, [

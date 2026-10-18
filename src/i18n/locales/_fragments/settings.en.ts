@@ -247,7 +247,6 @@ export default {
     downloadedRestart: "v{version} downloaded—click \"Restart to update\" in the title bar to apply",
     newVersionFound: "New version found",
     newVersionContent: "QookiX Launcher v{version} is available. Download and install?",
-    releaseNotes: "Release Notes",
     later: "Later",
     downloadedPending: "Downloaded, pending restart",
     downloadAndInstall: "Download & update",
