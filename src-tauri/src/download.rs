@@ -52,6 +52,16 @@ pub async fn download_many(
     phase: &str,
     items: Vec<DownloadItem>,
 ) -> Result<DownloadStats, String> {
+    // 「仅本地」安装模式（导入 .minecraft 文件夹时的本地复用）：
+    // 缺失文件不允许联网补下载，直接报出第一个缺失项让用户自己处理。
+    if crate::install::downloads_blocked() && !items.is_empty() {
+        let sample: Vec<String> = items.iter().take(5).map(|i| i.label.clone()).collect();
+        return Err(format!(
+            "本地文件夹缺少 {} 个游戏文件（{}），当前地区不支持联网补下载，请改用已安装完整游戏的文件夹",
+            items.len(),
+            sample.join("、")
+        ));
+    }
     let total = items.len();
     let bytes_total: Arc<AtomicU64> = Arc::new(AtomicU64::new(items.iter().filter_map(|i| i.size).sum()));
     let done = Arc::new(AtomicU64::new(0));

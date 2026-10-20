@@ -9,6 +9,7 @@ import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { fmtDateStr as fmtDate, instanceLabel } from "../utils/format";
 import { useInstancesStore } from "../stores/instances";
+import { useRegionStore } from "../stores/region";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import { IconCopy, IconExternal, IconGlobe } from "./icons";
 import { useI18n } from "vue-i18n";
@@ -41,6 +42,7 @@ onMounted(() => document.addEventListener("mousedown", onDocMouseDown));
 onBeforeUnmount(() => document.removeEventListener("mousedown", onDocMouseDown));
 
 const instances = useInstancesStore();
+const region = useRegionStore();
 const router = useRouter();
 const message = useMessage();
 const { t } = useI18n();
@@ -76,6 +78,8 @@ const deps = ref<ProjectDependency[]>([]);
 const loadingDeps = ref(false);
 
 const isModpack = computed(() => props.project?.project_type === "modpack");
+/** 中国大陆地区：整合包安装会下载游戏本体，停用；模组/资源包/光影不受影响 */
+const modpackBlocked = computed(() => isModpack.value && region.downloadBlocked);
 
 /** 精简模式：内容中心已选实例时的快速安装——不加载正文，只留版本/前置/安装 */
 const compactMode = computed(() => !!props.defaultInstance);
@@ -528,6 +532,10 @@ function depLabel(type: string) {
 
 async function install() {
   if (!props.project) return;
+  if (modpackBlocked.value) {
+    message.warning(t("region.modpackDisabled"));
+    return;
+  }
   api.logDebug(
     `[fe] install() 进入 provider=${props.project.provider} id=${props.project.id} type=${props.project.project_type} isModpack=${isModpack.value} versions=${versions.value.length}`
   );
@@ -693,6 +701,7 @@ async function install() {
 
         <div v-if="isModpack" class="id-field">
           <span class="id-modpack-hint">{{ t('installDialog.form.modpackHint') }}</span>
+          <span v-if="modpackBlocked" class="id-region-note">{{ t('region.modpackDisabled') }}</span>
         </div>
 
         <div class="id-field">
@@ -797,12 +806,14 @@ async function install() {
         <n-button
           type="primary"
           :loading="installing"
+          :disabled="modpackBlocked"
+          :title="modpackBlocked ? t('region.modpackDisabled') : undefined"
           @click="
             api.logDebug('[fe] 一键安装按钮被点击');
             install();
           "
         >
-          {{ t('installDialog.install') }}
+          {{ modpackBlocked ? t('region.short') : t('installDialog.install') }}
         </n-button>
       </div>
     </div>
@@ -1085,6 +1096,11 @@ async function install() {
   color: var(--accent, #50c878);
   font-weight: 600;
   font-size: 13px;
+}
+.id-region-note {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
 }
 .id-ver-head {
   display: flex;

@@ -167,6 +167,10 @@ pub async fn import_modpack(
     if !path.exists() {
         return Err("文件不存在".into());
     }
+    // 地区合规兜底：导入整合包会创建实例并下载游戏本体，中国大陆地区停用。
+    if crate::region::is_mainland_china() {
+        return Err(crate::region::BLOCKED_NOTICE.to_string());
+    }
     // 建实例 + 提取包内图标（快速，同步完成，好让前端立刻拿到实例 id）
     let (instance, _source) = crate::modpack::prepare_pack(
         state.inner(),

@@ -280,6 +280,11 @@ pub async fn install_content(
     crate::util::log_line(&format!(
         "[install_content] kind={kind} provider={provider} project={project_id} version={version_id} instance={instance_id:?}"
     ));
+    // 地区合规兜底：整合包安装会下载游戏本体，中国大陆地区停用。
+    // 其余内容（模组 / 资源包 / 光影）不受影响。
+    if kind == "modpack" && crate::region::is_mainland_china() {
+        return Err(crate::region::BLOCKED_NOTICE.to_string());
+    }
     // modpack creates its own new instance; no existing instance needed
     if kind == "modpack" {
         return match provider.as_str() {

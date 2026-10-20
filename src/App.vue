@@ -25,6 +25,7 @@ import { useAccountsStore } from "./stores/accounts";
 import { useInstancesStore } from "./stores/instances";
 import { useTasksStore } from "./stores/tasks";
 import { usePinsStore } from "./stores/pins";
+import { useRegionStore } from "./stores/region";
 import {
   buildDarkOverrides,
   buildLightOverrides,
@@ -41,6 +42,7 @@ const accounts = useAccountsStore();
 const instances = useInstancesStore();
 const tasks = useTasksStore();
 const pins = usePinsStore();
+const region = useRegionStore();
 const onboarding = useOnboarding();
 const { t } = useI18n();
 
@@ -133,6 +135,9 @@ async function boot() {
   } catch {
     /* 设置加载失败不阻塞启动 */
   }
+  // 地区可用性判定（决定是否停用游戏下载入口）；与设置并行也不冲突，
+  // 但要在首屏渲染出下载按钮前拿到，避免按钮先亮后被灰。
+  await region.load().catch(() => {});
   applyLocale(settings.settings?.language);
   bootProgress.value = 24;
 
@@ -161,8 +166,9 @@ async function boot() {
   }, 340);
 }
 
-// 全局监听：分享包导入后游戏本体自动安装失败（后端无法直接弹 toast）
+// 全局监听：导入（分享包 / 整合包）后后台安装失败（后端无法直接弹 toast）
 let unlistenShareErr: (() => void) | null = null;
+let unlistenPackErr: (() => void) | null = null;
 onMounted(async () => {
   void boot();
   // 对照探针：验证「前端 → log_debug → 落盘」这条日志通道本身可用
@@ -176,12 +182,20 @@ onMounted(async () => {
         notifyError(`游戏本体自动安装失败：${ev.payload.error}`);
       }
     );
+    // 整合包导入是后台任务：下载 mods / 装本体失败时用户必须能看到原因
+    unlistenPackErr = await listen<{ instanceId: string; error: string }>(
+      "modpack-import://failed",
+      (ev) => {
+        notifyError(`整合包安装失败：${ev.payload.error}`);
+      }
+    );
   } catch {
     /* 监听不可用不影响主流程 */
   }
 });
 onBeforeUnmount(() => {
   unlistenShareErr?.();
+  unlistenPackErr?.();
   unlistenShareErr = null;
 });
 </script>

@@ -27,6 +27,20 @@ pub fn get_settings(state: State<AppState>) -> Result<Value, String> {
     Ok(settings::frontend_view(&s))
 }
 
+/// 地区可用性：中国大陆地区需停用「游戏本体 / 整合包下载安装」与镜像下载。
+/// 结果由后端离线判定并缓存，前端仅据此禁用入口（后端入口另有兜底校验）。
+#[tauri::command]
+pub fn get_region_status() -> Value {
+    let restricted = crate::region::is_mainland_china();
+    json!({
+        "restricted": restricted,
+        // "mainland_china" | "other"
+        "region": if restricted { "mainland_china" } else { "other" },
+        "timezone": crate::region::timezone_name(),
+        "notice": if restricted { crate::region::BLOCKED_NOTICE } else { "" },
+    })
+}
+
 #[tauri::command]
 pub fn set_settings(state: State<AppState>, patch: Value) -> Result<Value, String> {
     let updated = settings::update_settings(&state, patch)?;

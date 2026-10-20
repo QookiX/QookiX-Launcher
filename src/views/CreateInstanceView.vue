@@ -13,12 +13,16 @@ import AppIcon from "../components/AppIcon.vue";
 import IconPickerDialog from "../components/IconPickerDialog.vue";
 import { IconChevronLeft, IconFolder, IconPlus } from "../components/icons";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
+import { useRegionStore } from "../stores/region";
 import type { Loader } from "../types";
 
 const router = useRouter();
 const instances = useInstancesStore();
 const message = useMessage();
 const { t } = useI18n();
+const region = useRegionStore();
+/** 中国大陆地区：在线安装游戏本体 / 整合包下载安装停用，只保留「导入已有文件夹」 */
+const downloadsBlocked = computed(() => region.downloadBlocked);
 
 const mode = ref<"fresh" | "import" | "importmc">("fresh");
 const modeSegRef = ref<HTMLElement | null>(null);
@@ -90,6 +94,7 @@ const loaderOptions = computed(() => [
 ]);
 
 async function create() {
+  if (downloadsBlocked.value) return message.warning(t("region.createDisabled"));
   if (!mcVersion.value) return message.warning(t("createInstance.selectVersion"));
   const instName = name.value.trim() || mcVersion.value;
   creating.value = true;
@@ -120,6 +125,7 @@ async function create() {
 
 // ---- import ----
 async function doImport(file: string) {
+  if (downloadsBlocked.value) return message.warning(t("region.modpackDisabled"));
   importing.value = true;
   try {
     const inst = await api.importModpack(file);
@@ -133,6 +139,7 @@ async function doImport(file: string) {
 }
 
 async function importPack() {
+  if (downloadsBlocked.value) return message.warning(t("region.modpackDisabled"));
   const file = await open({
     multiple: false,
     filters: [{ name: t("createInstance.modpackFilterName"), extensions: ["zip", "mrpack"] }],
@@ -349,6 +356,8 @@ function loaderLabel(ld: string): string {
 let unlisteners: Array<() => void> = [];
 
 onMounted(async () => {
+  // 地区受限时直接落到「导入游戏文件夹」：另外两种模式都要下载游戏本体
+  if (downloadsBlocked.value) mode.value = "importmc";
   const BGS = ["amber", "blue", "green", "purple", "red", "slate", "dark"];
   const bg = BGS[Math.floor(Math.random() * BGS.length)];
   iconStr.value = `bg:${bg}`;
@@ -431,9 +440,25 @@ onUnmounted(() => {
 
     <div ref="modeSegRef" class="mode-tabs glass">
       <div class="indicator" :style="modeSegStyle"></div>
-      <button :class="{ active: mode === 'fresh' }" @click="mode = 'fresh'">{{ t("createInstance.modeFresh") }}</button>
-      <button :class="{ active: mode === 'import' }" @click="mode = 'import'">{{ t("createInstance.modeImport") }}</button>
+      <button
+        :class="{ active: mode === 'fresh', disabled: downloadsBlocked }"
+        :disabled="downloadsBlocked"
+        :title="downloadsBlocked ? t('region.createDisabled') : undefined"
+        @click="mode = 'fresh'"
+      >{{ t("createInstance.modeFresh") }}</button>
+      <button
+        :class="{ active: mode === 'import', disabled: downloadsBlocked }"
+        :disabled="downloadsBlocked"
+        :title="downloadsBlocked ? t('region.modpackDisabled') : undefined"
+        @click="mode = 'import'"
+      >{{ t("createInstance.modeImport") }}</button>
       <button :class="{ active: mode === 'importmc' }" @click="mode = 'importmc'">{{ t("createInstance.modeImportMc") }}</button>
+    </div>
+
+    <!-- 地区限制说明：中国大陆地区只保留「导入游戏文件夹」 -->
+    <div v-if="downloadsBlocked" class="region-notice glass">
+      <strong>{{ t("region.title") }}</strong>
+      <p>{{ t("region.notice") }}</p>
     </div>
 
     <!-- fresh create -->
@@ -720,6 +745,30 @@ onUnmounted(() => {
 }
 .mode-tabs button.active {
   color: var(--accent);
+}
+/* 地区受限时禁用「全新创建 / 导入整合包」 */
+.mode-tabs button.disabled,
+.mode-tabs button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  color: var(--text-3);
+}
+.region-notice {
+  padding: 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-left: 3px solid var(--accent);
+}
+.region-notice strong {
+  font-size: 13px;
+  color: var(--text-1);
+}
+.region-notice p {
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-3);
+  margin: 0;
 }
 .fresh,
 .import {

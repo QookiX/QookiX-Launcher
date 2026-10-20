@@ -41,6 +41,7 @@ import settingsEn from "./_fragments/settings.en";
 import nbtEn from "./_fragments/nbt.en";
 import keybind from "./_fragments/keybind.en";
 import timemachine from "./_fragments/timemachine.en";
+import region from "./_fragments/region.en";
 
 export default {
   ...home,
@@ -48,6 +49,7 @@ export default {
   multiplayer,
   serverDetail,
   downloads,
+  region,
   common: {
     confirm: "Confirm",
     cancel: "Cancel",

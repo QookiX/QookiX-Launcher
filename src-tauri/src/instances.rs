@@ -33,6 +33,17 @@ pub fn validate_instance_id(id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// 游戏本体是否真的装好了（版本 JSON 在不在）。
+///
+/// `qookix.json` 里的 `installed` 只是个标记，安装中断 / 整合包导入失败时会与
+/// 磁盘不一致（标记为 true 但文件没有）——详情页据此显示「安装游戏」入口，
+/// 所以一律以磁盘为准。判定条件与 `launch` 启动前的检查完全一致。
+pub fn is_installed_on_disk(state: &AppState, id: &str) -> bool {
+    crate::paths::resolve_version_dir(state, id)
+        .join(format!("{id}.json"))
+        .exists()
+}
+
 pub fn load_instances(state: &AppState) -> Vec<Instance> {
     let dir = state.instances_dir();
     let Ok(entries) = std::fs::read_dir(&dir) else {
@@ -46,7 +57,8 @@ pub fn load_instances(state: &AppState) -> Vec<Instance> {
         }
         let meta = p.join("qookix.json");
         if let Ok(text) = std::fs::read_to_string(&meta) {
-            if let Ok(inst) = serde_json::from_str::<Instance>(&text) {
+            if let Ok(mut inst) = serde_json::from_str::<Instance>(&text) {
+                inst.installed = is_installed_on_disk(state, &inst.id);
                 out.push(inst);
             }
         }
@@ -59,7 +71,10 @@ pub fn get_instance(state: &AppState, id: &str) -> Result<Instance, String> {
     validate_instance_id(id)?;
     let text = std::fs::read_to_string(instance_path(state, id))
         .map_err(|_| format!("实例 {id} 不存在"))?;
-    serde_json::from_str(&text).map_err(|e| format!("实例数据损坏: {e}"))
+    let mut inst: Instance =
+        serde_json::from_str(&text).map_err(|e| format!("实例数据损坏: {e}"))?;
+    inst.installed = is_installed_on_disk(state, id);
+    Ok(inst)
 }
 
 pub fn save_instance(state: &AppState, instance: &Instance) -> Result<(), String> {
@@ -1071,7 +1086,12 @@ async fn import_one(
     reuse_runtime_files(&source.join("assets"), &state.assets_dir());
 
     // ---- install the game (client / libraries / assets / loader) ----
-    let mut plan = crate::install::install_game(app, state, &instance).await?;
+    // 中国大陆地区：只复用本地已有文件，缺失的部分不联网补下载（直接报错）。
+    let mut plan = if crate::region::is_mainland_china() {
+        crate::install::install_game_local_only(app, state, &instance).await?
+    } else {
+        crate::install::install_game(app, state, &instance).await?
+    };
     plan.symlink_fallback = symlink_fallback;
     Ok(plan)
 }

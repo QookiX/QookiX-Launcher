@@ -20,12 +20,15 @@ pub async fn fetch_manifest(state: &AppState) -> Result<VersionManifest, String>
         }
     }
     let url = crate::mirror::manifest_url(state);
-    // 双向兜底：镜像挂了回退官方，官方直连失败（国内常态）回退镜像
+    // 双向兜底：镜像挂了回退官方，官方直连失败（国内常态）回退镜像。
+    // 中国大陆地区合规：镜像（BMCLAPI）停用，不做镜像兜底。
     const BMCLAPI_MANIFEST: &str =
         "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json";
+    let mirror_allowed = !crate::region::is_mainland_china();
     let text = if url == MANIFEST_URL {
         match crate::download::get_text(&state.client, MANIFEST_URL).await {
             Ok(t) => t,
+            Err(e) if !mirror_allowed => return Err(format!("{e}（当前地区不提供镜像下载）")),
             Err(e) => crate::download::get_text(&state.client, BMCLAPI_MANIFEST)
                 .await
                 .map_err(|e2| format!("{e}（镜像源也失败: {e2}）"))?,
@@ -54,11 +57,14 @@ pub async fn fetch_version_json(state: &AppState, id: &str) -> Result<VersionJso
     let entry = find_version(&manifest, id)
         .ok_or_else(|| format!("未找到 Minecraft 版本 {id}"))?;
     let url = crate::mirror::version_json_url(state, &entry.url, id);
-    // 官方直连失败（国内常态）时回退 BMCLAPI 镜像
+    // 官方直连失败（国内常态）时回退 BMCLAPI 镜像；
+    // 中国大陆地区合规：镜像停用，不回退。
     const BMCLAPI_BASE: &str = "https://bmclapi2.bangbang93.com";
+    let mirror_allowed = !crate::region::is_mainland_china();
     let json: VersionJson = if url == entry.url {
         match crate::download::get_json(&state.client, &url).await {
             Ok(j) => j,
+            Err(e) if !mirror_allowed => return Err(format!("{e}（当前地区不提供镜像下载）")),
             Err(e) => crate::download::get_json(
                 &state.client,
                 &format!("{BMCLAPI_BASE}/version/{id}/json"),

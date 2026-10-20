@@ -262,11 +262,20 @@ pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Set
         let p = v.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
         settings.proxy = p;
     }
+    // 地区合规：中国大陆地区镜像下载停用，镜像选择一律回落官方源（不写库）。
+    let mirror_locked = crate::region::is_mainland_china();
     if let Some(v) = patch.get("mirror").and_then(|v| v.as_str()) {
-        settings.mirror = v.trim().to_string();
+        if !mirror_locked {
+            settings.mirror = v.trim().to_string();
+        }
     }
     if let Some(v) = patch.get("mirror_custom").and_then(|v| v.as_str()) {
-        settings.mirror_custom = v.trim().to_string();
+        if !mirror_locked {
+            settings.mirror_custom = v.trim().to_string();
+        }
+    }
+    if mirror_locked {
+        settings.mirror = crate::mirror::OFFICIAL.to_string();
     }
     if let Some(v) = patch.get("background_image") {
         settings.background_image = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());

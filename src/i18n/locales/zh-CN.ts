@@ -41,6 +41,7 @@ import settingsZh from "./_fragments/settings.zh";
 import nbtZh from "./_fragments/nbt.zh";
 import keybind from "./_fragments/keybind.zh";
 import timemachine from "./_fragments/timemachine.zh";
+import region from "./_fragments/region.zh";
 
 export default {
   ...home,
@@ -48,6 +49,7 @@ export default {
   multiplayer,
   serverDetail,
   downloads,
+  region,
   common: {
     confirm: "确认",
     cancel: "取消",

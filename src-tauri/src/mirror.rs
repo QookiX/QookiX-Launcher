@@ -54,7 +54,12 @@ pub const PRESETS: &[MirrorPreset] = &[
 
 /// 由设置解析出实际生效的镜像根地址（官方源返回空串）。
 /// 公开版本便于在已持有 settings 读锁的地方复用，避免重复加锁。
+///
+/// 中国大陆地区合规：镜像下载（BMCLAPI 及自定义镜像）整体停用，一律回落官方源。
 pub fn resolve_from(id: &str, custom: &str) -> String {
+    if crate::region::is_mainland_china() {
+        return String::new();
+    }
     if id == CUSTOM {
         return custom.trim().trim_end_matches('/').to_string();
     }
@@ -78,10 +83,13 @@ pub fn is_official(state: &AppState) -> bool {
 }
 
 /// 镜像预设列表（供前端渲染）
+/// 地区受限时只下发官方源，前端设置页不会出现可点的镜像卡片。
 pub fn presets() -> Value {
+    let restricted = crate::region::is_mainland_china();
     Value::Array(
         PRESETS
             .iter()
+            .filter(|p| !restricted || p.id == OFFICIAL)
             .map(|p| json!({ "id": p.id, "label": p.label, "base": p.base, "desc": p.desc }))
             .collect(),
     )

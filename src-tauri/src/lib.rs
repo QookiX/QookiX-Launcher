@@ -26,6 +26,7 @@ mod modpack;
 mod pins;
 mod modrinth;
 mod paths;
+mod region;
 mod servers;
 mod secret;
 mod settings;
@@ -197,6 +198,7 @@ pub fn run() {
             commands::keybind_action_labels,
             // settings & java
             commands::get_settings,
+            commands::get_region_status,
             commands::set_settings,
             commands::resolve_close_request,
             commands::list_mirrors,

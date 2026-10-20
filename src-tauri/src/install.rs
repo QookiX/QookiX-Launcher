@@ -9,6 +9,16 @@ use std::time::Duration;
 use tauri::Emitter;
 use tokio::time::timeout;
 
+tokio::task_local! {
+    /// 本次安装是否禁止联网下载（「导入本地 .minecraft 文件夹」的本地复用模式）。
+    pub static DOWNLOADS_BLOCKED: bool;
+}
+
+/// 当前任务是否禁止联网下载（默认 false）。
+pub fn downloads_blocked() -> bool {
+    DOWNLOADS_BLOCKED.try_with(|v| *v).unwrap_or(false)
+}
+
 /// Entry point: install (or repair) the game files for an instance.
 /// 安装任务上下文：统一负责进度事件与「收尾」。
 ///
@@ -114,6 +124,43 @@ pub fn done_event_payload(
 }
 
 pub async fn install_game(
+    app: tauri::AppHandle,
+    state: &AppState,
+    instance: &Instance,
+) -> Result<InstallPlan, String> {
+    install_game_impl(app, state, instance, false).await
+}
+
+/// 仅使用本地已有文件安装：任何需要联网下载的缺失文件都直接报错。
+/// 用于中国大陆地区的「导入 .minecraft 文件夹」——本地文件可复用，
+/// 但不允许联网补下载游戏本体。
+pub async fn install_game_local_only(
+    app: tauri::AppHandle,
+    state: &AppState,
+    instance: &Instance,
+) -> Result<InstallPlan, String> {
+    install_game_impl(app, state, instance, true).await
+}
+
+async fn install_game_impl(
+    app: tauri::AppHandle,
+    state: &AppState,
+    instance: &Instance,
+    local_only: bool,
+) -> Result<InstallPlan, String> {
+    // 地区合规兜底：前端已禁用入口，这里再拦一次（避免旧前端/直接 invoke 绕过）。
+    // 仅拦「全新安装」，已安装实例的启动自修复（launch.rs 内调用）不受影响；
+    // local_only（导入本地文件夹）走本地复用，不走下载。
+    if crate::region::is_mainland_china() && !local_only && !instance.installed {
+        return Err(crate::region::BLOCKED_NOTICE.to_string());
+    }
+    if local_only {
+        return DOWNLOADS_BLOCKED.scope(true, install_game_body(app, state, instance)).await;
+    }
+    install_game_body(app, state, instance).await
+}
+
+async fn install_game_body(
     app: tauri::AppHandle,
     state: &AppState,
     instance: &Instance,

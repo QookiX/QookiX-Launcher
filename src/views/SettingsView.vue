@@ -10,6 +10,7 @@ import { relaunch } from "@tauri-apps/plugin-process";
 import { useMemoryInfo } from "../composables/useMemoryInfo";
 import { useSettingsStore } from "../stores/settings";
 import { useInstancesStore } from "../stores/instances";
+import { useRegionStore } from "../stores/region";
 import { api } from "../api";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import { useOnboarding } from "../composables/useOnboarding";
@@ -50,6 +51,9 @@ import { titlebarThemeToggle } from "../composables/useDevFlags";
 
 const settings = useSettingsStore();
 const instances = useInstancesStore();
+const region = useRegionStore();
+/** 中国大陆地区：镜像下载停用，镜像卡片只展示说明、不可切换 */
+const regionBlocked = computed(() => region.downloadBlocked);
 const message = useMessage();
 const dialog = useDialog();
 const router = useRouter();
@@ -377,6 +381,7 @@ async function loadMirrors() {
 }
 
 async function selectMirror(id: string) {
+  if (regionBlocked.value) return;
   if (settings.settings?.mirror === id) return;
   try {
     await settings.patch({ mirror: id });
@@ -386,6 +391,7 @@ async function selectMirror(id: string) {
 }
 
 async function testMirror(id: string, base: string) {
+  if (regionBlocked.value) return;
   if (testingMirror.value) return;
   testingMirror.value = id;
   try {
@@ -995,7 +1001,7 @@ onUnmounted(() => {
         <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
         <div class="nav-brand-info">
           <span class="nav-brand-name">QookiX Launcher</span>
-          <span class="nav-brand-ver">v0.15.1</span>
+          <span class="nav-brand-ver">v0.15.2</span>
         </div>
       </div>
     </div>
@@ -1382,7 +1388,11 @@ onUnmounted(() => {
           </div>
           <div class="card glass" id="download-mirror">
             <h3><IconGlobe /> {{ t("settings.download.mirror") }}</h3>
-            <div class="mirror-list">
+            <!-- 地区受限：镜像下载（BMCLAPI / 自定义）停用，卡片只作说明、不可操作 -->
+            <p v-if="regionBlocked" class="hint mirror-locked">
+              {{ t("region.mirrorDisabled") }}
+            </p>
+            <div v-else class="mirror-list">
               <button
                 v-for="m in mirrors"
                 :key="m.id"
@@ -1437,7 +1447,7 @@ onUnmounted(() => {
                 </span>
               </div>
             </div>
-            <p class="hint">
+            <p v-if="!regionBlocked" class="hint">
               {{ t("settings.download.mirrorHintLead") }}
               <b>{{ t("settings.download.mirrorHintBold") }}</b>{{ t("settings.download.mirrorHintTail") }}
             </p>
@@ -1755,7 +1765,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.15.1</span>
+            <span class="about-ver">v0.15.2</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
@@ -3344,6 +3354,13 @@ textarea.text-input {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+/* 地区受限：镜像卡片只留说明文字 */
+.mirror-locked {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--w-04);
 }
 .mirror-item,
 .mirror-custom {
