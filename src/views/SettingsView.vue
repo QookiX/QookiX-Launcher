@@ -2018,7 +2018,7 @@ onUnmounted(() => {
       @restored="instances.load(true)"
     />
 
-    <n-modal v-model:show="migrateModal" preset="card" :title="t('settings.migrate.modalTitle')" class="migrate-modal">
+    <n-modal v-model:show="migrateModal" preset="card" :title="t('settings.migrate.modalTitle')" class="migrate-modal" :style="{ width: '480px', maxWidth: '90vw' }">
       <div v-if="migratePhase === 'select'" class="migrate-body">
         <p class="migrate-label">{{ t("settings.migrate.newDir") }}</p>
         <code class="mono dir">{{ pendingNewDir }}</code>

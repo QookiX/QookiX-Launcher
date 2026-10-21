@@ -398,6 +398,17 @@ pub fn change_data_dir(state: &AppState, new_dir: &str, mode: &str) -> Result<St
         return Err("不能选择系统目录作为数据目录".into());
     }
     let _ = std::fs::create_dir_all(&new_root);
+    // For move/copy modes, reject non-empty target directories to avoid
+    // mixing launcher data with existing files. Pointer mode just updates
+    // the seed, so an existing non-empty directory is fine.
+    if mode != "pointer"
+        && std::fs::read_dir(&new_root)
+            .ok()
+            .and_then(|mut r| r.next())
+            .is_some()
+    {
+        return Err("目标目录不为空，请选择一个空目录或新建一个文件夹".into());
+    }
     let new_clean = new_root
         .canonicalize()
         .map_err(|e| format!("无法解析新目录路径: {e}"))?;
