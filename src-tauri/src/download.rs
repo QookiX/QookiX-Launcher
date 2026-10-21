@@ -61,7 +61,7 @@ pub async fn download_many(
     let cancel_flag = state.install_cancel.clone();
 
     let (file_threads, chunk_threads, mirror_base) = {
-        let s = state.settings.read().unwrap();
+        let s = state.settings();
         (
             s.download_threads.max(1),
             s.download_chunk_threads.max(1),
@@ -381,7 +381,7 @@ async fn fetch_and_verify(
         chunk_threads > 1 && item.size.map(|s| s >= CHUNK_THRESHOLD).unwrap_or(false);
 
     if can_chunk && probe_range_support(client, url).await {
-        let size = item.size.unwrap();
+        let size = item.size.ok_or("内部错误: 分块下载需要已知文件大小")?;
         match download_chunked(client, url, part, size, chunk_threads, on_progress).await {
             Ok(()) => {}
             Err(_) => {

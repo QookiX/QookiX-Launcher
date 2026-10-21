@@ -10,12 +10,14 @@ import LaunchProgress from "./components/LaunchProgress.vue";
 import CrashDialog from "./components/CrashDialog.vue";
 import CloseConfirmDialog from "./components/CloseConfirmDialog.vue";
 import UpdaterCheck from "./components/UpdaterCheck.vue";
+import ForceUpdateOverlay from "./components/ForceUpdateOverlay.vue";
 import SplashScreen from "./components/SplashScreen.vue";
 import ModpackDropOverlay from "./components/ModpackDropOverlay.vue";
 import { transitionName } from "./composables/usePageTransition";
 import { useSettingsStore } from "./stores/settings";
 import { initDeepLink } from "./composables/deepLink";
-import { MessageBridge } from "./composables/notify";
+import { MessageBridge, notifyError } from "./composables/notify";
+import { listen } from "@tauri-apps/api/event";
 import { useOnboarding } from "./composables/useOnboarding";
 import i18n from "./i18n";
 import { useI18n } from "vue-i18n";
@@ -168,8 +170,6 @@ onMounted(async () => {
   // 对照探针：验证「前端 → log_debug → 落盘」这条日志通道本身可用
   api.logDebug("[fe] App 启动，日志通道自检");
   try {
-    const { listen } = await import("@tauri-apps/api/event");
-    const { notifyError } = await import("./composables/notify");
     unlistenShareErr = await listen<{ instanceId: string; error: string }>(
       "share-import://game-install-failed",
       (ev) => {
@@ -220,6 +220,7 @@ onBeforeUnmount(() => {
                 <CrashDialog />
                 <CloseConfirmDialog />
                 <UpdaterCheck />
+                <ForceUpdateOverlay />
                 <ModpackDropOverlay />
                 <SplashScreen :progress="bootProgress" :status="bootStatus" :done="booted" />
               </n-notification-provider>

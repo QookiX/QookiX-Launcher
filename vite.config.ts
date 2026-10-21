@@ -29,4 +29,32 @@ export default defineConfig(async () => ({
       ignored: ["**/src-tauri/**"],
     },
   },
+  build: {
+    chunkSizeWarningLimit: 650,
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (id.includes("node_modules")) {
+            if (id.includes("three") || id.includes("skinview3d")) {
+              return "vendor-three";
+            }
+            if (id.includes("deepslate")) {
+              return "vendor-deepslate";
+            }
+            if (
+              id.includes("naive-ui") ||
+              id.includes("seemly") ||
+              id.includes("vooks") ||
+              id.includes("evtd")
+            ) {
+              return "vendor-naive-ui";
+            }
+            if (id.includes("marked") || id.includes("dompurify")) {
+              return "vendor-markdown";
+            }
+          }
+        },
+      },
+    },
+  },
 }));

@@ -4,12 +4,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use tauri::Emitter;
 
-pub fn now() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
+
 
 /// 服务器 ID 只允许单层名称，且限定 ASCII 字母数字与 `-_.`。
 pub fn validate_server_id(id: &str) -> Result<(), String> {
@@ -32,25 +27,7 @@ pub fn server_meta_path(state: &AppState, id: &str) -> PathBuf {
 }
 
 pub fn load_servers(state: &AppState) -> Vec<ServerConfig> {
-    let dir = state.servers_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for e in entries.flatten() {
-        let p = e.path();
-        if !p.is_dir() {
-            continue;
-        }
-        let meta = p.join("server.json");
-        if let Ok(text) = std::fs::read_to_string(&meta) {
-            if let Ok(s) = serde_json::from_str::<ServerConfig>(&text) {
-                out.push(s);
-            }
-        }
-    }
-    out.sort_by(|a, b| b.created.cmp(&a.created));
-    out
+    crate::util::load_dir_entries(&state.servers_dir(), "server.json", |s: &ServerConfig| s.created)
 }
 
 pub fn get_server(state: &AppState, id: &str) -> Result<ServerConfig, String> {
@@ -101,7 +78,7 @@ pub fn create_server(
         min_memory_mb: 1024,
         motd: "A Minecraft Server".into(),
         eula: false,
-        created: now(),
+        created: crate::util::now_secs(),
         last_started: None,
         java_path: None,
         jvm_args: None,
@@ -698,7 +675,7 @@ async fn pick_java(state: &AppState, jar: &Path, mc_version: &str, java_override
         .filter(|p| !p.is_empty() && Path::new(p).exists())
         .map(|p| p.to_string())
         .or_else(|| {
-            let s = state.settings.read().unwrap();
+            let s = state.settings();
             s.java_path.clone()
         });
     if let Some(p) = configured {
@@ -906,7 +883,7 @@ pub async fn start_server(
     // mark started
     {
         if let Ok(mut s) = get_server(state, id) {
-            s.last_started = Some(now());
+            s.last_started = Some(crate::util::now_secs());
             let _ = crate::util::log_best_effort("save_server", save_server(state, &s));
         }
     }

@@ -1,6 +1,7 @@
 import { CanvasTexture, NearestFilter, LinearMipmapLinearFilter, SRGBColorSpace } from "three";
 import { invoke } from "@tauri-apps/api/core";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { log } from "../utils/logger";
 
 export interface BlockState {
   name: string;
@@ -51,14 +52,14 @@ async function resolveResourceBase(): Promise<string> {
 
 export async function loadSchematicResources(): Promise<SchematicResources> {
   const resourceBase = await resolveResourceBase();
-  console.log("[schematic] resourceBase:", resourceBase);
+  log("[schematic] resourceBase:", resourceBase);
   const atlasUrl = `${resourceBase}/texture-atlas.png`;
   const [res, modelRes, layoutRes] = await Promise.all([
     fetch(atlasUrl),
     fetch(`${resourceBase}/block-model-index.json`),
     fetch(`${resourceBase}/texture-layout.json`),
   ]);
-  console.log("[schematic] fetch status:", { atlas: res.status, model: modelRes.status, layout: layoutRes.status });
+  log("[schematic] fetch status:", { atlas: res.status, model: modelRes.status, layout: layoutRes.status });
   if (!res.ok) throw new Error("纹理图集加载失败：请先安装 Minecraft 客户端");
   const blob = await res.blob();
   const bitmap = await createImageBitmap(blob);
@@ -81,8 +82,8 @@ export async function loadSchematicResources(): Promise<SchematicResources> {
   const textureLayout = layoutRes.ok ? await layoutRes.json() as TextureLayout : {};
   const atlasWidth = canvas.width;
   const atlasHeight = canvas.height;
-  console.log("[schematic] atlas:", atlasWidth, "x", atlasHeight, "| models:", Object.keys(modelIndex).length, "| textures:", Object.keys(textureLayout).length);
-  console.log("[schematic] sample texture keys:", Object.keys(textureLayout).slice(0, 5));
+  log("[schematic] atlas:", atlasWidth, "x", atlasHeight, "| models:", Object.keys(modelIndex).length, "| textures:", Object.keys(textureLayout).length);
+  log("[schematic] sample texture keys:", Object.keys(textureLayout).slice(0, 5));
 
   // 防呆：1.13+ 才是 block/xxx 这种扁平化命名。旧格式（blocks/anvil_base）两边
   // 键名对不上，所有方块会退化到图集左上角一个像素，看起来就是一坨同色块。
@@ -94,7 +95,7 @@ export async function loadSchematicResources(): Promise<SchematicResources> {
 
   try {
     const dbgRes = await fetch(`${resourceBase}/_debug.json`);
-    if (dbgRes.ok) console.log("[schematic] debug:", await dbgRes.json());
+    if (dbgRes.ok) log("[schematic] debug:", await dbgRes.json());
   } catch { /* ignore */ }
 
   function getBlockIconRect(blockName: string): [number, number, number, number] | null {

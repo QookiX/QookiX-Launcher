@@ -2,7 +2,7 @@
 import { h, onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { NButton, useDialog, useMessage } from "naive-ui";
-import { peekUpdate, downloadUpdate, updateReady, loadChangelogReleases, releasesInRange } from "../updater";
+import { peekUpdate, downloadUpdate, updateReady, forceUpdateInfo, loadChangelogReleases, releasesInRange } from "../updater";
 import UpdateNotes from "./UpdateNotes.vue";
 import { useSettingsStore } from "../stores/settings";
 import { error as devError } from "../utils/logger";
@@ -37,6 +37,12 @@ async function runCheck() {
     }
     const update = await peekUpdate();
     if (!update) return;
+    // 强制更新：当前版本被标记为不可用（latest.json 的 minVersion 高于当前版本）。
+    // 交给 ForceUpdateOverlay 全屏锁死处理，不走普通弹窗流程。
+    if (update.forceUpdate) {
+      forceUpdateInfo.value = update;
+      return;
+    }
     // 用户此前点击过「忽略此版本」且仍是同一版本：不再弹窗，避免每次启动都打扰。
     if (settings.settings?.dismissed_update_version === update.version) return;
 

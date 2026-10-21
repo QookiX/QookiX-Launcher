@@ -24,7 +24,7 @@ pub const BUILTIN_CF_API_KEY: &str = match option_env!("CURSEFORGE_API_KEY") {
 };
 
 fn api_key(state: &AppState) -> Result<String, String> {
-    let s = state.settings.read().unwrap();
+    let s = state.settings();
     if let Some(k) = s.curseforge_api_key.clone().filter(|k| !k.is_empty()) {
         return Ok(k);
     }

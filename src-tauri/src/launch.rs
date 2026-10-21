@@ -54,7 +54,7 @@ pub async fn launch_game(
     world: Option<String>,
     server: Option<String>,
 ) -> Result<LaunchResult, String> {
-    let mut settings = state.settings.read().unwrap().clone();
+    let mut settings = state.settings().clone();
     // Resolve effective Microsoft Client ID (built-in or user-configured)
     if let Ok(id) = crate::accounts::effective_ms_client_id(state) {
         settings.ms_client_id = id;
@@ -650,7 +650,10 @@ async fn pick_java(
         }
         return Ok(j.clone());
     }
-    let best = detected.iter().max_by_key(|j| j.major).unwrap();
+    let best = detected
+        .iter()
+        .max_by_key(|j| j.major)
+        .ok_or_else(|| format!("NEED_DOWNLOAD:{required}"))?;
     if best.major < required {
         return Err(format!("NEED_DOWNLOAD:{required}"));
     }

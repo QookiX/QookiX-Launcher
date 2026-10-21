@@ -743,7 +743,7 @@ pub fn import_local_file(
         .join(&instance.id)
         .join(modrinth::kind_folder(&kind))
         .join(&filename);
-    std::fs::create_dir_all(dest.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(dest.parent().ok_or("目标路径无效")?).map_err(|e| e.to_string())?;
     std::fs::copy(source, &dest).map_err(|e| format!("复制文件失败: {e}"))?;
     let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
     let icon = crate::util::extract_archive_icon(&dest, &kind);

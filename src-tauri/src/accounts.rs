@@ -1,7 +1,6 @@
 use crate::models::{Account, MsFlow};
 use crate::state::AppState;
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const MS_AUTH_SCOPE: &str = "XboxLive.SignIn XboxLive.offline_access";
 pub const TOKEN_URL: &str =
@@ -21,7 +20,7 @@ pub const BUILTIN_MS_CLIENT_ID: &str = match option_env!("MS_CLIENT_ID") {
 
 /// Resolve the effective Microsoft Client ID: user setting > built-in.
 pub fn effective_ms_client_id(state: &AppState) -> Result<String, String> {
-    let s = state.settings.read().unwrap();
+    let s = state.settings();
     let user_id = s.ms_client_id.trim();
     if !user_id.is_empty() && user_id != "00000000-0000-0000-0000-000000000000" {
         return Ok(user_id.to_string());
@@ -32,12 +31,7 @@ pub fn effective_ms_client_id(state: &AppState) -> Result<String, String> {
     Err("未配置 Microsoft Client ID：请在设置中填写，或用 MS_CLIENT_ID 环境变量重新构建".into())
 }
 
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
+
 
 // ---------------------------------------------------------------------------
 // Offline accounts
@@ -57,7 +51,7 @@ pub fn create_offline(state: &AppState, username: &str) -> Result<Account, Strin
     let account = Account::Offline {
         uuid: uuid.to_string(),
         username: name.to_string(),
-        created: now(),
+        created: crate::util::now_secs(),
     };
     save_account(state, &account)?;
     Ok(account)
@@ -100,7 +94,7 @@ pub async fn ms_start(state: &AppState) -> Result<serde_json::Value, String> {
     let flow = MsFlow {
         device_code,
         interval,
-        expires_at: now() + expires_in,
+        expires_at: crate::util::now_secs() + expires_in,
         client_id,
     };
     *state.ms_flow.lock().unwrap() = Some(flow);
@@ -126,7 +120,7 @@ pub async fn ms_poll(state: &AppState) -> Result<Account, String> {
         .unwrap()
         .clone()
         .ok_or("没有进行中的设备码登录")?;
-    if now() > flow.expires_at {
+    if crate::util::now_secs() > flow.expires_at {
         *state.ms_flow.lock().unwrap() = None;
         return Err("设备码已过期，请重新开始登录".into());
     }
@@ -320,10 +314,10 @@ async fn xbox_login(
     Ok(Account::Microsoft {
         uuid: uuid.to_string(),
         username: username.to_string(),
-        created: now(),
+        created: crate::util::now_secs(),
         msa_refresh_token: refresh_token.to_string(),
         msa_access_token: mc_token.to_string(),
-        msa_expires_at: now() + expires_in,
+        msa_expires_at: crate::util::now_secs() + expires_in,
     })
 }
 
@@ -339,7 +333,7 @@ pub async fn refresh_microsoft(state: &AppState, account: &Account) -> Result<Ac
         return Ok(account.clone());
     };
     // allow 5 min slack
-    if now() + 300 < *msa_expires_at {
+    if crate::util::now_secs() + 300 < *msa_expires_at {
         return Ok(account.clone());
     }
     let client_id = effective_ms_client_id(state)?;
@@ -384,7 +378,7 @@ pub async fn refresh_microsoft(state: &AppState, account: &Account) -> Result<Ac
 // ---------------------------------------------------------------------------
 
 pub fn load_accounts(state: &AppState) -> Vec<Account> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db();
     crate::db::load_rows_encrypted(&conn, "accounts")
         .into_iter()
         .filter_map(|v| serde_json::from_value(v).ok())
@@ -392,7 +386,7 @@ pub fn load_accounts(state: &AppState) -> Vec<Account> {
 }
 
 pub fn save_accounts(state: &AppState, accounts: &[Account]) -> Result<(), String> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db();
     let vals: Vec<serde_json::Value> = accounts
         .iter()
         .map(|a| serde_json::to_value(a).unwrap_or_default())

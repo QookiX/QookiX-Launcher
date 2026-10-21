@@ -1,4 +1,5 @@
 import * as deepslate from "deepslate";
+import { log } from "../utils/logger";
 
 const CHUNK_SIZE = 16;
 
@@ -190,12 +191,12 @@ async function initResources() {
   atlasBitmap.close();
 
   const rawUvs = layoutRes as Record<string, [number, number, number, number]>;
-  console.log("[worker] resourceBase:", resourceBase, "| layout entries:", Object.keys(rawUvs).length, "| atlas:", atlasW, "x", atlasH);
+  log("[worker] resourceBase:", resourceBase, "| layout entries:", Object.keys(rawUvs).length, "| atlas:", atlasW, "x", atlasH);
   for (const [key, [px, py, pw, ph]] of Object.entries(rawUvs)) {
     const nk = identifier(key);
     textureUvs[nk] = [px / atlasW, 1 - (py + ph) / atlasH, (px + pw) / atlasW, 1 - py / atlasH];
   }
-  console.log("[worker] textureUvs entries:", Object.keys(textureUvs).length, "| sample:", Object.keys(textureUvs).slice(0, 3));
+  log("[worker] textureUvs entries:", Object.keys(textureUvs).length, "| sample:", Object.keys(textureUvs).slice(0, 3));
   missingTextureUv = textureUvs["minecraft:block/gray_concrete"] ?? [0, 0, 1 / 64, 1 / 64];
 
   const rawDefaults = defaultsRes as Record<string, Record<string, string>>;

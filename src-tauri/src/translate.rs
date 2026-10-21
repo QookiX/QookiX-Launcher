@@ -59,7 +59,7 @@ pub async fn translate_descriptions(
 ) -> Result<Value, String> {
     // 选择翻译服务：默认（自建服务）或自定义（用户自己的 OpenAI 兼容 AI API）
     let (custom_ready, api_base, api_key, api_model) = {
-        let s = state.settings.read().unwrap();
+        let s = state.settings();
         (
             s.translate_provider == "custom",
             s.translate_api_base.trim().trim_end_matches('/').to_string(),
@@ -218,7 +218,7 @@ pub async fn translate_body(
     .unwrap_or_default();
 
     let (custom_ready, api_base, api_key, api_model) = {
-        let s = state.settings.read().unwrap();
+        let s = state.settings();
         (
             s.translate_provider == "custom",
             s.translate_api_base.trim().trim_end_matches('/').to_string(),
@@ -331,7 +331,7 @@ fn name_cache_key(name: &str) -> String {
 /// 前端保持显示原名。结果带磁盘缓存（30 天）。
 pub async fn translate_mod_names(state: &AppState, names: Vec<String>) -> Result<Value, String> {
     let (api_base, api_key, api_model) = {
-        let s = state.settings.read().unwrap();
+        let s = state.settings();
         (
             s.translate_api_base.trim().trim_end_matches('/').to_string(),
             s.translate_api_key.clone().unwrap_or_default(),

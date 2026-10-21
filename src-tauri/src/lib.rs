@@ -251,7 +251,7 @@ pub fn run() {
             commands::login_ms_start,
             commands::login_ms_poll,
             commands::logout_account,
-            // browse & content
+            // browse & content（Modrinth / CurseForge 搜索 + 安装 + 依赖体检）
             commands::browse,
             commands::project_versions,
             commands::curseforge_categories,
@@ -259,48 +259,49 @@ pub fn run() {
             commands::project_dependencies,
             commands::mc_wiki_url,
             commands::install_content,
-            commands::check_dependencies,
-  commands::check_updates,
-  commands::resolve_missing_mods,
-  commands::resolve_dependency_tree,
-  commands::translate_mod_descriptions,
-  commands::translate_mod_names,
-  commands::translate_project_body,
-  commands::report_translation_stale,
-  commands::report_translation_quality,
-  commands::clear_translation_cache,
-  commands::test_translate_api,
-  yggdrasil::yggdrasil_login,
-  yggdrasil::yggdrasil_add_account,
-  yggdrasil::yggdrasil_ensure_token,
-  yggdrasil::yggdrasil_textures,
-  // 拾木空间（www.mcimg.com）OAuth 登录 + 开放 API
-  shimu::shimu_config,
-  shimu::shimu_set_credentials,
-  shimu::shimu_oauth_start,
-  shimu::shimu_oauth_complete,
-  shimu::shimu_status,
-  shimu::shimu_user_info,
-  shimu::shimu_logout,
-  shimu::shimu_list_posts,
-  shimu::shimu_categories,
-  shimu::shimu_post_detail,
-  shimu::shimu_hot_posts,
-  shimu::shimu_featured_posts,
-  shimu::shimu_my_collects,
-  shimu::shimu_check_entitlement,
-  shimu::shimu_purchase_download,
-  shimu::shimu_my_orders,
-  shimu::shimu_download_file,
-            commands::apply_update,
             commands::uninstall_content,
             commands::list_content,
             commands::identify_content,
             commands::import_local_file,
             commands::toggle_content_enabled,
+            commands::check_dependencies,
+            commands::check_updates,
+            commands::resolve_missing_mods,
+            commands::resolve_dependency_tree,
             commands::save_text_file,
             commands::extract_game_icons,
-            // world backups / playtime / instance share
+            // 翻译（Mod 描述 / 名称 / 正文 互译）
+            commands::translate_mod_descriptions,
+            commands::translate_mod_names,
+            commands::translate_project_body,
+            commands::report_translation_stale,
+            commands::report_translation_quality,
+            commands::clear_translation_cache,
+            commands::test_translate_api,
+            // 外置登录（Yggdrasil 第三方验证服务器）
+            yggdrasil::yggdrasil_login,
+            yggdrasil::yggdrasil_add_account,
+            yggdrasil::yggdrasil_ensure_token,
+            yggdrasil::yggdrasil_textures,
+            // 拾木空间（www.mcimg.com）OAuth 登录 + 开放 API
+            shimu::shimu_config,
+            shimu::shimu_set_credentials,
+            shimu::shimu_oauth_start,
+            shimu::shimu_oauth_complete,
+            shimu::shimu_status,
+            shimu::shimu_user_info,
+            shimu::shimu_logout,
+            shimu::shimu_list_posts,
+            shimu::shimu_categories,
+            shimu::shimu_post_detail,
+            shimu::shimu_hot_posts,
+            shimu::shimu_featured_posts,
+            shimu::shimu_my_collects,
+            shimu::shimu_check_entitlement,
+            shimu::shimu_purchase_download,
+            shimu::shimu_my_orders,
+            shimu::shimu_download_file,
+            // world backups / playtime / instance share（导入导出整合包）
             commands::list_world_backups,
             commands::create_world_backup,
             commands::restore_world_backup,
@@ -309,6 +310,7 @@ pub fn run() {
             commands::play_sessions,
             commands::export_instance_pack,
             commands::export_preview,
+            commands::import_instance_pack,
             commands::identify_manual_mods,
             // 诊断中心
             commands::collect_diagnostics,
@@ -316,7 +318,6 @@ pub fn run() {
             commands::list_diagnostics_reports,
             commands::read_diagnostics_report,
             commands::delete_diagnostics_report,
-            commands::import_instance_pack,
             // skins
             commands::list_skins,
             commands::read_skin_data_url,
@@ -375,6 +376,7 @@ pub fn run() {
             // news
             commands::fetch_news,
             // app self-update (dynamic update source)
+            commands::apply_update,
             updater::check_for_update,
             updater::download_update,
             updater::apply_app_update,
@@ -403,7 +405,7 @@ pub fn run() {
                 let app = window.app_handle();
                 let state = app.state::<AppState>();
                 let behavior = {
-                    let s = state.settings.read().unwrap();
+                    let s = state.settings();
                     s.close_behavior.clone()
                 };
                 match behavior.as_str() {

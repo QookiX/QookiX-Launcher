@@ -13,6 +13,27 @@ pub const PROGRESS_EVENT: &str = "app-update-progress";
 pub const SOURCE_BUCKET: &str = "bucket";
 pub const SOURCE_GITHUB: &str = "github";
 
+/// 版本号比较：按 `.` / `-` / `+` 分段数值比较（与前端 `compareVersions` 对齐）。
+/// 返回 -1 / 0 / 1。无法解析的段按 0 处理。
+fn compare_versions(a: &str, b: &str) -> i8 {
+    let parse = |s: &str| -> Vec<u64> {
+        s.split(['.', '-', '+'])
+            .map(|seg| seg.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let pa = parse(a);
+    let pb = parse(b);
+    let n = pa.len().max(pb.len());
+    for i in 0..n {
+        let da = pa.get(i).copied().unwrap_or(0);
+        let db = pb.get(i).copied().unwrap_or(0);
+        if da != db {
+            return if da < db { -1 } else { 1 };
+        }
+    }
+    0
+}
+
 /// 存储桶更新源根地址（CI 会把构建产物和 `latest.json` 上传到该目录）。
 ///
 /// 构建时通过 `QOOKIX_BUCKET_UPDATE_URL` 环境变量注入（见 `.github/workflows/build.yml`）。
@@ -58,7 +79,7 @@ fn normalize_source(source: &str) -> String {
 fn current_source(state: &AppState, override_source: Option<String>) -> String {
     match override_source {
         Some(s) => normalize_source(&s),
-        None => normalize_source(&state.settings.read().unwrap().update_source),
+        None => normalize_source(&state.settings().update_source),
     }
 }
 
@@ -73,6 +94,22 @@ fn build_updater(
         .map_err(|e| format!("初始化更新器失败: {e}"))
 }
 
+/// `latest.json` 里我们关心的自定义字段（插件不读这些，只读 version/platforms）。
+/// `minVersion` 由 CI 通过 `QOOKIX_MIN_VERSION` 环境变量注入：低于此版本必须强制更新。
+#[derive(serde::Deserialize)]
+struct ManifestMeta {
+    #[serde(rename = "minVersion")]
+    min_version: Option<String>,
+}
+
+/// 拉取 `latest.json` 并提取 `minVersion`。网络失败时返回 `None`（不阻塞普通更新流程）。
+async fn fetch_min_version(state: &AppState, source: &str) -> Option<String> {
+    let url = manifest_url(source).ok()?;
+    let text = crate::download::get_text(&state.client, url.as_str()).await.ok()?;
+    let meta: ManifestMeta = serde_json::from_str(&text).ok()?;
+    meta.min_version
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
@@ -82,6 +119,10 @@ pub struct UpdateInfo {
     pub body: Option<String>,
     pub download_url: Option<String>,
     pub source: String,
+    /// 当前版本低于 `latest.json` 的 `minVersion` 时为 `true`：必须更新、不可忽略。
+    pub force_update: bool,
+    /// 触发强制更新的最低版本（前端用于展示提示文案）。
+    pub force_min_version: Option<String>,
 }
 
 /// 检查所选更新源是否有新版本。`source` 缺省时使用设置中的 `update_source`。
@@ -98,14 +139,25 @@ pub async fn check_for_update(
         .await
         .map_err(|e| format!("检查更新失败: {e}"))?;
     Ok(match update {
-        Some(u) => UpdateInfo {
-            available: true,
-            version: Some(u.version.clone()),
-            current_version: Some(u.current_version.clone()),
-            body: u.body.clone(),
-            download_url: Some(u.download_url.to_string()),
-            source,
-        },
+        Some(u) => {
+            let current = u.current_version.clone();
+            let min_version = fetch_min_version(&state, &source).await;
+            // 强制更新：latest.json 声明了 minVersion 且当前版本严格低于它。
+            let force = match &min_version {
+                Some(m) => compare_versions(&current, m) < 0,
+                None => false,
+            };
+            UpdateInfo {
+                available: true,
+                version: Some(u.version.clone()),
+                current_version: Some(u.current_version.clone()),
+                body: u.body.clone(),
+                download_url: Some(u.download_url.to_string()),
+                source,
+                force_update: force,
+                force_min_version: min_version,
+            }
+        }
         None => UpdateInfo {
             available: false,
             version: None,
@@ -113,6 +165,8 @@ pub async fn check_for_update(
             body: None,
             download_url: None,
             source,
+            force_update: false,
+            force_min_version: None,
         },
     })
 }
@@ -152,14 +206,14 @@ pub async fn download_update(
         .await
         .map_err(|e| format!("下载更新失败: {e}"))?;
 
-    *state.pending_update.lock().unwrap() = Some((update, bytes));
+    *state.pending_update.lock().unwrap_or_else(|e| e.into_inner()) = Some((update, bytes));
     Ok(true)
 }
 
 /// 应用已下载的更新（校验签名后安装，Windows 上会静默安装并重启）。
 #[tauri::command]
 pub fn apply_app_update(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let Some((update, bytes)) = state.pending_update.lock().unwrap().take() else {
+    let Some((update, bytes)) = state.pending_update.lock().unwrap_or_else(|e| e.into_inner()).take() else {
         return Err("没有已下载的更新".into());
     };
     update
@@ -198,4 +252,38 @@ pub async fn fetch_changelog(
         }
     }
     Err("获取更新日志失败".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compare_versions_basic() {
+        assert_eq!(compare_versions("0.15.1", "0.15.2"), -1);
+        assert_eq!(compare_versions("0.15.2", "0.15.1"), 1);
+        assert_eq!(compare_versions("0.15.1", "0.15.1"), 0);
+    }
+
+    #[test]
+    fn compare_versions_crosses_decimal_boundary() {
+        // 0.10.0 > 0.9.0（字符串比较会搞错，数值比较不会）
+        assert_eq!(compare_versions("0.9.0", "0.10.0"), -1);
+        assert_eq!(compare_versions("0.10.0", "0.9.0"), 1);
+    }
+
+    #[test]
+    fn compare_versions_handles_pre_release_suffixes() {
+        // 与前端 compareVersions 对齐：按 ./-/+ 分段，非数字段当 0 处理。
+        // "rc1" / "rc2" 都解析为 0，所以 0.15.1-rc1 == 0.15.1-rc2。
+        assert_eq!(compare_versions("0.15.1-rc1", "0.15.1-rc2"), 0);
+        // 但 0.15.1-rc1 < 0.15.2（第三段 1 < 2）
+        assert_eq!(compare_versions("0.15.1-rc1", "0.15.2"), -1);
+    }
+
+    #[test]
+    fn compare_versions_unparseable_segments_treated_as_zero() {
+        assert_eq!(compare_versions("0.15.x", "0.15.0"), 0);
+        assert_eq!(compare_versions("v0.15.1", "0.15.1"), 0);
+    }
 }

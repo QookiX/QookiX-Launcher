@@ -144,7 +144,7 @@ async fn launch_instance_inner(
     // resolve account: instance override -> global selected -> first
     let accounts = accounts::load_accounts(state);
     let selected = {
-        let s = state.settings.read().unwrap();
+        let s = state.settings();
         s.selected_account.clone()
     };
     let account = if let Some(aid) = &instance.account_id {

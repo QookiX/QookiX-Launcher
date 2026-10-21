@@ -18,6 +18,10 @@ export interface UpdateInfo {
   downloadUrl: string | null;
   /** 实际使用的更新源："bucket" | "github" */
   source: "bucket" | "github";
+  /** 当前版本低于 latest.json 的 minVersion 时为 true：必须更新、不可忽略。 */
+  forceUpdate: boolean;
+  /** 触发强制更新的最低版本（展示用）。 */
+  forceMinVersion: string | null;
 }
 
 /**
@@ -30,6 +34,12 @@ export const updateReady = ref(false);
 export const updateReadyVersion = ref<string | null>(null);
 /** `true` while `install()` is running (guards double clicks on the button). */
 export const updateInstalling = ref(false);
+
+/**
+ * 当检测到强制更新时填入，触发全屏锁死遮罩。`null` 表示无强制更新。
+ * 遮罩组件 `ForceUpdateOverlay.vue` watch 这个 ref。
+ */
+export const forceUpdateInfo = ref<UpdateInfo | null>(null);
 
 export interface UpdateProgress {
   message: string;

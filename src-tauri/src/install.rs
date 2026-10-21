@@ -161,8 +161,7 @@ async fn install_game_inner(
     };
     let loader_full = loader_ver.as_deref().map(|v| loader_full_ver(instance, v));
 
-    let need_repatch = loader_full.is_some() && {
-        let full_ver = loader_full.as_deref().unwrap();
+    let need_repatch = if let Some(full_ver) = loader_full.as_deref() {
         let tool_name = if instance.loader == LoaderType::NeoForge { "neoforge" } else { "forge" };
         let installer_path =
             state.root.join("runtimes").join(format!("{tool_name}-{full_ver}-installer.jar"));
@@ -170,6 +169,8 @@ async fn install_game_inner(
         // 或旧 json 缺 classpath 参数（旧版 forge_patch 不合并 vanilla arguments）→ 重跑。
         !installer_path.exists()
             || existing_json_obj.as_ref().map_or(false, |j| !version_json_has_classpath(j))
+    } else {
+        false
     };
     let (patched, patched_path) = match (existing_json_obj, need_repatch) {
         (Some(json), false) => (json, existing_json),
@@ -800,7 +801,7 @@ async fn run_forge_processors(
     task_id: u64,
     source: &str,
 ) -> Result<(), String> {
-    let settings = state.settings.read().unwrap().clone();
+    let settings = state.settings().clone();
     let java: String = match settings.java_path.as_deref().filter(|s| !s.is_empty()) {
         Some(p) => p.to_string(),
         None => {
@@ -1172,7 +1173,7 @@ async fn forge_patch(
     };
     let installer_url = format!("{base_url}{artifact}/{full_ver}/{installer_name}-{full_ver}-installer.jar");
     let installer_path = state.root.join("runtimes").join(format!("{installer_name}-{full_ver}-installer.jar"));
-    std::fs::create_dir_all(installer_path.parent().unwrap()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(installer_path.parent().ok_or("安装器路径无效")?).map_err(|e| e.to_string())?;
 
     if !installer_path.exists() {
         let item = DownloadItem {

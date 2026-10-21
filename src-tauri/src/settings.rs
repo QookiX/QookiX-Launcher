@@ -110,7 +110,7 @@ pub fn save_settings(root: &std::path::Path, settings: &Settings) -> Result<(), 
 
 /// Persist current settings from state.
 pub fn persist(state: &AppState) -> Result<(), String> {
-    let settings = state.settings.read().unwrap().clone();
+    let settings = state.settings().clone();
     save_settings(&state.root, &settings)
 }
 
@@ -177,7 +177,7 @@ fn set_secret(slot: &mut Option<String>, value: &serde_json::Value) {
 
 /// Update settings with a partial patch (values from frontend).
 pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Settings, String> {
-    let mut settings = state.settings.write().unwrap();
+    let mut settings = state.settings_mut();
     // NOTE: `data_dir` is intentionally ignored here. The data root is fixed at
     // startup (honoring the value the installer seeds into settings.json) and
     // existing data is not migrated; applying a runtime change would silently
@@ -446,7 +446,7 @@ pub fn change_data_dir(state: &AppState, new_dir: &str, mode: &str) -> Result<St
 
     // Write the full settings.json into the new root with data_dir updated.
     {
-        let mut s = state.settings.read().unwrap().clone();
+        let mut s = state.settings().clone();
         s.data_dir = new_dir.to_string();
         save_settings(&new_root, &s)?;
     }
@@ -462,7 +462,7 @@ pub fn change_data_dir(state: &AppState, new_dir: &str, mode: &str) -> Result<St
     // Reflect the new path in memory immediately (UI); the actual file I/O
     // still uses the old root until restart.
     {
-        let mut s = state.settings.write().unwrap();
+        let mut s = state.settings_mut();
         s.data_dir = new_dir.to_string();
     }
 
@@ -530,12 +530,12 @@ pub fn http_client(proxy_mode: &str, proxy: Option<&str>) -> reqwest::Client {
 
 #[allow(dead_code)]
 pub fn state_guard<'a>(state: &'a AppState) -> std::sync::RwLockReadGuard<'a, Settings> {
-    state.settings.read().unwrap()
+    state.settings()
 }
 
 #[allow(dead_code)]
 pub fn with_settings<T>(state: &AppState, f: impl FnOnce(&Settings) -> T) -> T {
-    let s = state.settings.read().unwrap();
+    let s = state.settings();
     f(&s)
 }
 

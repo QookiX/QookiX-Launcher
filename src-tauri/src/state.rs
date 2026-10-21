@@ -76,4 +76,24 @@ impl AppState {
     pub fn next_task_id(&self) -> u64 {
         self.task_counter.fetch_add(1, Ordering::Relaxed)
     }
+
+    // ---- Lock helpers: recover from poison instead of panicking -------------
+    // A Mutex/RwLock is poisoned when a thread panicked while holding it.
+    // Calling .unwrap() on the lock result would panic again, cascading the
+    // failure to every subsequent caller and bricking the backend.  These
+    // helpers recover the guard via PoisonError::into_inner(), so a single
+    // panic doesn't take down the whole app.
+
+    /// Read guard for `settings`, recovering from lock poison.
+    pub fn settings(&self) -> std::sync::RwLockReadGuard<'_, Settings> {
+        self.settings.read().unwrap_or_else(|e| e.into_inner())
+    }
+    /// Write guard for `settings`, recovering from lock poison.
+    pub fn settings_mut(&self) -> std::sync::RwLockWriteGuard<'_, Settings> {
+        self.settings.write().unwrap_or_else(|e| e.into_inner())
+    }
+    /// Guard for `db`, recovering from lock poison.
+    pub fn db(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
+        self.db.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }

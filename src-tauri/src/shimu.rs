@@ -24,7 +24,6 @@ use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 站点地址
 pub const HOST: &str = "https://www.mcimg.com";
@@ -56,12 +55,7 @@ pub const BUILTIN_CLIENT_SECRET: &str = match option_env!("SHIMU_CLIENT_SECRET")
     None => "",
 };
 
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
+
 
 // ---------------------------------------------------------------------------
 // 登录态
@@ -147,7 +141,7 @@ fn clear_session(state: &AppState) {
 }
 
 pub fn effective_client_id(state: &AppState) -> String {
-    let user = state.settings.read().unwrap().shimu_client_id.trim().to_string();
+    let user = state.settings().shimu_client_id.trim().to_string();
     if !user.is_empty() {
         return user;
     }
@@ -176,7 +170,7 @@ fn current_token(state: &AppState) -> Result<String, String> {
         .as_deref()
         .filter(|t| !t.is_empty())
         .ok_or_else(|| ERR_NOT_LOGGED_IN.to_string())?;
-    if auth.expires_at > 0 && now() >= auth.expires_at {
+    if auth.expires_at > 0 && crate::util::now_secs() >= auth.expires_at {
         return Err(ERR_EXPIRED.to_string());
     }
     Ok(token.to_string())
@@ -188,7 +182,7 @@ fn current_token(state: &AppState) -> Result<String, String> {
 fn optional_token(state: &AppState) -> Option<String> {
     let auth = state.shimu.lock().unwrap();
     let token = auth.access_token.as_deref().filter(|t| !t.is_empty())?;
-    if auth.expires_at > 0 && now() >= auth.expires_at {
+    if auth.expires_at > 0 && crate::util::now_secs() >= auth.expires_at {
         return None;
     }
     Some(token.to_string())
@@ -318,7 +312,7 @@ pub fn shimu_set_credentials(
         );
     }
     {
-        let mut s = app_state.settings.write().unwrap();
+        let mut s = app_state.settings_mut();
         s.shimu_client_id = client_id.trim().to_string();
         if let Some(sec) = client_secret {
             let sec = sec.trim().to_string();
@@ -347,7 +341,7 @@ pub fn shimu_oauth_start(app_state: tauri::State<'_, AppState>) -> Result<Value,
     let st = uuid::Uuid::new_v4().simple().to_string();
     {
         let mut auth = app_state.shimu.lock().unwrap();
-        auth.pending_state = Some((st.clone(), now() + STATE_TTL));
+        auth.pending_state = Some((st.clone(), crate::util::now_secs() + STATE_TTL));
         // 也落盘：用户在浏览器里登录期间重启启动器，回调仍能通过校验
         save_auth(&app_state, &auth)?;
     }
@@ -375,7 +369,7 @@ pub async fn shimu_oauth_complete(
     // state 必须与发起时一致（防 CSRF / 回调来源校验）
     {
         let auth = app_state.shimu.lock().unwrap();
-        let ok = matches!(&auth.pending_state, Some((s, exp)) if s == &state && now() <= *exp);
+        let ok = matches!(&auth.pending_state, Some((s, exp)) if s == &state && crate::util::now_secs() <= *exp);
         if !ok {
             return Err("授权校验失败（state 不匹配或已过期），请重新发起授权".into());
         }
@@ -425,13 +419,13 @@ pub async fn shimu_oauth_complete(
         let mut auth = app_state.shimu.lock().unwrap();
         auth.pending_state = None;
         auth.access_token = Some(token);
-        auth.expires_at = now() + expires_in;
+        auth.expires_at = crate::util::now_secs() + expires_in;
         auth.user = v.get("user").cloned().filter(|u| !u.is_null());
         save_auth(&app_state, &auth)?;
     }
     // 用 getInfo 补齐余额/积分/会员/mcUuid/皮肤披风（token 里只有精简资料）
     Ok(match fetch_user_info(&app_state).await {
-        Ok(user) => json!({ "user": user, "expiresAt": now() + expires_in, "expiresIn": expires_in }),
+        Ok(user) => json!({ "user": user, "expiresAt": crate::util::now_secs() + expires_in, "expiresIn": expires_in }),
         Err(_) => {
             let auth = app_state.shimu.lock().unwrap();
             json!({
@@ -448,7 +442,7 @@ pub async fn shimu_oauth_complete(
 pub fn shimu_status(app_state: tauri::State<'_, AppState>) -> Value {
     let auth = app_state.shimu.lock().unwrap();
     let has_token = auth.access_token.as_deref().map(|t| !t.is_empty()).unwrap_or(false);
-    let expired = has_token && auth.expires_at > 0 && now() >= auth.expires_at;
+    let expired = has_token && auth.expires_at > 0 && crate::util::now_secs() >= auth.expires_at;
     json!({
         "loggedIn": has_token && !expired,
         "expired": expired,

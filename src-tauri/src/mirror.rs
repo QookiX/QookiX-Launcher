@@ -67,7 +67,7 @@ pub fn resolve_from(id: &str, custom: &str) -> String {
 
 /// 当前生效的镜像根地址；空串表示官方源（不做任何改写）
 pub fn base_url(state: &AppState) -> String {
-    let s = state.settings.read().unwrap();
+    let s = state.settings();
     resolve_from(&s.mirror, &s.mirror_custom)
 }
 

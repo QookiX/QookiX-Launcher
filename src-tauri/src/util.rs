@@ -4,6 +4,45 @@ use std::fmt::Write as _;
 use std::io::Read;
 use std::path::Path;
 
+/// Current time as Unix seconds (monotonic-ish, never panics on clock skew).
+pub fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+/// Load all sub-directory entries that have a valid JSON metadata file.
+/// Used by `load_instances` / `load_servers` — both do the exact same
+/// "read_dir → skip non-dirs → deserialize → sort by created desc" dance.
+pub fn load_dir_entries<T>(
+    dir: &Path,
+    meta_file: &str,
+    sort_key: impl Fn(&T) -> u64,
+) -> Vec<T>
+where
+    T: serde::de::DeserializeOwned,
+{
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for e in entries.flatten() {
+        let p = e.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let meta = p.join(meta_file);
+        if let Ok(text) = std::fs::read_to_string(&meta) {
+            if let Ok(item) = serde_json::from_str::<T>(&text) {
+                out.push(item);
+            }
+        }
+    }
+    out.sort_by(|a, b| sort_key(b).cmp(&sort_key(a)));
+    out
+}
+
 /// 用任意 `Digest` 哈希器计算文件摘要（64 KiB 分块流式读取，hex 小写）。
 fn file_hash<D: Digest>(path: &Path) -> Option<String> {
     let mut f = std::fs::File::open(path).ok()?;
@@ -1137,5 +1176,63 @@ versionRange="*"
         let (deps, mc) = parse_json_dependencies(&val, false);
         assert_eq!(deps.len(), 1);
         assert!(mc.is_none());
+    }
+
+    // —— 新增函数的测试 ——
+
+    #[test]
+    fn now_secs_returns_recent_unix_timestamp() {
+        let t = now_secs();
+        // 2024-01-01 = 1704067200, 2035-01-01 = 2051222400
+        // 合理范围：不可能是 0（时钟没启动），也不可能在 2035 之后
+        assert!(t > 1704067200, "now_secs 返回了过小的时间戳: {t}");
+        assert!(t < 2051222400, "now_secs 返回了过大的时间戳: {t}");
+    }
+
+    #[test]
+    fn load_dir_entries_loads_and_sorts_desc() {
+        use serde::Deserialize;
+        #[derive(Deserialize)]
+        struct Item {
+            name: String,
+            created: u64,
+        }
+        let dir = std::env::temp_dir().join("qookix_test_load_dir_entries");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // 三个子目录，两个有 meta，一个没有（应被跳过），一个 meta 是坏 JSON（应被跳过）
+        std::fs::create_dir_all(dir.join("a")).unwrap();
+        std::fs::write(
+            dir.join("a").join("meta.json"),
+            r#"{"name":"alpha","created":100}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("b")).unwrap();
+        std::fs::write(
+            dir.join("b").join("meta.json"),
+            r#"{"name":"beta","created":300}"#,
+        )
+        .unwrap();
+        std::fs::create_dir_all(dir.join("c")).unwrap(); // 无 meta
+        std::fs::create_dir_all(dir.join("d")).unwrap();
+        std::fs::write(dir.join("d").join("meta.json"), "{bad json}").unwrap();
+        // 一个文件（非目录）应被跳过
+        std::fs::write(dir.join("stray.json"), "{}").unwrap();
+
+        let items = load_dir_entries::<Item>(&dir, "meta.json", |i: &Item| i.created);
+        assert_eq!(items.len(), 2, "应只加载 2 个有效条目");
+        // 按 created 降序：beta(300) 在前，alpha(100) 在后
+        assert_eq!(items[0].name, "beta");
+        assert_eq!(items[1].name, "alpha");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn load_dir_entries_missing_dir_returns_empty() {
+        let dir = std::env::temp_dir().join("qookix_test_nonexistent_dir_xyz");
+        let _ = std::fs::remove_dir_all(&dir);
+        let items = load_dir_entries::<serde_json::Value>(&dir, "meta.json", |_| 0);
+        assert!(items.is_empty());
     }
 }

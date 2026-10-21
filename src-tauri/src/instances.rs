@@ -1,14 +1,8 @@
 use crate::models::{InstalledContent, Instance, InstanceGroup, LoaderType};
 use crate::state::AppState;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Emitter;
 
-pub fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
-}
+
 
 pub fn instance_path(state: &AppState, id: &str) -> std::path::PathBuf {
     state.instances_dir().join(id).join("qookix.json")
@@ -34,25 +28,7 @@ pub fn validate_instance_id(id: &str) -> Result<(), String> {
 }
 
 pub fn load_instances(state: &AppState) -> Vec<Instance> {
-    let dir = state.instances_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for e in entries.flatten() {
-        let p = e.path();
-        if !p.is_dir() {
-            continue;
-        }
-        let meta = p.join("qookix.json");
-        if let Ok(text) = std::fs::read_to_string(&meta) {
-            if let Ok(inst) = serde_json::from_str::<Instance>(&text) {
-                out.push(inst);
-            }
-        }
-    }
-    out.sort_by(|a, b| b.created.cmp(&a.created));
-    out
+    crate::util::load_dir_entries(&state.instances_dir(), "qookix.json", |i: &Instance| i.created)
 }
 
 pub fn get_instance(state: &AppState, id: &str) -> Result<Instance, String> {
@@ -96,7 +72,7 @@ pub fn create_instance(
         mc_version,
         loader,
         loader_version,
-        created: now(),
+        created: crate::util::now_secs(),
         installed: true,
         ..Default::default()
     };
@@ -203,7 +179,7 @@ pub fn update_instance(state: &AppState, patch: serde_json::Value) -> Result<Ins
 
 pub fn touch_last_played(state: &AppState, id: &str) {
     if let Ok(mut inst) = get_instance(state, id) {
-        inst.last_played = Some(now());
+        inst.last_played = Some(crate::util::now_secs());
         let _ = crate::util::log_best_effort("save_instance", save_instance(state, &inst));
     }
 }
@@ -229,13 +205,13 @@ pub fn add_daily_play_time(state: &AppState, secs: u64) {
         .unwrap_or_default()
         .as_secs();
     let day = (now + 8 * 3600) / 86400;
-    let conn = state.db.lock().unwrap();
+    let conn = state.db();
     let _ = crate::db::add_playtime(&conn, &day.to_string(), secs);
 }
 
 /// 读取按天游玩时长（用于统计页近 N 天曲线）
 pub fn daily_play_time(state: &AppState) -> std::collections::HashMap<String, u64> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db();
     crate::db::load_playtime(&conn)
 }
 
@@ -243,19 +219,19 @@ pub fn daily_play_time(state: &AppState) -> std::collections::HashMap<String, u6
 
 /// 记一次游玩开始，返回会话 id（游戏进程退出时用它补结束时间）
 pub fn start_play_session(state: &AppState, id: &str) -> Option<i64> {
-    let conn = state.db.lock().unwrap();
-    crate::db::start_play_session(&conn, id, now())
+    let conn = state.db();
+    crate::db::start_play_session(&conn, id, crate::util::now_secs())
 }
 
 /// 记一次游玩结束（正常退出与强杀都会走到）
 pub fn end_play_session(state: &AppState, session_id: i64) {
-    let conn = state.db.lock().unwrap();
-    crate::db::end_play_session(&conn, session_id, now());
+    let conn = state.db();
+    crate::db::end_play_session(&conn, session_id, crate::util::now_secs());
 }
 
 /// 最近的游玩会话（新在前）：(id, 实例 id, 开始秒, 结束秒)
 pub fn play_sessions(state: &AppState, limit: u32) -> Vec<(i64, String, u64, Option<u64>)> {
-    let conn = state.db.lock().unwrap();
+    let conn = state.db();
     crate::db::load_play_sessions(&conn, limit)
 }
 
@@ -310,7 +286,7 @@ pub fn create_group(
         color: color
             .map(|c| c.trim().to_string())
             .filter(|c| !c.is_empty()),
-        created: now(),
+        created: crate::util::now_secs(),
     };
     groups.push(group.clone());
     save_groups(state, &groups)?;

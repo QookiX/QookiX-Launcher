@@ -490,7 +490,7 @@ fn collect_instance(state: &AppState, inst: &crate::models::Instance) -> Diagnos
 /// 网络：镜像 / 代理配置 + 上游可达性与延迟
 async fn collect_network(state: &AppState, instance: Option<&crate::models::Instance>) -> DiagnosticSection {
     let (mirror, mirror_custom, proxy_mode, proxy) = {
-        let s = state.settings.read().unwrap();
+        let s = state.settings();
         (
             s.mirror.clone(),
             s.mirror_custom.clone(),
@@ -507,7 +507,7 @@ async fn collect_network(state: &AppState, instance: Option<&crate::models::Inst
         ),
         format!(
             "CurseForge API Key: {}",
-            if state.settings.read().unwrap().curseforge_api_key.as_deref().map(|k| !k.is_empty()).unwrap_or(false) {
+            if state.settings().curseforge_api_key.as_deref().map(|k| !k.is_empty()).unwrap_or(false) {
                 "已配置"
             } else {
                 "未配置（CurseForge 功能不可用）"

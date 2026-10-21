@@ -23,7 +23,7 @@ pub fn log_debug(msg: String) {
 /// `*_set` / `*_hint` 告诉前端配没配、尾号是什么。
 #[tauri::command]
 pub fn get_settings(state: State<AppState>) -> Result<Value, String> {
-    let s = state.settings.read().unwrap();
+    let s = state.settings();
     Ok(settings::frontend_view(&s))
 }
 
@@ -48,7 +48,7 @@ pub fn resolve_close_request(
     if remember {
         let state = app.state::<AppState>();
         {
-            let mut s = state.settings.write().unwrap();
+            let mut s = state.settings_mut();
             s.close_behavior = action.clone();
             // 勾选「保持我的选择」= 用户的明确选择，之后不再询问也不再被迁移覆盖
             s.close_behavior_prompted = true;
