@@ -337,6 +337,40 @@ pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Set
     Ok(cloned)
 }
 
+/// Check if a path is a filesystem root (e.g. `C:\` on Windows, `/` on Unix).
+/// Uses path components so it works for both raw and canonicalized (UNC) paths.
+pub fn is_disk_root(path: &std::path::Path) -> bool {
+    use std::path::Component;
+    path.components()
+        .all(|c| matches!(c, Component::RootDir | Component::Prefix(_)))
+}
+
+/// Check if a path is a sensitive system directory that must not be used as
+/// the launcher data root (would mix launcher files with OS files).
+pub fn is_system_dir(path: &std::path::Path) -> bool {
+    let s = path.to_string_lossy().to_ascii_lowercase();
+    #[cfg(windows)]
+    {
+        let s = s.trim_end_matches('\\');
+        if s.ends_with("\\windows") || s.ends_with("\\program files")
+            || s.ends_with("\\program files (x86)") || s.ends_with("\\programdata")
+            || s.ends_with("\\system32") || s.ends_with("\\$recycle.bin")
+        {
+            return true;
+        }
+    }
+    #[cfg(unix)]
+    {
+        if matches!(
+            s.as_str(),
+            "/etc" | "/var" | "/usr" | "/bin" | "/sbin" | "/boot" | "/sys" | "/proc"
+        ) {
+            return true;
+        }
+    }
+    false
+}
+
 /// Migrate the launcher data root to `new_dir`.
 ///
 /// `mode`:
@@ -357,18 +391,28 @@ pub fn change_data_dir(state: &AppState, new_dir: &str, mode: &str) -> Result<St
     if new_root.as_os_str().is_empty() {
         return Err("新数据目录不能为空".into());
     }
+    if is_disk_root(&new_root) {
+        return Err("不能选择磁盘根目录，请选一个普通文件夹".into());
+    }
+    if is_system_dir(&new_root) {
+        return Err("不能选择系统目录作为数据目录".into());
+    }
     let _ = std::fs::create_dir_all(&new_root);
     let new_clean = new_root
         .canonicalize()
         .map_err(|e| format!("无法解析新目录路径: {e}"))?;
-    let cur_clean = state
-        .root
-        .canonicalize()
-        .map_err(|e| format!("无法解析当前目录路径: {e}"))?;
+    // Bug ③: if the current root can't be canonicalized (drive unplugged,
+    // directory deleted), fall back to the raw path so the user can still
+    // migrate away instead of being permanently stuck.
+    let cur_clean = state.root.canonicalize().unwrap_or_else(|_| state.root.clone());
     if new_clean == cur_clean {
         return Err("新目录与当前数据目录相同".into());
     }
-    if new_clean.starts_with(&cur_clean) {
+    // Bug ②: only block subdirectories when the current root is NOT a disk
+    // root. If the current root IS a disk root (e.g. D:\), the user is
+    // trying to escape it — allow the move and skip the destination entry
+    // in the migration loop below.
+    if !is_disk_root(&cur_clean) && new_clean.starts_with(&cur_clean) {
         return Err("新目录不能位于当前数据目录内".into());
     }
     if cur_clean.starts_with(&new_clean) {
@@ -406,6 +450,15 @@ pub fn change_data_dir(state: &AppState, new_dir: &str, mode: &str) -> Result<St
             continue;
         }
         let src = e.path();
+        // Bug ②: when escaping from a disk root (e.g. D:\ → D:\QookiX),
+        // the destination directory itself appears as an entry in read_dir.
+        // Skip it and anything inside it to avoid moving the destination
+        // into itself.
+        if let Ok(src_clean) = src.canonicalize() {
+            if src_clean == new_clean || src_clean.starts_with(&new_clean) {
+                continue;
+            }
+        }
         let dst = new_root.join(&name);
         if name == instances_name && src.is_dir() {
             std::fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
@@ -444,16 +497,20 @@ pub fn change_data_dir(state: &AppState, new_dir: &str, mode: &str) -> Result<St
         }
     }
 
+    // Bug ⑥: normalize the path once — trim trailing separators — and use it
+    // consistently for both settings files so they don't disagree.
+    let normalized = new_dir.trim_end_matches(['\\', '/']).to_string();
+
     // Write the full settings.json into the new root with data_dir updated.
     {
         let mut s = state.settings().clone();
-        s.data_dir = new_dir.to_string();
+        s.data_dir = normalized.clone();
         save_settings(&new_root, &s)?;
     }
     // Seed the default root so the next launch honors the new location.
     let default_root = std::path::PathBuf::from(default_root());
     let _ = std::fs::create_dir_all(&default_root);
-    let seed = serde_json::json!({ "data_dir": new_dir.replace('\\', "/") });
+    let seed = serde_json::json!({ "data_dir": normalized.replace('\\', "/") });
     let _ = std::fs::write(
         default_root.join("settings.json"),
         serde_json::to_string_pretty(&seed).unwrap_or_default(),
@@ -463,10 +520,10 @@ pub fn change_data_dir(state: &AppState, new_dir: &str, mode: &str) -> Result<St
     // still uses the old root until restart.
     {
         let mut s = state.settings_mut();
-        s.data_dir = new_dir.to_string();
+        s.data_dir = normalized.clone();
     }
 
-    Ok(new_dir.to_string())
+    Ok(normalized)
 }
 
 /// Ensure the directory layout exists under the given root.
@@ -609,5 +666,43 @@ mod tests {
 
         set_secret(&mut slot, &json!(""));
         assert_eq!(slot, None, "空串是用户主动清空");
+    }
+
+    #[test]
+    fn is_disk_root_detects_drive_root() {
+        assert!(is_disk_root(std::path::Path::new("/")));
+        #[cfg(windows)]
+        {
+            assert!(is_disk_root(std::path::Path::new("C:\\")));
+            assert!(is_disk_root(std::path::Path::new("D:\\")));
+        }
+    }
+
+    #[test]
+    fn is_disk_root_rejects_normal_dirs() {
+        assert!(!is_disk_root(std::path::Path::new("/home/user")));
+        #[cfg(windows)]
+        {
+            assert!(!is_disk_root(std::path::Path::new("C:\\QookiX")));
+            assert!(!is_disk_root(std::path::Path::new("D:\\Games\\MC")));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn is_disk_root_handles_unc_canonicalized() {
+        // canonicalize("C:\\") returns \\?\C:\ — must still be detected as root
+        let p = std::path::Path::new("C:\\").canonicalize().unwrap();
+        assert!(is_disk_root(&p));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn is_system_dir_detects_windows_dirs() {
+        assert!(is_system_dir(std::path::Path::new("C:\\Windows")));
+        assert!(is_system_dir(std::path::Path::new("C:\\Program Files")));
+        assert!(is_system_dir(std::path::Path::new("C:\\Program Files (x86)")));
+        assert!(is_system_dir(std::path::Path::new("C:\\ProgramData")));
+        assert!(!is_system_dir(std::path::Path::new("D:\\Games")));
     }
 }

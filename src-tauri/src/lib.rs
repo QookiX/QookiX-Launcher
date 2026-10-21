@@ -76,7 +76,16 @@ pub fn run() {
     let root = if seeded.data_dir.is_empty() {
         default_root
     } else {
-        std::path::PathBuf::from(&seeded.data_dir)
+        let p = std::path::PathBuf::from(&seeded.data_dir);
+        // Bug ⑦: validate data_dir on startup — reject disk roots and system
+        // directories that may have been set by a buggy older version or
+        // edited manually. Fall back to the default root silently.
+        if settings::is_disk_root(&p) || settings::is_system_dir(&p) {
+            eprintln!("data_dir {:?} is invalid (disk root or system dir), falling back to default", p);
+            default_root
+        } else {
+            p
+        }
     };
     let _ = settings::ensure_layout(&root);
     let loaded = settings::load_settings(&root);

@@ -254,50 +254,6 @@ jobs:
         run: |
           node scripts/fix-update-manifest.mjs
 
-      # 转交产物给 push-bucket（GitHub 内网，秒级），两路发布互不阻塞
-      - name: Upload release payload for bucket sync
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-payload
-          path: release
-          retention-days: 1
-
-  # 推送更新产物到对象存储桶（「设置 → 更新源 → 对象存储」默认源）。
-  # 需要配置 secrets：QOOKIX_BUCKET_UPDATE_URL / QOOKIX_S3_ENDPOINT /
-  # QOOKIX_S3_BUCKET / QOOKIX_S3_ACCESS_KEY / QOOKIX_S3_SECRET_KEY，
-  # 未配置时自动跳过。
-  push-bucket:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: verify-and-publish
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Download release payload
-        uses: actions/download-artifact@v4
-        with:
-          name: release-payload
-          path: release
-
-      - name: Push update artifacts to object storage bucket
-        if: env.QOOKIX_BUCKET_UPDATE_URL != ''
-        env:
-          QOOKIX_BUCKET_UPDATE_URL: ${{ secrets.QOOKIX_BUCKET_UPDATE_URL }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.QOOKIX_S3_ACCESS_KEY }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.QOOKIX_S3_SECRET_KEY }}
-          AWS_ENDPOINT_URL: ${{ secrets.QOOKIX_S3_ENDPOINT }}
-          QOOKIX_S3_BUCKET: ${{ secrets.QOOKIX_S3_BUCKET }}
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_TAG: ${{ github.ref_name }}
-        run: |
-          node scripts/create-bucket-manifest.mjs release "${GITHUB_REF_NAME}" bucket-latest.json
-          cp bucket-latest.json release/latest.json
-          node scripts/fetch-release-json.mjs release/release.json
-          # 串行上传 + 自动重试：兼容端点对并发写入限流（SlowDownWrite）
-          bash scripts/push-bucket.sh release
+  # 对象存储同步已迁移到服务器（root@154.36.184.233），
+  # 由 /opt/qookix-sync/sync.sh + crontab 每 10 分钟轮询 GitHub Release API
+  # 自动下载产物并推送到 rains3 桶。详见 README「发布流程」一节。
