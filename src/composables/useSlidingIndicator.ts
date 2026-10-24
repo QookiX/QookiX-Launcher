@@ -58,13 +58,25 @@ export function useSlidingIndicator(
     };
   }
 
+  /** 无激活项时淡出隐藏（保留位置样式，返回有激活项的页面时再滑入）。 */
+  function hide(dur = "0.18s") {
+    // 保留上次的几何信息，仅把透明度归零并只过渡 opacity
+    const prev = indicatorStyle.value;
+    indicatorStyle.value = { ...prev, opacity: "0", transition: `opacity ${dur}` };
+  }
+
   function update() {
     const container = toElement(containerRef.value);
     if (!container) return;
     // Query items fresh each time so the index always matches the DOM order,
     // even when the list is filtered/reordered dynamically.
-    const el = toElement(getItems()[getActive()]);
-    if (!el) return;
+    const idx = getActive();
+    const el = toElement(idx >= 0 ? getItems()[idx] : null);
+    if (!el) {
+      // 当前页面不在导航列表中（如设置页）：指示器淡出，而不是停留原地
+      hide();
+      return;
+    }
     const r = el.getBoundingClientRect();
     const c = container.getBoundingClientRect();
     const to = {
@@ -92,25 +104,36 @@ export function useSlidingIndicator(
     raf = requestAnimationFrame(update);
   }
 
+  /** Synchronously re-measure the active item and apply the rect with zero
+      transition. Besides being snap()'s implementation, callers can invoke it
+      per-frame while the container itself is animating (e.g. sidebar expand),
+      so the indicator hugs the item every frame instead of keeping stale
+      geometry and jumping at the end. */
+  function syncNow() {
+    const container = toElement(containerRef.value);
+    if (!container) return;
+    const idx = getActive();
+    const el = toElement(idx >= 0 ? getItems()[idx] : null);
+    if (!el) {
+      hide("0s");
+      return;
+    }
+    const r = el.getBoundingClientRect();
+    const c = container.getBoundingClientRect();
+    const to = {
+      top: r.top - c.top,
+      height: r.height,
+      left: r.left - c.left,
+      width: r.width,
+    };
+    setRect(to, "0s");
+    last = to;
+  }
+
   /** Instantly snap to the active item without animation (use after layout changes). */
   function snap() {
     cancelAnimationFrame(raf);
-    raf = requestAnimationFrame(() => {
-      const container = toElement(containerRef.value);
-      if (!container) return;
-      const el = toElement(getItems()[getActive()]);
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      const c = container.getBoundingClientRect();
-      const to = {
-        top: r.top - c.top,
-        height: r.height,
-        left: r.left - c.left,
-        width: r.width,
-      };
-      setRect(to, "0s");
-      last = to;
-    });
+    raf = requestAnimationFrame(syncNow);
   }
 
   onMounted(() => {
@@ -122,5 +145,5 @@ export function useSlidingIndicator(
     window.removeEventListener("resize", refresh);
   });
 
-  return { indicatorStyle, update, refresh, snap };
+  return { indicatorStyle, update, refresh, snap, syncNow };
 }

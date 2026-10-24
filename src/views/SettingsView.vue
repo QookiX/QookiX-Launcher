@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fmtMem, fmtSize, fmtTime } from "../utils/format";
-import { useRouter } from "vue-router";
 import { NModal, NSelect, NSlider, NTooltip, useMessage, useDialog } from "naive-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -12,6 +11,7 @@ import { useSettingsStore } from "../stores/settings";
 import { useInstancesStore } from "../stores/instances";
 import { api } from "../api";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
+import { openDownloadsDrawer } from "../composables/useDownloadsDrawer";
 import { useOnboarding } from "../composables/useOnboarding";
 import {
   IconCpu,
@@ -46,13 +46,14 @@ import { IconCloud } from "../components/icons";
 import { error as devError } from "../utils/logger";
 import { useI18n } from "vue-i18n";
 import { SUPPORTED_LOCALES } from "../i18n";
+// 版本号唯一来源：package.json（发布时由 npm run version 同步）
+import { version as appVersion } from "../../package.json";
 import { titlebarThemeToggle } from "../composables/useDevFlags";
 
 const settings = useSettingsStore();
 const instances = useInstancesStore();
 const message = useMessage();
 const dialog = useDialog();
-const router = useRouter();
 const onboarding = useOnboarding();
 const { t } = useI18n();
 
@@ -211,8 +212,8 @@ async function restoreDismissed() {
 }
 
 async function doInstall() {
-  // Jump to the Download Center so the user can watch the progress live.
-  router.push("/downloads");
+  // 打开下载抽屉让用户实时看到进度（取代原 /downloads 页面跳转）。
+  openDownloadsDrawer();
   try {
     const downloaded = await downloadUpdate();
     if (!downloaded) return;
@@ -467,7 +468,6 @@ const settingItemsDef: { id: string; cardId: string; tab: string; labelKey: stri
   { id: "a-theme-color", cardId: "appearance-theme", tab: "appearance", labelKey: "settings.appearance.themeColor", cardTitleKey: "settings.theme.label" },
   { id: "a-lang", cardId: "appearance-language", tab: "appearance", labelKey: "settings.language.label", cardTitleKey: "settings.language.label" },
   { id: "a-iface-hero", cardId: "appearance-interface", tab: "appearance", labelKey: "settings.appearance.homeHero", cardTitleKey: "settings.appearance.interface" },
-  { id: "a-iface-collapse", cardId: "appearance-interface", tab: "appearance", labelKey: "settings.appearance.sidebarCollapse", cardTitleKey: "settings.appearance.interface" },
   { id: "a-iface-news", cardId: "appearance-interface", tab: "appearance", labelKey: "settings.appearance.sidebarNews", cardTitleKey: "settings.appearance.interface" },
   { id: "a-iface-nav-browse", cardId: "appearance-interface", tab: "appearance", labelKey: "settings.appearance.nav.browse", cardTitleKey: "settings.appearance.interface" },
   { id: "a-iface-nav-instances", cardId: "appearance-interface", tab: "appearance", labelKey: "settings.appearance.nav.instances", cardTitleKey: "settings.appearance.interface" },
@@ -995,7 +995,7 @@ onUnmounted(() => {
         <img src="/app-icon.png" class="nav-brand-logo" draggable="false" alt="" />
         <div class="nav-brand-info">
           <span class="nav-brand-name">QookiX Launcher</span>
-          <span class="nav-brand-ver">v0.15.1</span>
+          <span class="nav-brand-ver">v{{ appVersion }}</span>
         </div>
       </div>
     </div>
@@ -1148,21 +1148,6 @@ onUnmounted(() => {
               role="switch"
               :aria-checked="settings.settings.show_home_hero"
               @click="settings.patch({ show_home_hero: !settings.settings.show_home_hero })"
-            >
-              <span class="knob"></span>
-            </button>
-          </div>
-          <div class="choice-row">
-            <div class="choice-info">
-              <span class="choice-label">{{ t("settings.appearance.sidebarCollapse") }}</span>
-              <p class="choice-hint">{{ t("settings.appearance.sidebarCollapseHint") }}</p>
-            </div>
-            <button
-              class="toggle"
-              :class="{ on: settings.settings.show_sidebar_collapse_btn }"
-              role="switch"
-              :aria-checked="settings.settings.show_sidebar_collapse_btn"
-              @click="settings.patch({ show_sidebar_collapse_btn: !settings.settings.show_sidebar_collapse_btn })"
             >
               <span class="knob"></span>
             </button>
@@ -1755,7 +1740,7 @@ onUnmounted(() => {
           <AboutShowcase />
           <div class="about-hero-title">
             <span class="about-name about-hero-name">QookiX Launcher</span>
-            <span class="about-ver">v0.15.1</span>
+            <span class="about-ver">v{{ appVersion }}</span>
           </div>
           <p class="about-hero-slogan">{{ t("settings.about.slogan") }}</p>
         </div>
@@ -2293,30 +2278,39 @@ onUnmounted(() => {
 }
 /* 子标签页切换动画：方向跟随侧边栏排序。
    forward（目标在侧边栏更下方）：新面板从下方升起、旧面板向上离开；
-   back（目标在侧边栏更上方）：新面板从上方落下、旧面板向下离开。 */
+   back（目标在侧边栏更上方）：新面板从上方落下、旧面板向下离开。
+   ⚠ 入场动画绝对不能带 opacity（也不能用 transform）：
+   - transform 会让元素创建独立合成层，backdrop-filter 采样不到背后内容；
+   - opacity < 1 同样会把元素变成 backdrop root，磨砂被隔离在面板内部、
+     采样不到页面背景——磨砂在动画期间直接消失（实测两者都会触发）。
+   所以入场只做 position:relative + top 位移（仅触发 layout，无层隔离），
+   面板全程不透明、磨砂全程有效。出场面板本来就在淡出变透明，
+   磨砂异常被透明度掩盖，仍用 opacity+transform 保性能。 */
 .settings-pane-forward-enter-active {
-  transition: opacity 0.22s ease, transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: top 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  top: 0;
 }
 .settings-pane-forward-leave-active {
   transition: opacity 0.13s ease, transform 0.13s ease-in;
 }
 .settings-pane-forward-enter-from {
-  opacity: 0;
-  transform: translateY(10px);
+  top: 10px;
 }
 .settings-pane-forward-leave-to {
   opacity: 0;
   transform: translateY(-6px);
 }
 .settings-pane-back-enter-active {
-  transition: opacity 0.22s ease, transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: top 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  top: 0;
 }
 .settings-pane-back-leave-active {
   transition: opacity 0.13s ease, transform 0.13s ease-in;
 }
 .settings-pane-back-enter-from {
-  opacity: 0;
-  transform: translateY(-10px);
+  top: -10px;
 }
 .settings-pane-back-leave-to {
   opacity: 0;

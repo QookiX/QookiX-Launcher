@@ -35,9 +35,6 @@ export default {
     interface: "Interface",
     homeHero: "Home hero card",
     homeHeroHint: "Toggle the hero card at the top of the home page; hide for a cleaner look.",
-    sidebarCollapse: "Sidebar collapse button",
-    sidebarCollapseHint:
-      "Toggle the expand/collapse button at the bottom of the sidebar; hide to keep the sidebar fixed.",
     sidebarNews: "Sidebar news entry",
     sidebarNewsHint: "Hide the \"News\" entry and the news page in the sidebar when off.",
     nav: {

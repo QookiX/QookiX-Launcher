@@ -1,16 +1,15 @@
 <script setup lang="ts">
 import { h, onMounted, ref } from "vue";
-import { useRouter } from "vue-router";
 import { NButton, useDialog, useMessage } from "naive-ui";
 import { peekUpdate, downloadUpdate, updateReady, forceUpdateInfo, loadChangelogReleases, releasesInRange } from "../updater";
 import UpdateNotes from "./UpdateNotes.vue";
 import { useSettingsStore } from "../stores/settings";
+import { openDownloadsDrawer } from "../composables/useDownloadsDrawer";
 import { error as devError } from "../utils/logger";
 import { useI18n } from "vue-i18n";
 
 const dialog = useDialog();
 const message = useMessage();
-const router = useRouter();
 const settings = useSettingsStore();
 const { t } = useI18n();
 const checking = ref(false);
@@ -129,8 +128,8 @@ async function dismiss(version: string) {
  * @param auto 自动更新路径：后台下载，不跳转页面、不弹窗询问。
  */
 async function doInstall(auto = false) {
-  // 手动触发时才跳转到下载中心看进度；自动更新在后台跑，不打断用户。
-  if (!auto) router.push("/downloads");
+  // 手动触发时才打开下载抽屉看进度；自动更新在后台跑，不打断用户。
+  if (!auto) openDownloadsDrawer();
   try {
     const downloaded = await downloadUpdate();
     if (!downloaded) return;

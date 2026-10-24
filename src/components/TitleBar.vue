@@ -7,19 +7,11 @@ import {
   IconMinus,
   IconSquare,
   IconRestore,
-  IconHome,
-  IconCompass,
-  IconDownload,
-  IconGrid,
-  IconNewspaper,
   IconPlus,
-  IconSettings,
-  IconUser,
-  IconUsers,
   IconTrash,
   IconRefresh,
-  IconClock,
-  IconTool,
+  IconDownload,
+  IconSettings,
   IconMoon,
   IconSun,
 } from "./icons";
@@ -33,6 +25,7 @@ import {
   updateInstalling,
   applyUpdateNow,
 } from "../updater";
+import { openDownloadsDrawer } from "../composables/useDownloadsDrawer";
 import { error as devError } from "../utils/logger";
 import { useI18n } from "vue-i18n";
 
@@ -48,21 +41,6 @@ function toggleTheme() {
   void settings.patch({ theme: isDark.value ? "light" : "dark" });
 }
 
-const pageIcons: Record<string, any> = {
-  home: IconHome,
-  compass: IconCompass,
-  download: IconDownload,
-  grid: IconGrid,
-  newspaper: IconNewspaper,
-  plus: IconPlus,
-  settings: IconSettings,
-  user: IconUser,
-  users: IconUsers,
-  clock: IconClock,
-  tool: IconTool,
-};
-const pageIcon = computed(() => pageIcons[(route.meta.icon as string) ?? ""] ?? IconHome);
-
 const actionIcons: Record<string, any> = {
   plus: IconPlus,
   trash: IconTrash,
@@ -74,13 +52,21 @@ const pageTitle = computed(() => {
   const key = route.meta.titleKey as string | undefined;
   return key ? t(key) : "";
 });
+// 标题按首个空格拆分：品牌名（QookiX）用主题色高亮，其余文案保持常规颜色
+const titleParts = computed(() => {
+  const full = t("titlebar.title");
+  const idx = full.indexOf(" ");
+  return idx > 0
+    ? { brand: full.slice(0, idx), rest: full.slice(idx) }
+    : { brand: full, rest: "" };
+});
 // 供实例页触发的“新建分组”信号（由 App 提供）
 const groupDialogRequest = inject<{ value: number }>("groupDialogRequest", { value: 0 });
 function requestCreateGroup() {
   groupDialogRequest.value++;
 }
-// 下载中心特殊的“清除已完成”操作按钮
-const finishedCount = computed(() => tasks.taskList.filter((t) => t.finished).length);
+// 下载中数量：标题栏下载按钮角标
+const downloadCount = computed(() => tasks.activeCount);
 
 const win = getCurrentWindow();
 const maximized = ref(false);
@@ -115,10 +101,7 @@ onMounted(async () => {
 <template>
   <div class="titlebar" id="app-titlebar" data-tauri-drag-region>
     <div class="tb-left" data-tauri-drag-region>
-      <img src="/app-icon.png" class="tb-logo" draggable="false" alt="" />
-      <span class="tb-title">{{ t("titlebar.title") }}</span>
-      <span class="tb-divider">/</span>
-      <component :is="pageIcon" class="tb-page-icon" />
+      <span class="tb-title"><span class="tb-brand">{{ titleParts.brand }}</span>{{ titleParts.rest }}</span>
       <span class="tb-page">{{ pageTitle }}</span>
     </div>
     <div class="tb-right" data-tauri-drag-region>
@@ -155,19 +138,26 @@ onMounted(async () => {
           <component :is="actionIcons[pageAction.icon ?? '']" class="tb-action-icon" />
           {{ t(pageAction.textKey ?? "") }}
         </button>
-        <button
-          v-if="route.name === 'downloads'"
-          class="tb-action"
-          :disabled="!finishedCount"
-          @click="tasks.clearFinished()"
-        >
-          <IconTrash class="tb-action-icon" /> {{ t("titlebar.clearFinished") }}
-        </button>
       </div>
       <div class="tb-controls">
         <button v-if="titlebarThemeToggle" class="tb-btn tb-theme-toggle" :title="isDark ? t('titlebar.switchLight') : t('titlebar.switchDark')" @click="toggleTheme">
           <IconSun v-if="isDark" />
           <IconMoon v-else />
+        </button>
+        <button
+          class="tb-btn tb-downloads"
+          :title="t('nav.downloads')"
+          @click="openDownloadsDrawer()"
+        >
+          <IconDownload />
+          <span v-if="downloadCount > 0" class="tb-downloads-badge" :title="t('sidebar.downloading', { count: downloadCount })">{{ downloadCount }}</span>
+        </button>
+        <button
+          class="tb-btn tb-settings"
+          :title="t('nav.settings')"
+          @click="router.push('/settings')"
+        >
+          <IconSettings />
         </button>
         <button class="tb-btn" :title="t('titlebar.minimize')" @click="win.minimize()">
         <IconMinus />
@@ -205,12 +195,8 @@ onMounted(async () => {
 .tb-left {
   display: flex;
   align-items: center;
-  gap: 9px;
-}
-.tb-logo {
-  width: 20px;
-  height: 20px;
-  border-radius: 6px;
+  gap: 7px;
+  min-width: 0;
 }
 .tb-title {
   font-size: 13px;
@@ -218,21 +204,25 @@ onMounted(async () => {
   color: var(--text-2);
   letter-spacing: 0.2px;
 }
-.tb-divider {
-  color: var(--text-3);
-  font-size: 13px;
-  margin: 0 1px;
-}
-.tb-page-icon {
-  width: 14px;
-  height: 14px;
-  color: var(--text-3);
+.tb-brand {
+  font-weight: 700;
+  color: var(--accent);
 }
 .tb-page {
-  font-size: 13px;
-  font-weight: 500;
-  color: var(--text-1);
+  height: 20px;
+  padding: 0 11px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
   letter-spacing: 0.2px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 300px;
 }
 .tb-right {
   display: flex;
@@ -288,12 +278,12 @@ onMounted(async () => {
   -webkit-app-region: no-drag;
 }
 .tb-btn {
-  width: 38px;
+  width: 30px;
   height: 30px;
   border: none;
   background: transparent;
   color: var(--text-3);
-  border-radius: 8px;
+  border-radius: 50%;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -304,6 +294,27 @@ onMounted(async () => {
 .tb-btn:hover {
   background: var(--panel-hover);
   color: var(--text-1);
+}
+/* 下载按钮：主题色角标显示进行中的下载数 */
+.tb-downloads {
+  position: relative;
+}
+.tb-downloads-badge {
+  position: absolute;
+  top: -2px;
+  right: -2px;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 15px;
+  text-align: center;
+  box-sizing: border-box;
+  pointer-events: none;
 }
 .tb-close:hover {
   background: #e5534b;

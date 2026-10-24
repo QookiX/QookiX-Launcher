@@ -190,7 +190,6 @@ body,
 .app-bg {
   position: relative;
   background:
-    radial-gradient(900px 480px at 85% -10%, var(--accent-12), transparent 60%),
     radial-gradient(700px 420px at -10% 110%, rgba(90, 162, 240, 0.08), transparent 55%),
     linear-gradient(180deg, var(--bg-0), var(--bg-1) 55%, var(--bg-2));
   color: var(--text-1);

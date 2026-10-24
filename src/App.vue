@@ -5,6 +5,7 @@ import { darkTheme, lightTheme, NConfigProvider, NDialogProvider, NLoadingBarPro
 import { api } from "./api";
 import TitleBar from "./components/TitleBar.vue";
 import SideBar from "./components/SideBar.vue";
+import DownloadsDrawer from "./components/DownloadsDrawer.vue";
 import LoadingBarBridge from "./components/LoadingBarBridge.vue";
 import LaunchProgress from "./components/LaunchProgress.vue";
 import CrashDialog from "./components/CrashDialog.vue";
@@ -14,6 +15,7 @@ import ForceUpdateOverlay from "./components/ForceUpdateOverlay.vue";
 import SplashScreen from "./components/SplashScreen.vue";
 import ModpackDropOverlay from "./components/ModpackDropOverlay.vue";
 import { transitionName } from "./composables/usePageTransition";
+import { useSidebarRevealed } from "./composables/useSidebarUI";
 import { useSettingsStore } from "./stores/settings";
 import { initDeepLink } from "./composables/deepLink";
 import { MessageBridge, notifyError } from "./composables/notify";
@@ -53,6 +55,9 @@ function applyLocale(lang: string | undefined | null) {
 }
 
 watch(() => settings.settings?.language, (lang) => applyLocale(lang));
+
+// 悬浮岛侧边栏状态：折叠窄栏时内容区让位（左侧留白），展开浮层时占满全宽
+const sidebarRevealed = useSidebarRevealed();
 
 const isDark = computed(() => settings.settings?.theme !== "light");
 const activeTheme = computed(() => (isDark.value ? darkTheme : lightTheme));
@@ -196,7 +201,7 @@ onBeforeUnmount(() => {
             <n-notification-provider>
                 <div class="app app-bg" :class="{ light: !isDark }" :style="bgStyle">
                 <TitleBar />
-                <div class="body">
+                <div class="body" :class="{ 'sidebar-collapsed': !sidebarRevealed }">
                   <SideBar />
                   <main id="app-content" class="content">
                     <router-view v-slot="{ Component, route }">
@@ -219,6 +224,7 @@ onBeforeUnmount(() => {
                 <LaunchProgress />
                 <CrashDialog />
                 <CloseConfirmDialog />
+                <DownloadsDrawer />
                 <UpdaterCheck />
                 <ForceUpdateOverlay />
                 <ModpackDropOverlay />
@@ -241,6 +247,13 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   min-height: 0;
+  /* 折叠窄栏常驻时内容区让位（10px 悬浮间距 + 60px 窄栏）；
+     窄栏右缘到内容的距离由 .content 自身 padding 提供，与窗口右侧
+     的 padding 相等，视觉左右对称。展开为浮层时内容占满全宽 */
+  transition: padding-left 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.body.sidebar-collapsed {
+  padding-left: 70px;
 }
 .content {
   flex: 1;

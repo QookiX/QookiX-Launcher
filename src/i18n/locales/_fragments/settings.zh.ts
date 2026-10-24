@@ -34,8 +34,6 @@ export default {
     interface: "界面",
     homeHero: "首页主标题卡片",
     homeHeroHint: "控制首页顶部的主标题卡片是否显示，关闭后首页更加简洁。",
-    sidebarCollapse: "侧边栏折叠按钮",
-    sidebarCollapseHint: "控制侧边栏底部的展开/收缩按钮是否显示，关闭后可保持侧边栏固定。",
     sidebarNews: "侧边栏新闻入口",
     sidebarNewsHint: "关闭后隐藏侧边栏的「新闻」入口与新闻页面。",
     nav: {

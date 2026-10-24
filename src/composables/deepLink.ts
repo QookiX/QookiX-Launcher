@@ -19,6 +19,7 @@ import { api } from "../api";
 import { useInstancesStore } from "../stores/instances";
 import { shimuErrorMessage, useShimuStore } from "../stores/shimu";
 import { notifySuccess, notifyError, notifyWarning } from "./notify";
+import { openDownloadsDrawer } from "./useDownloadsDrawer";
 import router from "../router";
 import { log as devLog, warn as devWarn, error as devError } from "../utils/logger";
 
@@ -32,7 +33,6 @@ const PAGE_ROUTES: Record<string, string> = {
   skin: "/skins", // 单数别名
   settings: "/settings",
   news: "/news",
-  downloads: "/downloads",
 };
 
 async function handleUrl(raw: string) {
@@ -57,6 +57,13 @@ async function handleUrl(raw: string) {
   // 拾木空间 OAuth 回调（qookix://oauth/callback?code=..&state=..）
   if (host === "oauth" && path === "callback") {
     await handleShimuCallback(url);
+    return;
+  }
+
+  // 下载中心是右抽屉而非独立页面，单独处理
+  if (host === "downloads") {
+    openDownloadsDrawer();
+    devLog("[deeplink] 已打开下载抽屉");
     return;
   }
 

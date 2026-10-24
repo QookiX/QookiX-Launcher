@@ -5,10 +5,10 @@
  * 或：  npm run version -- 0.3.0
  *
  * 会将新版本号同步到以下文件：
- *  - package.json            (前端版本)
+ *  - package.json            (前端版本，关于页直接读取该值)
  *  - src-tauri/Cargo.toml    (Rust 包版本)
  *  - src-tauri/tauri.conf.json (应用版本)
- *  - src/views/SettingsView.vue (关于页面 "vX.Y.Z")
+ *  - src-tauri/Cargo.lock    (本包版本)
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -59,12 +59,7 @@ patch("src-tauri/tauri.conf.json", (c) =>
   c.replace(/^(\s*"version"\s*:\s*")[^"]+(")/m, `$1${newVersion}$2`),
 );
 
-// 4. SettingsView.vue 的 "vX.Y.Z"
-patch("src/views/SettingsView.vue", (c) =>
-  c.replace(/v\d+\.\d+\.\d+/g, `v${newVersion}`),
-);
-
-// 5. Cargo.lock 里本包的 version
+// 4. Cargo.lock 里本包的 version
 patch("src-tauri/Cargo.lock", (c) =>
   c.replace(
     /(\[\[package\]\]\r?\nname = "qookix-launcher"\r?\nversion = ")[^"]+(")/,

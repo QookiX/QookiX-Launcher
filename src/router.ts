@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from "vue-router";
 import { useSettingsStore } from "./stores/settings";
 import { trackNavStart, trackNavEnd, trackError } from "./loadingBar";
 import { setTransitionName } from "./composables/usePageTransition";
+import { openDownloadsDrawer } from "./composables/useDownloadsDrawer";
 
 const router = createRouter({
   history: createWebHistory(),
@@ -9,7 +10,6 @@ const router = createRouter({
     { path: "/", name: "home", component: () => import("./views/HomeView.vue"), meta: { titleKey: "nav.home", icon: "home" } },
     { path: "/news", name: "news", component: () => import("./views/NewsView.vue"), meta: { titleKey: "nav.news", icon: "newspaper" } },
     { path: "/browse", name: "browse", component: () => import("./views/BrowseView.vue"), meta: { titleKey: "nav.browse", icon: "compass" } },
-    { path: "/downloads", name: "downloads", component: () => import("./views/DownloadsView.vue"), meta: { titleKey: "nav.downloads", icon: "download" } },
     { path: "/instances", name: "instances", component: () => import("./views/InstancesView.vue"), meta: { titleKey: "nav.instances", icon: "grid", action: { textKey: "page.newInstance", icon: "plus", to: "/create" } } },
     { path: "/instance/:id", name: "instance", component: () => import("./views/InstanceDetailView.vue"), meta: { titleKey: "page.instanceDetail", icon: "grid" } },
     { path: "/create", name: "create", component: () => import("./views/CreateInstanceView.vue"), meta: { titleKey: "page.create", icon: "plus" } },
@@ -23,6 +23,11 @@ const router = createRouter({
     { path: "/toolbox/nbt", name: "toolbox-nbt", component: () => import("./views/NBTEditorView.vue"), meta: { titleKey: "nbt.nbtTitle", icon: "tool" } },
     { path: "/timemachine", name: "timemachine", component: () => import("./views/TimeMachineView.vue"), meta: { titleKey: "nav.timemachine", icon: "clock" } },
     { path: "/skins", name: "skins", component: () => import("./views/SkinView.vue"), meta: { titleKey: "nav.skins", icon: "user" } },
+    // 下载中心已改为右抽屉（无独立页面）：旧地址 /downloads 重定向首页并打开抽屉
+    { path: "/downloads", name: "downloads", redirect: () => {
+      openDownloadsDrawer();
+      return { path: "/", replace: true };
+    } },
   ],
 });
 
