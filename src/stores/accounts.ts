@@ -61,8 +61,8 @@ export const useAccountsStore = defineStore("accounts", {
       const settings = useSettingsStore();
       await settings.patch({ selected_account: uuid });
     },
-    async addOffline(username: string) {
-      const acc = await api.loginOffline(username);
+    async addOffline(username: string, uuid?: string) {
+      const acc = await api.loginOffline(username, uuid);
       await this.load();
       // auto-select the new account
       await this.select(acc.uuid);

@@ -1,72 +1,109 @@
 <script setup lang="ts">
 import { useRoute } from "vue-router";
-import { computed, nextTick, onBeforeUnmount, ref, watch } from "vue";
-import AccountChip from "./AccountChip.vue";
+import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
-import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import { useOnboarding } from "../composables/useOnboarding";
-import { setSidebarRevealed } from "../composables/useSidebarUI";
-import { useTasksStore } from "../stores/tasks";
 import { useInstancesStore } from "../stores/instances";
 import { useSettingsStore } from "../stores/settings";
+import { useTasksStore } from "../stores/tasks";
+import { useAccountsStore } from "../stores/accounts";
 import { usePinsStore } from "../stores/pins";
-import { useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
+import { useMessage } from "naive-ui";
 import {
+  IconChevronDown,
   IconClock,
+  IconClose,
   IconCompass,
   IconGrid,
   IconHome,
-  IconClose,
   IconNewspaper,
   IconSkin,
   IconStop,
   IconTool,
   IconUsers,
 } from "./icons";
+import { loaderBadge } from "../utils/format";
 
 const route = useRoute();
-const tasks = useTasksStore();
 const instances = useInstancesStore();
 const settingsStore = useSettingsStore();
+const tasks = useTasksStore();
+const accounts = useAccountsStore();
+const pins = usePinsStore();
 const message = useMessage();
 const { t } = useI18n();
 
-// —— 悬停展开的悬浮岛侧边栏 ——
-// 默认常驻显示为折叠窄栏（60px，仅图标），鼠标悬停 120ms 后展开为
-// 完整面板（216px，带文字标签），移开 200ms 后收回窄栏。
-const peek = ref(false);
-// 新手引导期间强制保持展开，避免引导中途侧边栏收回
-const tourActive = useOnboarding().tourActive;
-const tourPinned = ref(false);
-watch(tourActive, (active) => (tourPinned.value = active));
+// 新手引导期间禁用单项 hover 展开（避免高亮框错位）；平时悬停单项滑出名称
+const { tourActive } = useOnboarding();
 
-const revealed = computed(() => peek.value || tourPinned.value);
-// 同步到共享 UI 状态：App.vue 读取它决定内容区是否给折叠窄栏让位
-watch(revealed, (v) => setSidebarRevealed(v), { immediate: true });
+// —— 启动区：当前实例 + 启动按钮 ——
+// 常驻实例选择沿用首页的 localStorage 记忆（qookix.home.selected），
+// 首页与 Dock 共享同一份选择，任一处切换另一处同步。
+const STORAGE_KEY = "qookix.home.selected";
+const selectedId = ref<string | null>(null);
 
-let showTimer = 0;
-let hideTimer = 0;
-/** 悬停 120ms 后展开（防误触：鼠标穿过往内容时不会展开）。 */
-function armShow() {
-  clearTimeout(hideTimer);
-  if (peek.value || tourPinned.value) return;
-  showTimer = window.setTimeout(() => (peek.value = true), 120);
+const lastPlayed = computed(() =>
+  [...instances.instances].sort((a, b) => (b.last_played ?? 0) - (a.last_played ?? 0))[0] ?? null
+);
+
+function resolveDefault(): string | null {
+  const saved = localStorage.getItem(STORAGE_KEY);
+  if (saved && instances.get(saved)) return saved;
+  return (lastPlayed.value ?? instances.instances[0])?.id ?? null;
 }
-/** 移出 200ms 后收回（留容错时间，避免在面板内移动时收起）。 */
-function scheduleHide() {
-  clearTimeout(showTimer);
-  if (tourPinned.value) return;
-  hideTimer = window.setTimeout(() => (peek.value = false), 200);
-}
-onBeforeUnmount(() => {
-  clearTimeout(showTimer);
-  clearTimeout(hideTimer);
-  tracking = false;
-  cancelAnimationFrame(trackRaf);
+
+const selected = computed(() =>
+  selectedId.value ? (instances.get(selectedId.value) ?? null) : null
+);
+
+watch(
+  () => instances.instances,
+  () => {
+    if (!selectedId.value) selectedId.value = resolveDefault();
+  },
+  { immediate: true }
+);
+
+watch(selectedId, (id) => {
+  if (id) localStorage.setItem(STORAGE_KEY, id);
 });
 
-const sidebarRef = ref<HTMLElement | null>(null);
+const switching = ref(false);
+
+function pickInstance(id: string) {
+  selectedId.value = id;
+  switching.value = false;
+}
+
+// 点击启动区以外任意位置时收起实例切换列表
+function onDocClick(e: MouseEvent) {
+  if (!switching.value) return;
+  const zone = e.target as HTMLElement;
+  if (!zone.closest(".launch-zone")) switching.value = false;
+}
+onMounted(() => document.addEventListener("click", onDocClick));
+onBeforeUnmount(() => document.removeEventListener("click", onDocClick));
+
+async function launchSelected() {
+  const target = selected.value;
+  if (!target) {
+    message.info(t("home.message.noInstance"));
+    return;
+  }
+  if (!accounts.accounts.length) {
+    message.warning(t("home.message.addAccount"));
+    accounts.showManager = true;
+    return;
+  }
+  try {
+    await instances.launch(target.id);
+    localStorage.setItem("qookix:onboarding:launched", "1");
+    message.success(t("home.message.launched", { name: target.name }));
+  } catch (e) {
+    message.error(String(e));
+  }
+}
 
 // 新闻可隐藏：settings.show_news 为 false 时不显示该导航项（默认显示）
 const nav = computed(() => {
@@ -83,14 +120,13 @@ const nav = computed(() => {
   if (settingsStore.settings?.show_news ?? true) {
     list.push({ name: "news", label: t("nav.news"), icon: IconNewspaper, to: "/news" });
   }
-  // 设置入口已移至标题栏（暗黑模式按钮右侧），不再显示在侧边栏
+  // 设置 / 下载入口已移至标题栏，不再显示在 Dock
   return list.filter((n) => n.name === "home" || !hidden.has(n.name));
 });
 
-// —— 侧边栏固定实例 ——
+// —— Dock 固定实例 ——
 // 与「固定到首页」共用 pins store，但只取 target === "sidebar" 的实例项，
 // 两者互不干扰；名称/图标跟随实例列表实时更新。
-const pins = usePinsStore();
 const pinnedInstances = computed(() => {
   const byId = new Map(instances.instances.map((i) => [i.id, i]));
   return pins.items
@@ -112,8 +148,7 @@ const pinnedInstances = computed(() => {
 
 function isActive(n: { to: string }) {
   if (n.to === "/") return route.path === "/";
-  // 实例详情/创建页是「实例」的子页面，进入后保持「实例」高亮，
-  // 否则滑动指示器会停留在上一个页面（没有任何 nav 项匹配 → 不更新）
+  // 实例详情/创建页是「实例」的子页面，进入后保持「实例」高亮
   if (n.to === "/instances") {
     return (
       route.path.startsWith("/instances") ||
@@ -123,59 +158,6 @@ function isActive(n: { to: string }) {
   }
   return route.path.startsWith(n.to);
 }
-
-// Sliding active-highlight indicator
-const navBox = ref<HTMLElement | null>(null);
-const { indicatorStyle, refresh, snap, syncNow } = useSlidingIndicator(
-  sidebarRef,
-  // 排除 .pin-item（固定实例）与底部导航，索引顺序与 nav.value 一一对应
-  () => Array.from(sidebarRef.value?.querySelectorAll<HTMLElement>(".nav-item:not(.pin-item)") ?? []),
-  () => {
-    // 用 nav.value（现在是 computed）。固定实例已被选择器排除，不会被计入，
-    // 索引顺序保持稳定。下载入口已移至标题栏，这里不再处理底部导航。
-    return nav.value.findIndex((n) => isActive(n));
-  },
-  { axis: "vertical" }
-);
-watch(
-  () => route.path,
-  () => nextTick(() => {
-    // 宽度过渡进行中（tracking=true）时不做动画式 refresh：此刻测到的是
-    // 过渡中间态几何，动画滑过去必然错位；逐帧跟踪循环全程接管，
-    // 窗口结束时的 snap 会用最终几何精确校准。
-    if (tracking) return;
-    refresh();
-  })
-);
-// —— 展开/收回期间逐帧跟踪指示器 ——
-// 侧边栏 width/padding 过渡时导航项几何逐帧变化；指示器的 px 定位若停在
-// 旧值、只在过渡结束后 snap 校准，动画全程尺寸不对、结束时瞬间跳变。
-// 改为每帧 syncNow 重测重贴（零过渡直接落位）。
-// 驱动方式：直接 watch revealed 状态，用时间窗口（300ms > 过渡时长 220ms）
-// 覆盖整段过渡——不依赖 transitionstart/end 事件，事件在中途反向
-// （cancel+重启）等场景下可能丢失，丢了跟踪就断、几何就停留在旧状态。
-let tracking = false;
-let trackRaf = 0;
-watch(revealed, () => {
-  cancelAnimationFrame(trackRaf);
-  tracking = true;
-  const until = performance.now() + 300;
-  const step = () => {
-    syncNow();
-    if (performance.now() < until) {
-      trackRaf = requestAnimationFrame(step);
-    } else {
-      tracking = false;
-      snap(); // 最终精确校准
-    }
-  };
-  trackRaf = requestAnimationFrame(step);
-});
-// 固定实例增删会改变侧边栏高度/布局，需重算指示器位置
-watch(
-  () => [pinnedInstances.value.length, nav.value.length],
-  () => nextTick(() => refresh())
-);
 
 function unpin(id: string) {
   pins.remove(id);
@@ -192,16 +174,8 @@ async function stopAll() {
 </script>
 
 <template>
-  <aside
-    ref="sidebarRef"
-    id="app-sidebar"
-    class="sidebar"
-    :class="{ peeking: revealed }"
-    @mouseenter="armShow"
-    @mouseleave="scheduleHide"
-  >
-    <div class="indicator" :style="indicatorStyle"></div>
-    <nav ref="navBox" class="nav">
+  <aside id="app-sidebar" class="dock" :class="{ touring: tourActive }">
+    <nav class="nav-list">
       <router-link
         v-for="n in nav"
         :key="n.name"
@@ -209,141 +183,140 @@ async function stopAll() {
         class="nav-item"
         :data-nav="n.name"
         :class="{ active: isActive(n) }"
-        :title="!revealed ? n.label : undefined"
       >
-        <component :is="n.icon" class="nav-icon" />
-        <span v-if="revealed" class="nav-label">{{ n.label }}</span>
+        <span class="nav-icon-cell">
+          <component :is="n.icon" class="nav-icon" />
+        </span>
+        <span class="nav-tip">{{ n.label }}</span>
       </router-link>
     </nav>
 
-    <!-- 固定实例：独立类名 .pin-item，避免被滑动指示器计入 .nav-item -->
-    <div v-if="pinnedInstances.length" class="pin-section">
-      <!-- 与上方导航之间只有这一条分割线（.pin-section 不再自带 border-top） -->
-      <div class="pin-divider"></div>
-      <div v-if="revealed" class="pin-section-title">{{ t("sidebar.pinned") }}</div>
-      <div class="pin-list">
+    <template v-if="pinnedInstances.length">
+      <div class="dock-divider"></div>
+      <div class="dock-pins">
         <router-link
           v-for="p in pinnedInstances"
           :key="p.id"
           :to="`/instance/${p.instanceId}`"
           class="nav-item pin-item"
           :class="{ active: route.path.startsWith(`/instance/${p.instanceId}`) }"
-          :title="p.name"
         >
           <div class="pin-icon-wrap">
             <AppIcon :name="p.icon" />
           </div>
-          <span v-if="revealed" class="nav-label pin-label">{{ p.name }}</span>
-          <button
-            v-if="revealed"
-            class="pin-unpin"
-            :title="t('sidebar.unpin')"
-            @click.prevent.stop="unpin(p.id)"
-          >
+          <span class="pin-label">{{ p.name }}</span>
+          <button class="pin-unpin" :title="t('sidebar.unpin')" @click.prevent.stop="unpin(p.id)">
             <IconClose />
           </button>
         </router-link>
       </div>
-    </div>
+    </template>
 
-    <div class="side-foot">
-      <button v-if="tasks.gameRunning" class="stop-all-btn" @click="stopAll">
+    <button v-if="tasks.gameRunning" class="stop-all-btn" @click="stopAll">
+      <span class="nav-icon-cell">
         <IconStop />
-        <span v-if="revealed">{{ t("sidebar.stopAll") }}</span>
-      </button>
-      <AccountChip :collapsed="!revealed" />
-    </div>
+      </span>
+      <span class="nav-tip">{{ t("sidebar.stopAll") }}</span>
+    </button>
   </aside>
+
+  <!-- —— 启动按钮（贴窗口右缘） ——
+       一个整体按钮内部分割：左段窄条仅切换图标（点击弹实例列表），
+       右段大图标 + 两行文字（上：启动游戏，下：实例名），点击直接启动。
+       无卡片外壳，按钮自身即完整控件。 -->
+  <div class="launch-zone">
+    <button
+      class="split-switch"
+      :title="t('home.resident.switchInstance')"
+      @click="switching = !switching"
+    >
+      <IconChevronDown class="split-switch-chev" :class="{ open: switching }" />
+    </button>
+
+    <button
+      class="split-main"
+      :disabled="!!instances.launchingId"
+      :title="selected ? `${selected.name} · ${selected.mc_version}` : t('home.message.noInstance')"
+      @click="launchSelected"
+    >
+      <span class="split-icon">
+        <AppIcon v-if="selected" :name="selected.icon" />
+        <IconGrid v-else />
+      </span>
+      <span class="split-text">
+        <span class="split-title">{{ instances.launchingId ? t("home.resident.launching") : t("home.resident.launchGame") }}</span>
+        <span v-if="selected" class="split-name text-ellipsis">{{ selected.name }}</span>
+        <span v-else class="split-name split-none">{{ t("home.empty.noInstance") }}</span>
+      </span>
+    </button>
+
+    <!-- 实例切换弹出列表 -->
+    <Transition name="inst-pop">
+      <div v-if="switching" class="inst-pop">
+        <button
+          v-for="inst in instances.instances"
+          :key="inst.id"
+          class="inst-row"
+          :class="{ active: selectedId === inst.id }"
+          @click="pickInstance(inst.id)"
+        >
+          <span class="inst-row-icon"><AppIcon :name="inst.icon" /></span>
+          <span class="inst-row-name text-ellipsis">{{ inst.name }}</span>
+          <span class="inst-row-meta">{{ loaderBadge(inst.loader) }} · {{ inst.mc_version }}</span>
+        </button>
+        <div v-if="!instances.instances.length" class="inst-empty">{{ t("home.empty.noInstance") }}</div>
+      </div>
+    </Transition>
+  </div>
 </template>
 
 <style scoped>
-/* —— 悬浮岛侧边栏：默认折叠窄栏（仅图标），悬停展开 ——
-   常驻显示为 60px 宽的图标栏（悬浮岛：四周留空 + 圆角 + 环绕投影，
-   不挤压内容布局），鼠标悬停 120ms 后平滑展开为 216px 完整面板，
-   移开 200ms 后收回窄栏。展开动画用 width（触发 layout，
-   不创建合成层，backdrop-filter 磨砂全程采样正常）。 */
-.sidebar {
+/* —— 底部 Dock 导航栏：常驻图标条，悬停单项向右滑出名称 ——
+   横向图标条（高 60px，悬浮岛：四周留空 + 圆角 + 环绕投影 + 磨砂），
+   不占满窗口宽：宽度随内容自适应、贴左放置（右侧留给其他元素）。
+   无整体展开态：悬停单个按钮时按钮自身横向扩宽，页面名称从图标右侧
+   以弹性曲线滑出（max-width 过渡，图标槽位全程不动）。 */
+.dock {
   position: fixed;
-  top: 50px; /* 标题栏 40px + 10px 悬浮间距 */
   bottom: 10px;
   left: 10px;
-  width: 60px;
+  /* 宽度不设 right：内容自适应，贴左悬浮 */
+  height: 60px;
+  max-width: calc(100vw - 20px);
   z-index: 45;
   display: flex;
-  flex-direction: column;
-  /* 折叠态四周留白统一 6px：60 - 6×2 = 48px 内容宽，与 nav-item
-     高度一致，图标在正方形格子里完全居中，上下左右边距严格相等 */
+  align-items: center;
+  gap: 6px;
+  /* 四周留白统一 6px：60 - 6×2 = 48px 内容高，与 nav-item 宽度一致，
+     图标在正方形格子里完全居中，上下左右边距严格相等 */
   padding: 6px;
-  border: 1px solid var(--border);
   border-radius: 18px;
-  background: color-mix(in srgb, var(--bg-1) 84%, transparent);
+  background: var(--panel);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
-  transition: width 0.22s cubic-bezier(0.22, 1, 0.36, 1), padding 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-  overflow: hidden;
 }
-.sidebar.peeking {
-  width: 216px;
-  padding: 14px 10px 12px;
-}
-/* 背景图片模式下与卡片一致：用半透明面板色 + 模糊，透出背景图 */
-:global(.has-bg) .sidebar {
-  background: var(--panel);
-}
-.nav {
-  position: relative;
+.nav-list {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 4px;
 }
-/* —— 固定实例区域 —— */
-.pin-section {
-  margin-top: 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  overflow-y: auto;
-  max-height: 40vh;
-  /* 隐藏滚动条但保留滚轮滚动 */
-  scrollbar-width: none;
-  -ms-overflow-style: none;
-}
-.pin-section::-webkit-scrollbar {
-  display: none;
-}
-.pin-section-title {
-  padding: 0 14px 2px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  color: var(--text-3);
-}
-.pin-divider {
-  height: 1px;
-  margin: 0 10px 8px;
+/* —— 固定实例区（Dock 右段） —— */
+.dock-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 4px;
   background: var(--border);
   flex-shrink: 0;
 }
-.pin-list {
+.dock-pins {
   display: flex;
-  flex-direction: column;
+  align-items: center;
   gap: 4px;
 }
-/* 注意：这里必须用 .pin-list 提高优先级，否则会被下方同权重的
-   .nav-item { padding: 10px 14px } 覆盖（CSS 后写胜出） */
-.pin-list .pin-item {
-  padding: 4px 6px 4px 4px;
-  gap: 10px;
-}
-/* 折叠态 pin 条目：纯图标 48×48（与折叠导航项等宽） */
-.sidebar:not(.peeking) .pin-list .pin-item {
-  padding: 0;
-  gap: 0;
-}
 .pin-icon-wrap {
-  width: 40px;
-  height: 40px;
+  width: 48px;
+  height: 48px;
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -351,16 +324,11 @@ async function stopAll() {
   border-radius: 10px;
   overflow: hidden;
 }
-/* 折叠态图标放大铺满 48×48；背景高亮被图标挡住，
-   改用内描边表示选中、亮度表示悬停 */
-.sidebar:not(.peeking) .pin-icon-wrap {
-  width: 48px;
-  height: 48px;
-}
-.sidebar:not(.peeking) .pin-list .pin-item.active .pin-icon-wrap {
+/* 背景高亮被图标挡住，改用内描边表示选中、亮度表示悬停 */
+.pin-item.active .pin-icon-wrap {
   box-shadow: inset 0 0 0 2px var(--accent);
 }
-.sidebar:not(.peeking) .pin-list .pin-item:hover .pin-icon-wrap {
+.pin-item:hover .pin-icon-wrap {
   filter: brightness(1.12);
 }
 .pin-icon-wrap :deep(.app-icon) {
@@ -374,135 +342,420 @@ async function stopAll() {
   height: 100%;
   object-fit: cover;
 }
-.pin-label {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .pin-unpin {
-  flex-shrink: 0;
-  display: inline-flex;
+  /* 内联在 grid 第三列：默认 display:none 不占空间（避免固定实例右侧多出块），
+     hover 时恢复 inline-flex 为 22×22 正方形，随列展开滑出。 */
+  grid-column: 3;
+  display: none;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: none;
-  border-radius: 5px;
+  border-radius: 50%;
   background: transparent;
   color: var(--text-3);
-  opacity: 0;
   cursor: pointer;
-  transition: opacity 0.12s, color 0.12s, background 0.12s;
+  opacity: 0;
+  transform: scale(0.6);
+  transition:
+    transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) 0.05s,
+    opacity 0.2s ease 0.06s,
+    color 0.14s,
+    background 0.14s;
 }
 .pin-item:hover .pin-unpin {
+  display: inline-flex;
   opacity: 1;
+  transform: scale(1);
 }
 .pin-unpin:hover {
-  color: var(--accent);
-  background: var(--accent-soft);
+  color: var(--danger);
+  background: var(--danger-12);
 }
+/* —— 悬停展开：图标右边滑出页面名称（CSS Grid 0fr→1fr 过渡） ——
+   三列网格：[图标槽 48px | 文字列 0fr | 右留白 0px]
+   hover 时 → [48px | 1fr | 12px]，grid-template-columns 原生插值：
+   - 0fr→1fr 从 0 到内容实际宽度全程连续，无 max-width 方案的空跑
+     死区（max-width 从上限收回到内容宽之前按钮不动 = 收回卡顿根源）
+   - 图标槽恒 48px 第一列，图标坐标全程零移动
+   - 右留白独立第三列同步过渡，收起后零残余宽度
+   - 文字本体 translateX 侧滑：展开从图标后方滑入、收起向后滑出被裁
+     （配合 opacity），是真正的侧滑消失而非原地淡出
+   弹性曲线 cubic-bezier(0.34, 1.56, 0.64, 1)：Material 标准 spring，
+   过冲 1.56，展开时轻微冲过头再回弹；收回用快速收尾曲线。 */
 .nav-item {
   position: relative;
-  display: flex;
+  display: inline-grid;
+  grid-template-columns: 48px 0fr 0px;
   align-items: center;
-  gap: 12px;
+  height: 48px;
   padding: 0;
-  justify-content: center;
   border-radius: 10px;
   color: var(--text-2);
-  font-size: 14px;
-  font-weight: 500;
   text-decoration: none;
-  transition: color 0.14s, background 0.14s, border-color 0.14s, transform 0.1s ease;
-  border: 1px solid transparent;
   white-space: nowrap;
-  overflow: hidden;
-  height: 48px;
-  box-sizing: border-box;
+  transition:
+    grid-template-columns 0.38s cubic-bezier(0.34, 1.56, 0.64, 1),
+    color 0.14s,
+    background 0.14s;
 }
 .nav-item:active {
   transform: scale(0.96);
 }
-/* 展开态恢复常规内边距；折叠态保持图标居中（基础样式） */
-.sidebar.peeking .nav-item {
-  padding: 10px 14px;
-  justify-content: flex-start;
-}
 .nav-item:hover {
   background: var(--panel-hover);
   color: var(--text-1);
+  grid-template-columns: 48px 1fr 12px;
 }
+/* 激活项常驻展开：当前页面的标签不收回——Dock 任何时候都能看到
+   「你在哪」，其他项仍保持悬停展开。展开态与 hover 一致，
+   悬停激活项时 hover 的背景色覆盖（背景仍会响应）。 */
 .nav-item.active {
   color: var(--accent);
+  grid-template-columns: 48px 1fr 12px;
 }
-.indicator {
-  position: absolute;
-  left: 0;
-  width: 100%;
-  z-index: 1;
-  border-radius: 10px;
-  background: var(--accent-soft);
-  border: 1px solid var(--accent-03);
+.nav-item.active .nav-tip {
+  opacity: 1;
+  transform: translateX(0);
+  /* 常驻展开无需出场动画延迟：进入激活态时文字随按钮一起滑出 */
   transition:
-    top 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    height 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 0.18s;
-  pointer-events: none;
+    transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) 0.03s,
+    opacity 0.18s ease 0.05s;
 }
-/* 折叠态（图标栏）隐藏滑动指示器：激活项已由图标主题色标示，高亮块在
-   窄栏里冗余；更关键的是彻底杜绝「收回后指示器残留展开态几何、溢出
-   窄栏」的问题——不管过渡事件是否如期触发，折叠态下它一律不可见。
-   !important 用于压过组件内联的 opacity:1（syncNow 每帧写入）。
-   展开/收回瞬间 computed opacity 变化，走内联 transition 平滑淡入淡出。 */
-.sidebar:not(.peeking) .indicator {
-  opacity: 0 !important;
-}
-.nav-icon,
-.nav-label {
-  position: relative;
-  z-index: 2;
+/* 图标槽：恒 48×48（第一列），图标居中——默认态按钮即 48px 方格 */
+.nav-icon-cell {
+  grid-column: 1;
+  width: 48px;
+  height: 48px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .nav-icon {
   font-size: 18px;
 }
-.nav-label {
-  animation: fade-in 0.2s ease;
+/* 文字（第二列）：0fr 时列宽 0，内容被裁；translateX 侧滑滑入/滑出 */
+.nav-tip {
+  grid-column: 2;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition:
+    transform 0.3s cubic-bezier(0.55, 0, 0.55, 0.2),
+    opacity 0.22s ease;
 }
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
+.nav-item:hover .nav-tip {
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) 0.03s,
+    opacity 0.18s ease 0.05s;
 }
-.side-foot {
-  margin-top: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+/* 新手引导态：展开禁用，避免 driver.js 高亮框随 hover 扩宽错位 */
+.dock.touring .nav-item:hover {
+  grid-template-columns: 48px 0fr 0px;
+}
+/* —— 固定实例条目：默认纯图标，悬停展开名称与取消固定按钮 ——
+   pin-item 继承 .nav-item 的三列网格，hover 时第三列弹开容纳取消固定
+   按钮；active（当前页面）态保持纯图标，不常驻展开。 */
+.pin-item {
+  overflow: hidden;
+}
+.pin-item .pin-icon-wrap {
+  grid-column: 1;
+  width: 48px;
+  height: 48px;
+}
+/* 悬停展开：第三列 28px 容纳 22px 按钮并留右侧间距 */
+.pin-item:hover,
+.pin-item.active:hover {
+  grid-template-columns: 48px 1fr 28px;
+}
+/* 激活态默认纯图标（覆盖 .nav-item.active 常驻展开），悬停时仍可展开取消固定 */
+.pin-item.active {
+  grid-template-columns: 48px 0fr 0px;
+}
+/* 实例名称（第二列）：默认 display:none 不占空间（避免 padding 撑开 pin-item 宽度），
+   hover 时恢复显示，同 .nav-tip 的侧滑滑入/滑出 */
+.pin-label {
+  grid-column: 2;
+  display: none;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13px;
+  font-weight: 600;
+  padding-left: 8px;
+  padding-right: 14px;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition:
+    transform 0.3s cubic-bezier(0.55, 0, 0.55, 0.2),
+    opacity 0.22s ease;
+}
+.pin-item:hover .pin-label {
+  display: block;
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) 0.03s,
+    opacity 0.18s ease 0.05s;
 }
 .stop-all-btn {
-  display: flex;
+  position: relative;
+  display: inline-grid;
+  grid-template-columns: 48px 0fr 0px;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  width: 100%;
-  height: 40px;
-  box-sizing: border-box;
+  height: 48px;
   padding: 0;
   border: 1px solid var(--danger-40);
   border-radius: 10px;
   background: var(--danger-12);
   color: var(--danger-text);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 16px;
+  white-space: nowrap;
   cursor: pointer;
-  transition: all 0.14s;
-}
-.sidebar.peeking .stop-all-btn {
-  justify-content: flex-start;
-  padding: 0 14px;
+  transition:
+    grid-template-columns 0.38s cubic-bezier(0.34, 1.56, 0.64, 1),
+    background 0.14s;
+  flex-shrink: 0;
 }
 .stop-all-btn:hover {
   background: var(--danger-26);
+  grid-template-columns: 48px 1fr 12px;
+}
+.stop-all-btn .nav-tip {
+  grid-column: 2;
+  min-width: 0;
+  font-size: 13px;
+  font-weight: 600;
+  opacity: 0;
+  transform: translateX(-12px);
+  transition:
+    transform 0.3s cubic-bezier(0.55, 0, 0.55, 0.2),
+    opacity 0.22s ease;
+}
+.stop-all-btn:hover .nav-tip {
+  opacity: 1;
+  transform: translateX(0);
+  transition:
+    transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) 0.03s,
+    opacity 0.18s ease 0.05s;
+}
+
+/* —— 启动按钮（贴窗口右缘）：一个整体按钮，内部分割 ——
+   布局：[⌄ | 🖼  启动游戏]
+              图标  ────────
+                   实例名
+   左段窄条（仅切换箭头，点击弹实例列表）+ 右段主体（大图标 +
+   两行文字：上启动游戏 / 下实例名，点击直接启动）。
+   主题色渐变铺满整按钮，中缝半透明描边分割两段；无卡片外壳。 */
+.launch-zone {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  z-index: 44;
+  display: flex;
+  align-items: stretch;
+  height: 60px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  transition: filter 0.15s, transform 0.1s ease;
+}
+.launch-zone:hover {
+  filter: brightness(1.07);
+}
+/* 左段：切换窄条（整高，仅下拉箭头） */
+.split-switch {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  border: none;
+  border-radius: 14px 0 0 14px;
+  background: transparent;
+  color: var(--accent-contrast);
+  cursor: pointer;
+  box-shadow: inset 0 0 0 var(--accent-12);
+  transition: background 0.14s;
+}
+.split-switch:hover {
+  background: rgba(0, 0, 0, 0.12);
+}
+.split-switch-chev {
+  font-size: 15px;
+  transition: transform 0.22s cubic-bezier(0.34, 1.3, 0.5, 1);
+}
+.split-switch-chev.open {
+  transform: rotate(180deg);
+}
+/* 右段：主体（图标 + 两行文字），点击启动 */
+.split-main {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 18px 0 13px;
+  border: none;
+  border-radius: 0 14px 14px 0;
+  background: transparent;
+  color: var(--accent-contrast);
+  font-family: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+  /* 中缝分割线：左缘半透明深色描边 */
+  box-shadow: inset 1px 0 0 rgba(0, 0, 0, 0.18);
+}
+.split-main:active:not(:disabled) {
+  transform: scale(0.98);
+}
+.split-main:disabled {
+  cursor: default;
+  opacity: 0.75;
+}
+.launch-zone:has(.split-main:disabled) {
+  filter: saturate(0.6) brightness(0.9);
+}
+.split-icon {
+  width: 38px;
+  height: 38px;
+  flex-shrink: 0;
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.18);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.split-icon :deep(.app-icon),
+.split-icon :deep(img),
+.split-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.split-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  min-width: 0;
+}
+.split-title {
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+.split-name {
+  font-size: 11px;
+  font-weight: 500;
+  opacity: 0.85;
+  max-width: 200px;
+  line-height: 1.2;
+}
+.split-none {
+  font-style: normal;
+  opacity: 0.7;
+}
+/* 实例切换弹出列表：从按钮上方弹出，右对齐（贴右缘时不向右溢出）。
+   ⚠ 两个坑的叠加：
+   1. --panel 是低透明度色（深色主题仅 4% 白，为磨砂卡片设计），
+      单独用作浮层背景必然透底；
+   2. 父容器 .launch-zone 有 filter（hover 提亮）——filter 会隔离
+      合成层，子元素的 backdrop-filter 采样不到真实页面背景，磨砂
+      失效后只剩半透明底 = 依然透底。
+   结论：浮层直接用实底色（bg-1 是纯实色，混 8% 白比背景亮一档），
+      不依赖 backdrop-filter，任何环境下都不透底。 */
+.inst-pop {
+  position: absolute;
+  bottom: calc(100% + 12px);
+  right: 0;
+  width: 300px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--bg-1) 92%, #ffffff 8%);
+  border: 1px solid var(--border);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  z-index: 5;
+}
+.inst-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: background 0.12s, color 0.12s;
+}
+.inst-row:hover {
+  background: var(--w-06);
+  color: var(--text-1);
+}
+.inst-row.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.inst-row-icon {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.inst-row-icon :deep(.app-icon),
+.inst-row-icon :deep(img),
+.inst-row-icon :deep(svg) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.inst-row-name {
+  font-weight: 600;
+  flex: 1;
+  min-width: 0;
+}
+.inst-row-meta {
+  font-size: 11px;
+  color: var(--text-3);
+  flex-shrink: 0;
+}
+.inst-empty {
+  padding: 18px 12px;
+  text-align: center;
+  color: var(--text-3);
+  font-size: 12px;
+}
+/* 弹出动画：向上浮出 + 弹性 */
+.inst-pop-enter-active {
+  transition: opacity 0.2s ease, transform 0.26s cubic-bezier(0.34, 1.3, 0.5, 1);
+}
+.inst-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.18s ease-in;
+}
+.inst-pop-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+.inst-pop-leave-to {
+  opacity: 0;
+  transform: translateY(4px);
 }
 </style>

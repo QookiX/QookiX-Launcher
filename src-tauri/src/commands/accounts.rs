@@ -16,8 +16,12 @@ pub fn list_accounts(state: State<AppState>) -> Result<Vec<Value>, String> {
 }
 
 #[tauri::command]
-pub fn login_offline(state: State<AppState>, username: String) -> Result<Account, String> {
-    accounts::create_offline(&state, &username)
+pub fn login_offline(
+    state: State<AppState>,
+    username: String,
+    uuid: Option<String>,
+) -> Result<Account, String> {
+    accounts::create_offline(&state, &username, uuid.as_deref())
 }
 
 #[tauri::command]

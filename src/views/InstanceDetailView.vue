@@ -417,7 +417,7 @@ watch(
 </script>
 
 <template>
-  <div v-if="instance" class="detail">
+  <div v-if="instance" class="detail" data-tauri-drag-region>
     <div class="d-head glass">
       <div class="d-icon"><AppIcon :name="instance.icon" /></div>
       <div class="d-info">

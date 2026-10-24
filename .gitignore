@@ -16,7 +16,7 @@ dist-ssr
 # Release artifacts staged by .github/workflows/build.yml before publishing
 dist-artifacts
 
-# AI/工具会话产物（避免误提交）
+# AI/工具会话产物（避免误提交�?
 .workbuddy/
 .codebuddy/
 .codegraph/
@@ -27,7 +27,7 @@ dist-artifacts
 /*.exe
 /dev.log
 
-# 根目录的素材图（非 public/ 内被引用的应用图标）
+# 根目录的素材图（�?public/ 内被引用的应用图标）
 /app-icon.png
 
 # Editor directories and files
@@ -40,3 +40,5 @@ dist-artifacts
 *.njsproj
 *.sln
 *.sw?
+
+.acl-recovery

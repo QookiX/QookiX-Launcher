@@ -626,7 +626,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="server-detail" v-if="server">
+  <div class="server-detail" v-if="server" data-tauri-drag-region>
     <button class="back" @click="router.push('/multiplayer')">
       <IconChevronLeft /> {{ t('serverDetail.back') }}
     </button>

@@ -264,7 +264,7 @@ async function moveTo(groupId: string | null) {
 </script>
 
 <template>
-  <div id="instances-root" class="instances-view">
+  <div id="instances-root" class="instances-view" data-tauri-drag-region>
     <div v-if="instances.loading" class="loading">{{ t("instances.loading") }}</div>
 
     <template v-else-if="totalCount">

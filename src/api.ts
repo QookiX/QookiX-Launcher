@@ -490,7 +490,8 @@ export const api = {
 
   // accounts
   listAccounts: () => invoke<Account[]>("list_accounts"),
-  loginOffline: (username: string) => invoke<Account>("login_offline", { username }),
+  loginOffline: (username: string, uuid?: string) =>
+    invoke<Account>("login_offline", { username, uuid: uuid ?? null }),
   loginMsStart: () =>
     invoke<{ userCode: string; verificationUri: string; expiresIn: number }>(
       "login_ms_start",
@@ -660,6 +661,7 @@ export const api = {
     invoke<{ rel: string; name: string }>("rename_instance_path", { instanceId, rel, newName }),
   revealInstancePath: (instanceId: string, rel: string) =>
     invoke<void>("reveal_instance_path", { instanceId, rel }),
+  revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   extractGameIcons: (instanceId?: string) =>
     invoke<{ name: string; label: string; path: string }[]>("extract_game_icons", {
       instanceId: instanceId ?? null,

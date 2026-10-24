@@ -55,8 +55,6 @@ export interface Settings {
   background_blur: number;
   background_dim: number;
   glass_blur: number;
-  show_home_hero: boolean;
-  show_sidebar_collapse_btn: boolean;
   /** 新闻页面与侧边栏新闻入口是否显示（默认 true） */
   show_news: boolean;
   /** 用户在设置页选择隐藏的侧边栏导航项 name 列表 */

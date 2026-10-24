@@ -6,6 +6,7 @@ import { api } from "./api";
 import TitleBar from "./components/TitleBar.vue";
 import SideBar from "./components/SideBar.vue";
 import DownloadsDrawer from "./components/DownloadsDrawer.vue";
+import AccountDrawer from "./components/AccountDrawer.vue";
 import LoadingBarBridge from "./components/LoadingBarBridge.vue";
 import LaunchProgress from "./components/LaunchProgress.vue";
 import CrashDialog from "./components/CrashDialog.vue";
@@ -15,7 +16,6 @@ import ForceUpdateOverlay from "./components/ForceUpdateOverlay.vue";
 import SplashScreen from "./components/SplashScreen.vue";
 import ModpackDropOverlay from "./components/ModpackDropOverlay.vue";
 import { transitionName } from "./composables/usePageTransition";
-import { useSidebarRevealed } from "./composables/useSidebarUI";
 import { useSettingsStore } from "./stores/settings";
 import { initDeepLink } from "./composables/deepLink";
 import { MessageBridge, notifyError } from "./composables/notify";
@@ -23,6 +23,7 @@ import { listen } from "@tauri-apps/api/event";
 import { useOnboarding } from "./composables/useOnboarding";
 import i18n from "./i18n";
 import { useI18n } from "vue-i18n";
+import { useRoute } from "vue-router";
 import type { AppLocale } from "./i18n";
 
 import { useAccountsStore } from "./stores/accounts";
@@ -47,6 +48,7 @@ const tasks = useTasksStore();
 const pins = usePinsStore();
 const onboarding = useOnboarding();
 const { t } = useI18n();
+const route = useRoute();
 
 function applyLocale(lang: string | undefined | null) {
   if (lang === "en-US" || lang === "zh-CN") {
@@ -55,9 +57,6 @@ function applyLocale(lang: string | undefined | null) {
 }
 
 watch(() => settings.settings?.language, (lang) => applyLocale(lang));
-
-// 悬浮岛侧边栏状态：折叠窄栏时内容区让位（左侧留白），展开浮层时占满全宽
-const sidebarRevealed = useSidebarRevealed();
 
 const isDark = computed(() => settings.settings?.theme !== "light");
 const activeTheme = computed(() => (isDark.value ? darkTheme : lightTheme));
@@ -113,6 +112,9 @@ const bgStyle = computed(() => {
     "--bg-dim-light": String((s.background_dim / 100) * 0.45),
   } as Record<string, string>;
 });
+
+// 无背景图时，装饰纹理（点阵 + 光带）只在首页出现；其他页面只留底色渐变。
+const showTexture = computed(() => route.path === "/" && !settings.settings?.background_image);
 
 watch(() => settings.settings?.glass_blur, (v) => {
   if (v != null) document.documentElement.style.setProperty("--glass-blur", `${v}px`);
@@ -199,11 +201,18 @@ onBeforeUnmount(() => {
           <n-message-provider>
             <MessageBridge />
             <n-notification-provider>
-                <div class="app app-bg" :class="{ light: !isDark }" :style="bgStyle">
+                <!-- data-tauri-drag-region：让「背景」也能拖动窗口（标题栏之外）。
+                     Tauri 2 的语义（src/window/scripts/drag.js）：
+                       - 无值 / "true" → 只有**直接**点在带属性的这个元素上才拖（子元素不受影响）
+                       - "deep"        → 整个子树都可拖（卡片、按钮等 div 点击会被吞掉，故不用）
+                     .content 带的是裸属性：外围留白（上 22 / 左右 26 / 下 80）落点就是它自己，
+                     所以那块背景可以直接拽窗口；页面里的卡片、按钮、画布仍然是它自己的落点，
+                     点击行为完全不变。 -->
+                <div class="app app-bg" data-tauri-drag-region :class="{ light: !isDark, 'show-texture': showTexture }" :style="bgStyle">
                 <TitleBar />
-                <div class="body" :class="{ 'sidebar-collapsed': !sidebarRevealed }">
+                <div class="body" data-tauri-drag-region>
                   <SideBar />
-                  <main id="app-content" class="content">
+                  <main id="app-content" class="content" data-tauri-drag-region>
                     <router-view v-slot="{ Component, route }">
                       <!-- duration 必须显式给：out-in 靠 transitionend 判断"旧页面退场完毕"，
                            一旦某次没收到结束事件（元素被替换 / 过渡被打断），这个 out-in
@@ -225,6 +234,7 @@ onBeforeUnmount(() => {
                 <CrashDialog />
                 <CloseConfirmDialog />
                 <DownloadsDrawer />
+                <AccountDrawer />
                 <UpdaterCheck />
                 <ForceUpdateOverlay />
                 <ModpackDropOverlay />
@@ -247,18 +257,12 @@ onBeforeUnmount(() => {
   flex: 1;
   display: flex;
   min-height: 0;
-  /* 折叠窄栏常驻时内容区让位（10px 悬浮间距 + 60px 窄栏）；
-     窄栏右缘到内容的距离由 .content 自身 padding 提供，与窗口右侧
-     的 padding 相等，视觉左右对称。展开为浮层时内容占满全宽 */
-  transition: padding-left 0.22s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.body.sidebar-collapsed {
-  padding-left: 70px;
 }
 .content {
   flex: 1;
   overflow-y: auto;
-  padding: 22px 26px 30px;
+  /* 底部留出常驻 Dock 的空间（60px 高 + 10px 悬浮间距），内容不被遮挡 */
+  padding: 22px 26px 80px;
 }
 </style>
 

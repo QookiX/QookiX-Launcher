@@ -100,7 +100,6 @@ export default {
     vanilla: "Vanilla",
   },
   sidebar: {
-    pinned: "Pinned",
     unpin: "Unpin",
     stopAll: "Stop all instances",
     stopAllDone: "All instances stopped",

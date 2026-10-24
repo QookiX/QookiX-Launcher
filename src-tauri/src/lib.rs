@@ -247,6 +247,7 @@ pub fn run() {
             commands::delete_instance_path,
             commands::rename_instance_path,
             commands::reveal_instance_path,
+            commands::reveal_path,
             commands::import_modpack,
             commands::import_instance_image,
             commands::import_background_image,

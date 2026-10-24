@@ -37,7 +37,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div class="news-view">
+  <div class="news-view" data-tauri-drag-region>
     <div class="news-header glass">
       <h1>{{ t("news.title") }}</h1>
       <button class="refresh-btn" :disabled="newsStore.loading" @click="refresh">

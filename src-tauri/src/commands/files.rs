@@ -153,6 +153,27 @@ pub fn reveal_instance_path(
     fsutil::reveal(&app, &path)
 }
 
+/// 在系统文件管理器中定位一个数据目录内的绝对路径（如时光机截图）。
+/// 校验路径规范化后仍在数据根目录下，避免前端定位任意系统路径。
+#[tauri::command]
+pub fn reveal_path(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    path: String,
+) -> Result<(), String> {
+    let root = state
+        .root
+        .canonicalize()
+        .map_err(|e| format!("数据目录不可用: {e}"))?;
+    let p = std::path::Path::new(&path)
+        .canonicalize()
+        .map_err(|e| format!("路径不可用: {e}"))?;
+    if !p.starts_with(&root) {
+        return Err("路径不在数据目录范围内".into());
+    }
+    fsutil::reveal(&app, &p)
+}
+
 /// Import a local modpack (.mrpack / CurseForge zip): creates an instance
 /// with the pack's Minecraft version + loader, then installs it in the
 /// background (downloads the pack's mods, applies overrides, installs the

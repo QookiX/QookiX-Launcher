@@ -100,7 +100,6 @@ export default {
     vanilla: "原版",
   },
   sidebar: {
-    pinned: "固定",
     unpin: "取消固定",
     stopAll: "关闭所有实例",
     stopAllDone: "已关闭所有实例",

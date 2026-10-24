@@ -8,7 +8,7 @@ export default {
     infoStationManaged: "皮肤站账号的皮肤由皮肤站管理，请到皮肤站网站上传更换",
     savedAutoApply: "皮肤已保存，启动游戏时自动应用",
     capeApplyFailed: "皮肤已应用，但披风应用失败: {err}",
-    appliedTo: "皮肤已应用到 {name}",
+    appliedTo: "皮肤已上传并应用到 {name}",
     warnEnterPlayerName: "请输入玩家名",
     savedPlayerSkin: "已保存 {name} 的皮肤到本地",
     skinPngFilter: "皮肤 PNG",
@@ -37,6 +37,14 @@ export default {
     modelSlim: "纤细",
     applying: "应用中…",
     apply: "应用",
+    uploadAndApply: "上传并应用",
+    uploading: "上传中…",
+    confirmUploadTitle: "上传并应用到正版账号",
+    confirmUploadBody:
+      "将把当前预览的皮肤（{model}）上传到 Microsoft 账号「{name}」，并一并同步披风设置。",
+    confirmUploadHint:
+      "上传会覆盖该账号在 Minecraft 中的现有外观，立即对所有登录该账号的设备生效，本地无法撤销。若当前选择的是「无披风」，账号现有披风会被隐藏。",
+    confirmUploadOk: "确认上传",
     tabSaved: "已保存皮肤",
     skinCount: "共 {n} 个",
     fetchByPlayer: "按玩家名获取",

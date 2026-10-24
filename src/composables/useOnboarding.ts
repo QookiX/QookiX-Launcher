@@ -101,8 +101,8 @@ function open() {
   if (driverObj || pending) return;
   pending = true;
   showOnboarding.value = true;
-  // 先触发侧边栏展开（tourActive），等其宽度 transition（0.2s）完成后再启动引导，
-  // 否则 driver.js 高亮 #app-sidebar 时会基于折叠尺寸计算高亮框，展开后高亮框错位。
+  // tourActive 让 Dock 进入引导态：禁用单项 hover 展开，避免 driver.js 高亮
+  // #app-sidebar 时按钮因 hover 扩宽导致高亮框错位。短暂等待 class 生效与布局稳定。
   tourActive.value = true;
   const steps = buildSteps();
   // 预加载各页面 chunk，避免跨页导航时懒加载导致 waitForElement 超时卡顿

@@ -449,7 +449,7 @@ watch(instanceId, () => {
 </script>
 
 <template>
-  <div class="nbt-view">
+  <div class="nbt-view" data-tauri-drag-region>
     <div class="bar glass">
       <span class="bar-label">{{ t("nbt.selectInstance") }}</span>
       <NSelect

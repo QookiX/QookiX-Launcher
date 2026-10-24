@@ -10,7 +10,7 @@ export default {
       "Skins for skin-station accounts are managed by the station. Please upload changes on the station website.",
     savedAutoApply: "Skin saved. It will be applied automatically when launching the game.",
     capeApplyFailed: "Skin applied, but cape failed: {err}",
-    appliedTo: "Skin applied to {name}",
+    appliedTo: "Skin uploaded and applied to {name}",
     warnEnterPlayerName: "Please enter a player name",
     savedPlayerSkin: "Saved {name}'s skin locally",
     skinPngFilter: "Skin PNG",
@@ -39,6 +39,14 @@ export default {
     modelSlim: "Slim",
     applying: "Applying…",
     apply: "Apply",
+    uploadAndApply: "Upload & apply",
+    uploading: "Uploading…",
+    confirmUploadTitle: "Upload and apply to the Microsoft account",
+    confirmUploadBody:
+      "The skin you are previewing ({model}) will be uploaded to the Microsoft account \"{name}\", together with the cape setting.",
+    confirmUploadHint:
+      "This overwrites the account's current look in Minecraft, takes effect immediately on every device signed in with it, and cannot be undone from here. If the selection is \"No cape\", the account's current cape will be hidden.",
+    confirmUploadOk: "Upload now",
     tabSaved: "Saved skins",
     skinCount: "{n} total",
     fetchByPlayer: "Fetch by player",

@@ -18,6 +18,7 @@ import {
 import { useTasksStore } from "../stores/tasks";
 import { useServersStore } from "../stores/servers";
 import { useSettingsStore } from "../stores/settings";
+import AccountChip from "./AccountChip.vue";
 import { titlebarThemeToggle } from "../composables/useDevFlags";
 import {
   updateReady,
@@ -47,11 +48,6 @@ const actionIcons: Record<string, any> = {
 };
 // 页面路由 meta 中配置的导航按钮（如“新建实例”）；textKey 为文案 key
 const pageAction = computed(() => (route.meta.action as { textKey?: string; icon?: string; to?: string }) ?? null);
-// 页面标题也用 key，跟随语言切换
-const pageTitle = computed(() => {
-  const key = route.meta.titleKey as string | undefined;
-  return key ? t(key) : "";
-});
 // 标题按首个空格拆分：品牌名（QookiX）用主题色高亮，其余文案保持常规颜色
 const titleParts = computed(() => {
   const full = t("titlebar.title");
@@ -102,7 +98,6 @@ onMounted(async () => {
   <div class="titlebar" id="app-titlebar" data-tauri-drag-region>
     <div class="tb-left" data-tauri-drag-region>
       <span class="tb-title"><span class="tb-brand">{{ titleParts.brand }}</span>{{ titleParts.rest }}</span>
-      <span class="tb-page">{{ pageTitle }}</span>
     </div>
     <div class="tb-right" data-tauri-drag-region>
       <div class="tb-actions">
@@ -140,6 +135,8 @@ onMounted(async () => {
         </button>
       </div>
       <div class="tb-controls">
+        <!-- 账号：全局身份入口，与主题/下载/设置同组（圆形按钮区最左） -->
+        <AccountChip bar class="tb-account" />
         <button v-if="titlebarThemeToggle" class="tb-btn tb-theme-toggle" :title="isDark ? t('titlebar.switchLight') : t('titlebar.switchDark')" @click="toggleTheme">
           <IconSun v-if="isDark" />
           <IconMoon v-else />
@@ -181,22 +178,23 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   padding: 0 8px 0 14px;
-  background: color-mix(in srgb, var(--bg-0) 86%, transparent);
+  background: var(--panel);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
   -webkit-app-region: drag;
 }
-/* 背景图片模式下与卡片一致：用半透明面板色 + 模糊，透出背景图 */
-:global(.has-bg) .titlebar {
-  background: var(--panel);
-}
 .tb-left {
   display: flex;
   align-items: center;
   gap: 7px;
   min-width: 0;
+}
+/* 账号胶囊：在 tb-controls 圆形按钮组最左，高度与按钮对齐 */
+.tb-account {
+  flex-shrink: 0;
+  -webkit-app-region: no-drag;
 }
 .tb-title {
   font-size: 13px;
@@ -207,22 +205,6 @@ onMounted(async () => {
 .tb-brand {
   font-weight: 700;
   color: var(--accent);
-}
-.tb-page {
-  height: 20px;
-  padding: 0 11px;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--accent-contrast);
-  display: inline-flex;
-  align-items: center;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.2px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 300px;
 }
 .tb-right {
   display: flex;

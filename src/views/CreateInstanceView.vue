@@ -424,7 +424,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="create-view">
+  <div class="create-view" data-tauri-drag-region>
     <button class="back" @click="router.push('/instances')">
       <IconChevronLeft /> {{ t("createInstance.backToInstances") }}
     </button>

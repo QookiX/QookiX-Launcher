@@ -108,6 +108,7 @@ export default {
   lbNext: "Next",
   lbHint: "← → to browse · Esc to close",
   lbCounter: "{i} / {n}",
+  revealInFileManager: "Reveal in file manager",
   newShot: "New",
   emptyTitle: "Nothing here yet — go launch the game",
   step1: "Launch the game once",

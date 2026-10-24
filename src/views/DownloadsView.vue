@@ -135,7 +135,7 @@ const { onEnter: onExpandEnter, onLeave: onExpandLeave } = useHeightTransition({
 </script>
 
 <template>
-  <div class="dl-view">
+  <div class="dl-view" data-tauri-drag-region>
     <div ref="tabBox" class="tabs glass">
       <div class="indicator" :style="tabIndicatorStyle"></div>
       <button :class="{ active: activeTab === 'active' }" @click="activeTab = 'active'">

@@ -94,10 +94,6 @@ pub struct Settings {
     pub background_dim: u32,
     /// 磨砂卡片模糊半径 px（0-30）
     pub glass_blur: u32,
-    /// 首页主标题卡片（hero）是否显示
-    pub show_home_hero: bool,
-    /// 侧边栏展开/收缩按钮是否显示
-    pub show_sidebar_collapse_btn: bool,
     /// 新闻页面与侧边栏新闻入口是否显示
     pub show_news: bool,
     /// 用户在设置页选择隐藏的侧边栏导航项 name 列表
@@ -160,8 +156,6 @@ impl Default for Settings {
             background_blur: 0,
             background_dim: 45,
             glass_blur: 8,
-            show_home_hero: false,
-            show_sidebar_collapse_btn: false,
             show_news: true,
             hidden_nav_items: Vec::new(),
             dismissed_update_version: None,

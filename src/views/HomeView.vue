@@ -7,14 +7,14 @@ import { useInstancesStore } from "../stores/instances";
 import { useAccountsStore } from "../stores/accounts";
 import { usePinsStore, type PinItem } from "../stores/pins";
 import { useSettingsStore } from "../stores/settings";
-import { latencyInfo, loaderBadge } from "../utils/format";
+import { latencyInfo } from "../utils/format";
 import { api } from "../api";
 import { supportsQuickPlay } from "../version";
-import { useMessage, NModal } from "naive-ui";
+import { useMessage } from "naive-ui";
 import AppIcon from "../components/AppIcon.vue";
 import OnboardingBar from "../components/OnboardingBar.vue";
 import type { ServerStatus } from "../types";
-import { IconClose, IconCompass, IconFolder, IconGlobe, IconPlay, IconRepeat, IconUser, IconBookOpen } from "../components/icons";
+import { IconClose, IconFolder, IconGlobe, IconPlay, IconBookOpen } from "../components/icons";
 import { useOnboarding } from "../composables/useOnboarding";
 
 const router = useRouter();
@@ -25,8 +25,6 @@ const message = useMessage();
 const pinsStore = usePinsStore();
 const settingsStore = useSettingsStore();
 const onboarding = useOnboarding();
-const launching = ref(false);
-const showPicker = ref(false);
 const pinLaunching = ref<string>("");
 const pinStatus = ref<Record<string, ServerStatus>>({});
 
@@ -61,34 +59,10 @@ watch(selectedId, (id) => {
   if (id) localStorage.setItem(STORAGE_KEY, id);
 });
 
-// 切换实例弹窗按分组展示（空分组不显示）
-const pickerSections = computed(() => {
-  const list = instances.groups
-    .map((g) => ({
-      key: g.id,
-      name: g.name,
-      color: g.color as string | null,
-      items: instances.instances.filter((i) => i.group === g.id),
-    }))
-    .filter((s) => s.items.length);
-  const rest = instances.instances.filter((i) => !i.group);
-  if (rest.length) {
-    list.push({ key: "__ungrouped__", name: t("home.picker.ungrouped"), color: null, items: rest });
-  }
-  return list;
-});
-
-const greeting = computed(() => {
-  const h = new Date().getHours();
-  if (h >= 5 && h < 11) return t("home.greeting.morning");
-  if (h >= 11 && h < 13) return t("home.greeting.noon");
-  if (h >= 13 && h < 18) return t("home.greeting.afternoon");
-  if (h >= 18 && h < 22) return t("home.greeting.evening");
-  return t("home.greeting.night");
-});
-
 const hasAccount = computed(() => accounts.accounts.length > 0);
 
+// 新手引导条「启动游戏」步骤的处理：启动当前选中实例
+// （实例选择与启动的主入口已移至底部 Dock 的分割按钮）。
 async function launchSelected() {
   const target = selected.value;
   if (!target) {
@@ -101,7 +75,6 @@ async function launchSelected() {
     accounts.showManager = true;
     return;
   }
-  launching.value = true;
   try {
     await instances.launch(target.id);
     // 新手引导第 3 步：首次启动成功即完成
@@ -109,23 +82,7 @@ async function launchSelected() {
     message.success(t("home.message.launched", { name: target.name }));
   } catch (e) {
     message.error(String(e));
-  } finally {
-    launching.value = false;
   }
-}
-
-function pick(inst: { id: string }) {
-  selectedId.value = inst.id;
-  showPicker.value = false;
-}
-
-function openPicker() {
-  if (!instances.instances.length) {
-    message.info(t("home.message.noInstance"));
-    router.push("/instances");
-    return;
-  }
-  showPicker.value = true;
 }
 
 // —— 固定快捷启动 ——
@@ -236,27 +193,8 @@ onBeforeRouteLeave(() => {
 </script>
 
 <template>
-  <div id="home-root" class="home">
+  <div id="home-root" class="home" data-tauri-drag-region>
     <OnboardingBar @launch="launchSelected" />
-    <section v-if="settingsStore.settings?.show_home_hero" class="hero glass">
-      <div class="hero-glow"></div>
-      <div class="hero-text">
-        <div class="greeting">{{ greeting }}</div>
-        <h1>{{ t("home.hero.titlePre") }} <span class="accent">{{ t("home.hero.titleHighlight") }}</span></h1>
-        <p>{{ t("home.hero.subtitle") }}</p>
-        <div class="hero-actions">
-          <button class="btn primary big" @click="router.push('/browse')">
-            <IconCompass /> {{ t("home.hero.browseContent") }}
-          </button>
-          <button class="btn ghost big" @click="accounts.showManager = true">
-            <IconUser /> {{ t("home.hero.switchAccount") }}
-          </button>
-        </div>
-      </div>
-      <div class="hero-logo">
-        <img src="/app-icon.png" class="hero-logo-img" draggable="false" alt="" />
-      </div>
-    </section>
 
     <section v-if="validPins.length" class="pin-block">
       <div class="pin-grid">
@@ -317,69 +255,7 @@ onBeforeRouteLeave(() => {
           </button>
         </div>
       </div>
-
-      <div v-else-if="selected" class="resident glass">
-        <div class="resident-icon"><AppIcon :name="selected.icon" /></div>
-        <div class="resident-info">
-          <div class="resident-name text-ellipsis">{{ selected.name }}</div>
-          <div class="resident-meta">
-            <span class="badge">{{ loaderBadge(selected.loader) }}</span>
-            <span class="ver-text">{{ selected.mc_version }}</span>
-            <span v-if="selected.loader_version" class="ver-text">· {{ selected.loader_version }}</span>
-            <span v-if="selected.last_played" class="ver-text">
-              · {{ t("home.resident.lastPlayed") }} {{ new Date(selected.last_played * 1000).toLocaleDateString() }}
-            </span>
-          </div>
-        </div>
-        <div class="resident-actions">
-          <button class="btn ghost" @click="openPicker">
-            <IconRepeat /> {{ t("home.resident.switchInstance") }}
-          </button>
-          <button class="btn primary big" :disabled="launching" @click="launchSelected">
-            <IconPlay />
-            <span>{{ launching ? t("home.resident.launching") : t("home.resident.launchGame") }}</span>
-          </button>
-        </div>
-      </div>
     </section>
-
-    <n-modal
-      :show="showPicker"
-      @update:show="(v: boolean) => (showPicker = v)"
-      @mask-click="() => (showPicker = false)"
-      preset="card"
-      :title="t('home.picker.title')"
-      style="width: 720px; max-width: 92vw"
-    >
-      <div class="pick-scroll">
-        <section v-for="s in pickerSections" :key="s.key" class="pick-section">
-          <div class="pick-group">
-            <i class="dot" :style="{ background: s.color || 'var(--text-3)' }"></i>
-            <span>{{ s.name }}</span>
-            <span class="pick-group-count">{{ s.items.length }}</span>
-          </div>
-          <div class="pick-grid">
-            <div
-              v-for="inst in s.items"
-              :key="inst.id"
-              class="pick-card"
-              :class="{ active: selected?.id === inst.id }"
-              @click="pick(inst)"
-            >
-              <div class="pick-icon"><AppIcon :name="inst.icon" /></div>
-              <div class="pick-info">
-                <div class="pick-name text-ellipsis">{{ inst.name }}</div>
-                <div class="pick-meta">
-                  <span class="badge">{{ loaderBadge(inst.loader) }}</span>
-                  <span class="ver-text">{{ inst.mc_version }}</span>
-                </div>
-              </div>
-              <div v-if="selected?.id === inst.id" class="pick-current">{{ t("home.picker.current") }}</div>
-            </div>
-          </div>
-        </section>
-      </div>
-    </n-modal>
   </div>
 </template>
 
@@ -389,57 +265,6 @@ onBeforeRouteLeave(() => {
   flex-direction: column;
   gap: 16px;
   min-height: 100%;
-}
-.hero {
-  position: relative;
-  overflow: hidden;
-  padding: 20px 24px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 16px;
-  animation: home-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) 0.24s backwards;
-}
-.hero-glow {
-  position: absolute;
-  width: 420px;
-  height: 420px;
-  right: -80px;
-  top: -180px;
-  background: radial-gradient(circle, var(--accent-25), transparent 65%);
-  pointer-events: none;
-}
-.hero-text {
-  position: relative;
-  z-index: 1;
-}
-.hero h1 {
-  font-size: 30px;
-  margin: 0 0 10px;
-  letter-spacing: 0.3px;
-  line-height: 1.1;
-}
-.hero p {
-  color: var(--text-2);
-  margin: 0 0 22px;
-  max-width: 520px;
-  line-height: 1.6;
-}
-.greeting {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--accent);
-  margin: 0;
-  line-height: 1.2;
-  letter-spacing: 0.5px;
-}
-.accent {
-  color: var(--accent);
-}
-.hero-actions {
-  display: flex;
-  gap: 12px;
-  flex-wrap: wrap;
 }
 .btn {
   display: inline-flex;
@@ -453,10 +278,6 @@ onBeforeRouteLeave(() => {
   cursor: pointer;
   transition: all 0.15s;
   font-family: inherit;
-}
-.btn.big {
-  padding: 10px 22px;
-  font-size: 14px;
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
@@ -477,20 +298,6 @@ onBeforeRouteLeave(() => {
 .btn.ghost:hover {
   background: var(--w-10);
   transform: none;
-}
-.hero-logo {
-  position: relative;
-  z-index: 1;
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.hero-logo-img {
-  width: 128px;
-  height: 128px;
-  border-radius: 24px;
-  object-fit: contain;
 }
 /* 常驻实例卡片固定在窗口底部（sticky footer）。
     #app-content 是统一滚动容器，.section 用 sticky bottom:0 贴底，
@@ -719,151 +526,5 @@ onBeforeRouteLeave(() => {
   display: flex;
   gap: 10px;
   align-items: center;
-}
-
-/* 常驻实例卡片 */
-.resident {
-  padding: 20px 24px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-}
-.resident-icon {
-  width: 64px;
-  height: 64px;
-  border-radius: 16px;
-  overflow: hidden;
-  background: linear-gradient(135deg, var(--accent-25), var(--accent-08));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 28px;
-  color: var(--accent);
-  flex-shrink: 0;
-}
-.resident-info {
-  flex: 1;
-  min-width: 0;
-}
-.resident-name {
-  font-size: 18px;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-.resident-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  flex-wrap: wrap;
-}
-.badge {
-  background: var(--accent-16);
-  color: var(--accent);
-  border-radius: 6px;
-  padding: 1px 7px;
-  font-weight: 600;
-}
-.ver-text {
-  color: var(--text-3);
-}
-.resident-actions {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  flex-shrink: 0;
-}
-
-/* 切换弹窗 */
-.pick-scroll {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  max-height: 56vh;
-  overflow-y: auto;
-  padding-right: 4px;
-}
-.pick-group {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  margin-bottom: 10px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-2);
-}
-.pick-group .dot {
-  width: 9px;
-  height: 9px;
-  border-radius: 50%;
-  flex-shrink: 0;
-}
-.pick-group-count {
-  font-size: 11px;
-  color: var(--text-3);
-}
-.pick-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
-}
-.pick-card {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 12px;
-  background: var(--w-04);
-  border: 1px solid var(--border);
-  cursor: pointer;
-  transition: border-color 0.15s, transform 0.15s, background 0.15s;
-}
-.pick-card:hover {
-  background: var(--w-07);
-}
-.pick-card.active {
-  border-color: var(--accent);
-  box-shadow: 0 0 0 1px var(--accent);
-  background: var(--accent-01);
-}
-.pick-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 11px;
-  overflow: hidden;
-  background: linear-gradient(135deg, var(--accent-25), var(--accent-08));
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 19px;
-  color: var(--accent);
-  flex-shrink: 0;
-}
-.pick-info {
-  min-width: 0;
-  flex: 1;
-}
-.pick-name {
-  font-weight: 600;
-  font-size: 14px;
-  margin-bottom: 5px;
-}
-.pick-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 12px;
-}
-.pick-current {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-radius: 6px;
-  padding: 1px 6px;
 }
 </style>

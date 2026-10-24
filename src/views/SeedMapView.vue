@@ -1579,7 +1579,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div id="seed-root" class="seed-view">
+  <div id="seed-root" class="seed-view" data-tauri-drag-region>
     <div class="glass param-bar">
       <div class="field seed-field">
         <label>{{ t("seedMap.seed") }}</label>

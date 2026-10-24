@@ -37,9 +37,12 @@ pub fn effective_ms_client_id(state: &AppState) -> Result<String, String> {
 // Offline accounts
 // ---------------------------------------------------------------------------
 
-/// Create an offline account: UUID v3 of "OfflinePlayer:<name>" (same as the
-/// official launcher / Java's `nameUUIDFromBytes` with nil namespace).
-pub fn create_offline(state: &AppState, username: &str) -> Result<Account, String> {
+/// Create an offline account.
+///
+/// `custom_uuid` 为空时按官方启动器规则生成 UUID v3 of "OfflinePlayer:<name>"
+/// （同 Java 的 `nameUUIDFromBytes` with nil namespace）；非空时校验格式后采用，
+/// 让用户可固定 UUID 以兼容特定存档/服务器白名单。
+pub fn create_offline(state: &AppState, username: &str, custom_uuid: Option<&str>) -> Result<Account, String> {
     let name = username.trim();
     if name.is_empty() {
         return Err("用户名不能为空".into());
@@ -47,9 +50,14 @@ pub fn create_offline(state: &AppState, username: &str) -> Result<Account, Strin
     if name.len() > 16 {
         return Err("用户名不能超过 16 个字符".into());
     }
-    let uuid = uuid::Uuid::new_v3(&uuid::Uuid::nil(), format!("OfflinePlayer:{name}").as_bytes());
+    let uuid = match custom_uuid.map(|s| s.trim()).filter(|s| !s.is_empty()) {
+        Some(u) => uuid::Uuid::parse_str(u)
+            .map(|p| p.to_string())
+            .map_err(|_| "自定义 UUID 格式无效，请输入合法的 UUID（含连字符或无连字符的 32 位十六进制）".to_string())?,
+        None => uuid::Uuid::new_v3(&uuid::Uuid::nil(), format!("OfflinePlayer:{name}").as_bytes()).to_string(),
+    };
     let account = Account::Offline {
-        uuid: uuid.to_string(),
+        uuid,
         username: name.to_string(),
         created: crate::util::now_secs(),
     };

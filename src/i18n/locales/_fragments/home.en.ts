@@ -1,19 +1,5 @@
 export default {
   home: {
-    greeting: {
-      morning: "Good morning",
-      noon: "Good noon",
-      afternoon: "Good afternoon",
-      evening: "Good evening",
-      night: "Late night",
-    },
-    hero: {
-      titlePre: "Start your",
-      titleHighlight: "block journey",
-      subtitle: "Pick an instance and launch your Minecraft world in one click.",
-      browseContent: "Browse",
-      switchAccount: "Switch account",
-    },
     pin: {
       typeServer: "Server",
       typeWorld: "Save",
@@ -42,8 +28,7 @@ export default {
     },
     message: {
       noInstance: "No instances yet, create one first",
-      addAccount:
-        "Please add an account (Microsoft or offline) in the bottom-left account bar first",
+      addAccount: "Please add an account (Microsoft or offline) from the title bar first",
       launched: "Launched {name}",
       quickPlayUnsupported:
         "This instance is {version}, which doesn't support quick-play to saves. The game will start and you can enter the save manually.",

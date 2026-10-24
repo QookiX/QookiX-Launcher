@@ -1,206 +1,26 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from "vue";
+import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
-import { NButton, NInput, NModal, NPopover, useMessage } from "naive-ui";
+import { NPopover, useMessage } from "naive-ui";
 import { useAccountsStore } from "../stores/accounts";
-import { loadOfflineSkin } from "../composables/useOfflineSkin";
-import { api } from "../api";
-import MsLoginDialog from "./MsLoginDialog.vue";
-import YggdrasilLoginDialog from "./YggdrasilLoginDialog.vue";
-import { IconCheck, IconChevronDown, IconTrash, IconUser, IconPlus } from "./icons";
+import { useAccountAvatars } from "../composables/useAccountAvatars";
+import { IconCheck, IconChevronDown, IconUser, IconSettings } from "./icons";
 import type { Account } from "../types";
 
-const props = defineProps<{ collapsed?: boolean }>();
+const props = defineProps<{ bar?: boolean }>();
 
 const accounts = useAccountsStore();
 const message = useMessage();
 const { t } = useI18n();
+const { avatar, onAvatarError } = useAccountAvatars();
 
 const popoverShow = ref(false);
-const showOfflineDialog = ref(false);
-const offlineName = ref("");
-const addingOffline = ref(false);
-
-const offlineAvatarCache = reactive<Record<string, string>>({});
-const onlineAvatarCache = reactive<Record<string, string>>({});
-
-const AVATAR_SOURCES: Array<(uuid: string) => string> = [
-  (u) => `https://mc-heads.net/avatar/${u}/96`,
-  (u) => `https://minotar.net/helm/${u}/96`,
-  (u) => `https://crafatar.com/avatars/${u}?size=96&overlay`,
-];
-
-function loadOnlineAvatarCache(uuid: string) {
-  const cached = localStorage.getItem(`qookix:avatar:${uuid}`);
-  if (cached) onlineAvatarCache[uuid] = cached;
-}
-
-async function refreshOnlineAvatar(uuid: string, url: string) {
-  try {
-    const dataUrl = await api.fetchImageDataURL(url);
-    if (dataUrl) {
-      onlineAvatarCache[uuid] = dataUrl;
-      localStorage.setItem(`qookix:avatar:${uuid}`, dataUrl);
-    }
-  } catch {
-    /* ignore */
-  }
-}
-
-function skinToAvatar(skinDataUrl: string): Promise<string> {
-  return new Promise((resolve) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement("canvas");
-      canvas.width = 8;
-      canvas.height = 8;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return resolve("");
-      ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(img, 8, 8, 8, 8, 0, 0, 8, 8); // 头部基础层
-      if (img.height >= 64) {
-        ctx.drawImage(img, 40, 8, 8, 8, 0, 0, 8, 8); // 头部第二层（overlay）
-      }
-      resolve(canvas.toDataURL("image/png"));
-    };
-    img.onerror = () => resolve("");
-    img.src = skinDataUrl;
-  });
-}
-
-function getOfflineAvatar(uuid: string): string {
-  return offlineAvatarCache[uuid] ?? "";
-}
-
-/** 皮肤站账号头像缓存（uuid → 裁剪后的 data URL），持久化到 localStorage */
-const yggAvatarCache = reactive<Record<string, string>>({});
-
-async function loadYggAvatar(acc: Extract<Account, { type: "yggdrasil" }>, force = false) {
-  const key = `qookix:yggavatar:${acc.uuid}`;
-  if (!force) {
-    const cached = localStorage.getItem(key);
-    if (cached) {
-      yggAvatarCache[acc.uuid] = cached;
-      return;
-    }
-  }
-  try {
-    // 皮肤站账号的 profile id 就是 uuid
-    const tex = await api.yggdrasilTextures(acc.server, acc.uuid);
-    const skin = tex?.skin || "";
-    if (skin) {
-      const avatar = await skinToAvatar(skin);
-      if (avatar) {
-        yggAvatarCache[acc.uuid] = avatar;
-        localStorage.setItem(key, avatar);
-      }
-    }
-  } catch {
-    /* 皮肤站不可达时静默，显示默认头像 */
-  }
-}
-
-watch(
-  () => accounts.accounts.map((a) => `${a.uuid}:${a.type}`).join(","),
-  async () => {
-    for (const acc of accounts.accounts) {
-      if (acc.type === "offline" && !offlineAvatarCache[acc.uuid]) {
-        const skin = await loadOfflineSkin(acc.uuid);
-        if (skin) {
-          const avatar = await skinToAvatar(skin.src);
-          if (avatar) offlineAvatarCache[acc.uuid] = avatar;
-        }
-      }
-      if (acc.type === "microsoft") {
-        if (!onlineAvatarCache[acc.uuid]) loadOnlineAvatarCache(acc.uuid);
-        refreshOnlineAvatar(acc.uuid, AVATAR_SOURCES[0](acc.uuid));
-      }
-      if (acc.type === "yggdrasil" && !yggAvatarCache[acc.uuid]) {
-        void loadYggAvatar(acc);
-      }
-    }
-  },
-  { immediate: true },
-);
-
-watch(
-  () => accounts.avatarVersion,
-  async () => {
-    const cur = accounts.current;
-    if (cur && cur.type === "offline") {
-      const skin = await loadOfflineSkin(cur.uuid);
-      if (skin) {
-        const avatar = await skinToAvatar(skin.src);
-        if (avatar) offlineAvatarCache[cur.uuid] = avatar;
-      }
-    }
-    if (cur && cur.type === "microsoft") {
-      refreshOnlineAvatar(cur.uuid, AVATAR_SOURCES[0](cur.uuid));
-    }
-    if (cur && cur.type === "yggdrasil") {
-      void loadYggAvatar(cur, true);
-    }
-  },
-);
-
-watch(
-  () => accounts.msSuccess,
-  (msg) => {
-    if (msg) {
-      message.success(msg);
-      accounts.msSuccess = "";
-      popoverShow.value = true;
-    }
-  }
-);
-
-watch(
-  () => accounts.msFailed,
-  (msg) => {
-    if (msg) {
-      message.error(msg, { duration: 8000 });
-      accounts.msFailed = "";
-    }
-  }
-);
-
-watch(
-  () => accounts.showManager,
-  (v) => {
-    if (v) popoverShow.value = true;
-  }
-);
-
-watch(popoverShow, (v) => {
-  if (!v) accounts.showManager = false;
-});
-
 const current = computed(() => accounts.current);
 
-/** Number of failed providers per account uuid (drives the fallback chain). */
-const avatarAttempt = reactive<Record<string, number>>({});
-
-function avatar(uuid: string): string {
-  const offline = getOfflineAvatar(uuid);
-  if (offline) return offline;
-  const ygg = yggAvatarCache[uuid];
-  if (ygg) return ygg;
-  // 皮肤站账号不走正版头像源（crafatar 等只认正版 UUID）
-  if (accounts.accounts.find((a) => a.uuid === uuid)?.type === "yggdrasil") return "";
-  const cached = onlineAvatarCache[uuid];
-  if (cached) return cached;
-  const i = avatarAttempt[uuid] ?? 0;
-  if (i < AVATAR_SOURCES.length) {
-    const base = AVATAR_SOURCES[i](uuid);
-    const sep = base.includes("?") ? "&" : "?";
-    return `${base}${sep}v=${accounts.avatarVersion}`;
-  }
-  return "";
-}
-
-function onAvatarError(uuid: string) {
-  const next = (avatarAttempt[uuid] ?? 0) + 1;
-  if (next <= AVATAR_SOURCES.length) avatarAttempt[uuid] = next;
+/** 点击芯片：打开账号管理抽屉（完整增删），并收起悬停 Popover。 */
+function openDrawer() {
+  popoverShow.value = false;
+  accounts.showManager = true;
 }
 
 async function select(acc: Account) {
@@ -209,79 +29,29 @@ async function select(acc: Account) {
   popoverShow.value = false;
 }
 
-function openOfflineDialog() {
-  offlineName.value = "";
-  showOfflineDialog.value = true;
-}
-
-async function addOffline() {
-  const name = offlineName.value.trim();
-  if (!name) {
-    message.warning(t("accountChip.pleaseEnterUsername"));
-    return;
-  }
-  addingOffline.value = true;
-  try {
-    await accounts.addOffline(name);
-    showOfflineDialog.value = false;
-    message.success(t("accountChip.offlineAccountAdded"));
-  } catch (e) {
-    message.error(String(e));
-  } finally {
-    addingOffline.value = false;
-  }
-}
-
-async function startMs() {
-  popoverShow.value = false;
-  try {
-    await accounts.startMs();
-    if (accounts.msError) {
-      message.error(accounts.msError);
-      accounts.msError = "";
-    }
-  } catch (e) {
-    message.error(String(e));
-  }
-}
-
-function remove(acc: Account) {
-  accounts
-    .remove(acc.uuid)
-    .then(() => message.success(t("accountChip.accountRemoved")))
-    .catch((e) => message.error(String(e)));
-}
-
 function typeLabel(a: Account) {
   if (a.type === "microsoft") return t("accountChip.typeMicrosoft");
   if (a.type === "yggdrasil") return a.server_name || t("accountChip.typeYggdrasil");
   return t("accountChip.typeOffline");
 }
-
-// ---- 皮肤站账号 ----
-const yggDialog = ref<InstanceType<typeof YggdrasilLoginDialog> | null>(null);
-function openYggDialog() {
-  popoverShow.value = false;
-  yggDialog.value?.open();
-}
-function onYggAdded(acc: Account) {
-  void accounts.refresh();
-  void accounts.select(acc.uuid);
-  message.success(t("accountChip.yggAccountAdded", { username: acc.username }));
-}
-  </script>
+</script>
 
 <template>
   <n-popover
     v-model:show="popoverShow"
-    trigger="click"
-    placement="top-start"
-    :width="320"
+    trigger="hover"
+    :placement="props.bar ? 'bottom-start' : 'top-start'"
+    :width="300"
     :show-arrow="false"
-    class="acctm-popover"
+    class="acctp-popover"
   >
     <template #trigger>
-      <div id="account-chip" class="acct-chip clickable" :class="{ empty: !accounts.accounts.length, collapsed: props.collapsed }">
+      <div
+        id="account-chip"
+        class="acct-chip clickable"
+        :class="{ empty: !accounts.accounts.length, bar: props.bar }"
+        @click="openDrawer"
+      >
         <div class="avatar">
           <template v-if="current">
             <img v-if="avatar(current.uuid)" :src="avatar(current.uuid)" alt="" @error="onAvatarError(current.uuid)" />
@@ -289,100 +59,64 @@ function onYggAdded(acc: Account) {
           </template>
           <IconUser v-else />
         </div>
-        <template v-if="!props.collapsed">
-          <div class="acct-info">
-            <div class="acct-name text-ellipsis">{{ current?.username ?? t("accountChip.notLoggedIn") }}</div>
-            <div class="acct-type">
-              {{
-                current
-                  ? current.type === "microsoft"
-                    ? t("accountChip.microsoftAccount")
-                    : current.type === "yggdrasil"
-                      ? current.server_name
-                      : t("accountChip.offlineAccount")
-                  : t("accountChip.clickToAddAccount")
-              }}
-            </div>
+        <div class="acct-info">
+          <div class="acct-name text-ellipsis">{{ current?.username ?? t("accountChip.notLoggedIn") }}</div>
+          <div class="acct-type">
+            {{
+              current
+                ? current.type === "microsoft"
+                  ? t("accountChip.microsoftAccount")
+                  : current.type === "yggdrasil"
+                    ? current.server_name
+                    : t("accountChip.offlineAccount")
+                : t("accountChip.clickToAddAccount")
+            }}
           </div>
-          <IconChevronDown v-if="accounts.accounts.length" class="chev" />
-          <IconUser v-else class="chev" />
-        </template>
+        </div>
+        <IconChevronDown v-if="accounts.accounts.length" class="chev" />
+        <IconUser v-else class="chev" />
       </div>
     </template>
 
-    <div class="acctm-body">
-      <div class="acctm-title">{{ t("accountChip.currentPlayingLabel") }}</div>
+    <div class="acctp-body">
+      <div class="acctp-title">{{ t("accountChip.currentPlayingLabel") }}</div>
 
-      <div v-if="!accounts.accounts.length" class="acctm-empty">{{ t("accountChip.noAccount") }}</div>
-      <div v-else class="acctm-list">
+      <div v-if="!accounts.accounts.length" class="acctp-empty">{{ t("accountChip.noAccount") }}</div>
+      <div v-else class="acctp-list">
         <div
           v-for="acc in accounts.accounts"
           :key="acc.uuid"
-          class="acctm-row"
+          class="acctp-row"
           :class="{ active: current?.uuid === acc.uuid }"
           @click="select(acc)"
         >
-          <img v-if="avatar(acc.uuid)" :src="avatar(acc.uuid)" class="acctm-avatar" alt="" @error="onAvatarError(acc.uuid)" />
-          <IconUser v-else class="acctm-avatar acctm-avatar-fallback" />
-          <div class="acctm-info">
-            <div class="acctm-name text-ellipsis">{{ acc.username }}</div>
-            <span class="acctm-type" :class="acc.type">{{ typeLabel(acc) }}</span>
+          <img
+            v-if="avatar(acc.uuid)"
+            :src="avatar(acc.uuid)"
+            class="acctp-avatar"
+            alt=""
+            @error="onAvatarError(acc.uuid)"
+          />
+          <IconUser v-else class="acctp-avatar acctp-avatar-fallback" />
+          <div class="acctp-info">
+            <div class="acctp-name text-ellipsis">{{ acc.username }}</div>
+            <span class="acctp-type" :class="acc.type">{{ typeLabel(acc) }}</span>
           </div>
-          <IconCheck v-if="current?.uuid === acc.uuid" class="acctm-check" />
-          <button class="acctm-remove" :title="t('accountChip.removeAccount')" @click.stop="remove(acc)">
-            <IconTrash />
-          </button>
+          <IconCheck v-if="current?.uuid === acc.uuid" class="acctp-check" />
         </div>
       </div>
 
-      <div class="acctm-divider"></div>
+      <div class="acctp-divider"></div>
 
-      <div class="acctm-add">
-        <button class="acctm-btn ms" @click="startMs">
-          <IconPlus /> {{ t("accountChip.addMicrosoftAccount") }}
-        </button>
-        <button class="acctm-btn" @click="openYggDialog">
-          <IconPlus /> {{ t("accountChip.addYggAccount") }}
-        </button>
-        <button class="acctm-btn" @click="openOfflineDialog">
-          <IconPlus /> {{ t("accountChip.addOfflineAccount") }}
-        </button>
-      </div>
+      <button class="acctp-manage-btn" @click="openDrawer">
+        <IconSettings /> {{ t("accountChip.manageAccounts") }}
+      </button>
     </div>
   </n-popover>
-
-  <YggdrasilLoginDialog ref="yggDialog" @added="onYggAdded" />
-
-  <!-- offline account name dialog -->
-  <n-modal
-    v-model:show="showOfflineDialog"
-    preset="card"
-    :title="t('accountChip.addOfflineAccountTitle')"
-    style="width: 380px; max-width: 90vw"
-  >
-    <div class="acctm-offline-box">
-      <n-input
-        v-model:value="offlineName"
-        :placeholder="t('accountChip.offlineNamePlaceholder')"
-        :maxlength="16"
-        clearable
-        @keyup.enter="addOffline"
-      />
-      <p class="acctm-offline-hint">{{ t("accountChip.offlineHint") }}</p>
-    </div>
-    <template #footer>
-      <div class="acctm-offline-footer">
-        <n-button @click="showOfflineDialog = false">{{ t("accountChip.cancel") }}</n-button>
-        <n-button type="primary" :loading="addingOffline" @click="addOffline">{{ t("accountChip.add") }}</n-button>
-      </div>
-    </template>
-  </n-modal>
-
-  <MsLoginDialog />
 </template>
 
 <style scoped>
-/* chip (rendered in place, scoped styles are fine) */
+/* chip（原位渲染，scoped 生效） */
 .acct-chip {
   display: flex;
   align-items: center;
@@ -397,14 +131,28 @@ function onYggAdded(acc: Account) {
 .acct-chip.empty {
   opacity: 0.85;
 }
-.acct-chip.collapsed {
-  justify-content: center;
-  padding: 0;
+/* 标题栏变体：小头像按钮，无边框无背景，与标题栏圆形按钮组同高对齐 */
+.acct-chip.bar {
+  height: 30px;
+  padding: 0 8px;
+  gap: 7px;
+  background: transparent;
+  border: none;
+  border-radius: 999px;
 }
-.acct-chip.collapsed .avatar {
-  width: 48px;
-  height: 48px;
-  border-radius: 11px;
+.acct-chip.bar .avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+}
+.acct-chip.bar .acct-name {
+  font-size: 12px;
+}
+.acct-chip.bar .acct-type {
+  display: none;
+}
+.acct-chip.bar:hover {
+  background: var(--panel-hover);
 }
 .avatar {
   width: 34px;
@@ -418,7 +166,6 @@ function onYggAdded(acc: Account) {
   color: var(--text-3);
   font-size: 17px;
   flex-shrink: 0;
-  transition: width 0.2s ease, height 0.2s ease;
 }
 .avatar img {
   width: 100%;
@@ -451,127 +198,107 @@ function onYggAdded(acc: Account) {
 }
 </style>
 
-<!-- Global styles: popover + modal content is teleported to <body> by naive-ui,
-     so scoped styles do not reliably apply there. -->
+<!-- Popover 内容被 naive-ui teleport 到 <body>，scoped 不可靠，故用全局类名 acctp-* -->
 <style>
-.acctm-popover {
-  padding: 14px;
+.acctp-popover {
+  padding: 12px;
 }
-.acctm-body {
+.acctp-body {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
-.acctm-title {
+.acctp-title {
   font-size: 12px;
   font-weight: 700;
-  color: #8b8e9c;
+  color: var(--text-3);
   letter-spacing: 0.5px;
 }
-.acctm-empty {
+.acctp-empty {
   font-size: 12px;
-  color: #8b8e9c;
-  padding: 8px 0;
+  color: var(--text-3);
+  padding: 6px 0;
 }
-.acctm-list {
+.acctp-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  max-height: 220px;
+  gap: 3px;
+  max-height: 240px;
   overflow-y: auto;
 }
-.acctm-row {
+.acctp-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 9px;
+  gap: 9px;
+  padding: 6px 8px;
   border-radius: 9px;
   cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.12s;
 }
-.acctm-row:hover {
+.acctp-row:hover {
   background: var(--w-06);
 }
-.acctm-row.active {
+.acctp-row.active {
   background: var(--accent-14);
   border-color: var(--accent-35);
 }
-.acctm-avatar {
-  width: 30px;
-  height: 30px;
+.acctp-avatar {
+  width: 28px;
+  height: 28px;
   border-radius: 8px;
   image-rendering: pixelated;
   background: var(--w-06);
   flex-shrink: 0;
 }
-.acctm-avatar-fallback {
+.acctp-avatar-fallback {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #8b8e9c;
+  color: var(--text-3);
   font-size: 14px;
 }
-.acctm-info {
+.acctp-info {
   flex: 1;
   min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
 }
-.acctm-name {
+.acctp-name {
   font-size: 13px;
   font-weight: 600;
-  color: #f2f3f7;
+  color: var(--text-1);
 }
-.acctm-type {
+.acctp-type {
   font-size: 10px;
-  padding: 1px 7px;
+  padding: 1px 6px;
   border-radius: 6px;
   font-weight: 600;
+  align-self: flex-start;
 }
-.acctm-type.microsoft {
+.acctp-type.microsoft {
   background: var(--info-15);
   color: #7cb8f5;
 }
-.acctm-type.offline {
-  background: var(--w-08);
-  color: #c6c8d2;
+.acctp-type.yggdrasil {
+  background: var(--success-12);
+  color: #4ec9a0;
 }
-.acctm-check {
-  color: #e89a4b;
+.acctp-type.offline {
+  background: var(--w-08);
+  color: var(--text-2);
+}
+.acctp-check {
+  color: var(--accent);
   font-size: 14px;
   flex-shrink: 0;
 }
-.acctm-remove {
-  width: 26px;
-  height: 26px;
-  border: none;
-  background: transparent;
-  color: #8b8e9c;
-  border-radius: 7px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 12px;
-  opacity: 0;
-  transition: all 0.12s;
-}
-.acctm-row:hover .acctm-remove {
-  opacity: 1;
-}
-.acctm-remove:hover {
-  color: var(--danger);
-  background: var(--danger-12);
-}
-.acctm-divider {
+.acctp-divider {
   border-top: 1px solid var(--w-08);
   margin: 2px 0;
 }
-.acctm-add {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.acctm-btn {
+.acctp-manage-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -579,40 +306,17 @@ function onYggAdded(acc: Account) {
   width: 100%;
   border: 1px solid var(--w-08);
   background: var(--w-05);
-  color: #f2f3f7;
+  color: var(--text-1);
   border-radius: 9px;
-  padding: 9px 12px;
-  font-size: 13px;
+  padding: 8px 12px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
   white-space: nowrap;
   transition: all 0.12s;
 }
-.acctm-btn:hover {
+.acctp-manage-btn:hover {
   background: var(--w-10);
-}
-.acctm-btn.ms {
-  background: var(--accent-14);
-  border-color: var(--accent-45);
-  color: #e89a4b;
-}
-.acctm-btn.ms:hover {
-  background: var(--accent-22);
-}
-.acctm-offline-box {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.acctm-offline-hint {
-  margin: 0;
-  font-size: 12px;
-  color: #8b8e9c;
-}
-.acctm-offline-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
 }
 </style>

@@ -626,7 +626,7 @@ function paidDetailLabel(p: ShimuPost): string {
 </script>
 
 <template>
-  <div class="shimu-view">
+  <div class="shimu-view" data-tauri-drag-region>
     <!-- 参数栏 + 账号区 + 板块筛选（同一张卡，板块行只在列表态显示） -->
     <div class="glass param-bar">
       <div class="param-row">

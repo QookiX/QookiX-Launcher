@@ -55,7 +55,7 @@ function cardDelay(i: number): string {
 </script>
 
 <template>
-  <div id="toolbox-root" class="toolbox-view">
+  <div id="toolbox-root" class="toolbox-view" data-tauri-drag-region>
     <div class="grid">
       <section
         v-for="(tool, i) in tools"

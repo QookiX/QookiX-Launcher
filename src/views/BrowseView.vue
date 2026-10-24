@@ -523,7 +523,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div id="browse-root" class="browse">
+  <div id="browse-root" class="browse" data-tauri-drag-region>
     <div ref="typeBox" class="type-card glass">
       <div class="indicator" :style="typeIndicatorStyle"></div>
       <button

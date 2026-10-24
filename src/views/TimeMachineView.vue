@@ -23,6 +23,7 @@ import {
   IconChevronLeft,
   IconChevronRight,
   IconClose,
+  IconFolder,
   IconGithub,
   IconPlay,
   IconRefresh,
@@ -781,6 +782,17 @@ async function openShot(s: TimelineShot) {
   lbId.value = s.id;
 }
 
+/** 在系统文件管理器中定位当前截图（仅本地存在的条目） */
+async function revealShotLocation() {
+  const s = lbItem.value;
+  if (!s?.localPath) return;
+  try {
+    await api.revealPath(s.localPath);
+  } catch (e) {
+    message.error(String(e));
+  }
+}
+
 /** 删除一张记忆点（本地文件 + 已上传的云端副本），删前二次确认 */
 function removeShot(s: TimelineShot) {
   dialog.warning({
@@ -1047,7 +1059,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div id="timemachine-root" class="timemachine-view">
+  <div id="timemachine-root" class="timemachine-view" data-tauri-drag-region>
     <!-- 顶部工具栏：视图切换 + 快捷操作 + 控制台 -->
     <div class="toolbar">
       <button
@@ -1497,8 +1509,18 @@ onBeforeUnmount(() => {
           <p v-else class="lbs-nolog">{{ t("timemachine.noLog") }}</p>
         </aside>
         <div class="lb-foot">
-          <span>{{ t("timemachine.lbCounter", { i: lbIndex + 1, n: lbTotal }) }}</span>
-          <span>{{ t("timemachine.lbHint") }}</span>
+          <button
+            v-if="lbItem?.localPath"
+            class="lb-locate"
+            :title="t('timemachine.revealInFileManager')"
+            @click="revealShotLocation"
+          >
+            <IconFolder /> {{ t("timemachine.revealInFileManager") }}
+          </button>
+          <div class="lb-foot-meta">
+            <span>{{ t("timemachine.lbCounter", { i: lbIndex + 1, n: lbTotal }) }}</span>
+            <span>{{ t("timemachine.lbHint") }}</span>
+          </div>
         </div>
       </div>
     </transition>
@@ -2466,6 +2488,30 @@ onBeforeUnmount(() => {
   padding: 0 24px;
   font-size: 11.5px;
   color: #9a9daa;
+}
+.lb-locate {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.06);
+  color: #d8dae2;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.12s;
+}
+.lb-locate:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+.lb-foot-meta {
+  display: flex;
+  align-items: center;
+  gap: 16px;
 }
 
 /* ---------------- 添加规则弹窗 ---------------- */

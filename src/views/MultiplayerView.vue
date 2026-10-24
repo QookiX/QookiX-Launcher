@@ -458,7 +458,7 @@ onUnmounted(() => stopTcPoll());
 </script>
 
 <template>
-  <div id="mp-root" class="mp-view">
+  <div id="mp-root" class="mp-view" data-tauri-drag-region>
     <div id="mp-tabs" ref="tabSegRef" class="mode-tabs glass">
       <div class="indicator" :style="tabSegStyle"></div>
       <button :class="{ active: tab === 'servers' }" @click="tab = 'servers'">

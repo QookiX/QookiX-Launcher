@@ -194,18 +194,39 @@ body,
     linear-gradient(180deg, var(--bg-0), var(--bg-1) 55%, var(--bg-2));
   color: var(--text-1);
 }
+/* —— 背景层 ::before：无背景图时是装饰纹理（仅首页），有图时是图片（所有页面）——
+   无图纹理（双层叠加）：
+   1. 点阵网格——26px 间距的 1px 细点，工程蓝图的秩序感颗粒；
+   2. 斜向光带——从右上划下一道极淡主题色渐变，打破点阵的均匀。
+   深浅色分别用白/黑点适配底色。其他页面无图时 ::before 留空，只剩底色渐变。 */
 .app-bg::before {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+.app-bg.show-texture::before {
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.4px),
+    linear-gradient(115deg, transparent 60%, var(--accent-04) 82%, transparent 96%);
+  background-size:
+    26px 26px,
+    100% 100%;
+}
+:root.light .app-bg.show-texture::before {
+  background-image:
+    radial-gradient(rgba(0, 0, 0, 0.045) 1px, transparent 1.4px),
+    linear-gradient(115deg, transparent 60%, var(--accent-06) 82%, transparent 96%);
+}
+/* 有背景图：::before 变成图片层（纹理让位） */
+:root.has-bg .app-bg::before {
   background-image: var(--bg-image, none);
   background-size: cover;
   background-position: center;
   background-repeat: no-repeat;
   filter: blur(var(--bg-blur, 0px));
   transform: scale(1.08);
-  z-index: 0;
-  pointer-events: none;
 }
 .app-bg::after {
   content: "";

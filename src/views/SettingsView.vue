@@ -933,7 +933,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div v-if="settings.settings" class="settings-view">
+  <div v-if="settings.settings" class="settings-view" data-tauri-drag-region>
     <div class="settings-side">
       <div class="nav-search-card glass">
         <IconSearch class="nav-search-icon" />
@@ -1137,21 +1137,6 @@ onUnmounted(() => {
         </div>
         <div class="card glass" id="appearance-interface">
           <h3>{{ t("settings.appearance.interface") }}</h3>
-          <div class="choice-row">
-            <div class="choice-info">
-              <span class="choice-label">{{ t("settings.appearance.homeHero") }}</span>
-              <p class="choice-hint">{{ t("settings.appearance.homeHeroHint") }}</p>
-            </div>
-            <button
-              class="toggle"
-              :class="{ on: settings.settings.show_home_hero }"
-              role="switch"
-              :aria-checked="settings.settings.show_home_hero"
-              @click="settings.patch({ show_home_hero: !settings.settings.show_home_hero })"
-            >
-              <span class="knob"></span>
-            </button>
-          </div>
           <div class="choice-row">
             <div class="choice-info">
               <span class="choice-label">{{ t("settings.appearance.sidebarNews") }}</span>

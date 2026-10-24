@@ -371,7 +371,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="schematic-view">
+  <div class="schematic-view" data-tauri-drag-region>
     <!-- 参数栏 -->
     <div class="glass param-bar">
       <button class="mini-btn primary" @click="pickAndOpen" :disabled="loading">

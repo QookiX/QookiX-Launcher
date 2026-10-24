@@ -106,6 +106,7 @@ export default {
   lbNext: "下一张",
   lbHint: "← → 翻页 · Esc 关闭",
   lbCounter: "{i} / {n}",
+  revealInFileManager: "在文件管理器中显示",
   newShot: "新",
   emptyTitle: "这里还没有数据，去启动游戏罢",
   step1: "启动一次游戏",

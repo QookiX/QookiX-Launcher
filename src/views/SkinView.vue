@@ -6,7 +6,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { fmtSize as formatSize } from "../utils/format";
 import { useSkinRenderer, type AnimationKind } from "../composables/useSkinRenderer";
-import { loadOfflineSkin, saveOfflineSkinCache } from "../composables/useOfflineSkin";
+import { loadOfflineSkin } from "../composables/useOfflineSkin";
 import { useAccountsStore } from "../stores/accounts";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import SkinThumb from "../components/SkinThumb.vue";
@@ -20,6 +20,7 @@ import {
   IconCheck,
   IconShield,
   IconClose,
+  IconUploadCloud,
 } from "../components/icons";
 
 const { t } = useI18n();
@@ -58,9 +59,19 @@ const currentKind = ref<"none" | "local" | "official">("none");
 const canSaveCurrent = computed(() => currentSrc.value && currentKind.value !== "local");
 
 const applying = ref(false);
+/** 「上传并应用」的二次确认弹窗（仅正版账号） */
+const confirmUploadShow = ref(false);
 const skinVariant = ref<"classic" | "slim">("classic");
 const currentAccount = computed(() => accounts.current);
 const isCurrentMs = computed(() => currentAccount.value?.type === "microsoft");
+/** 正版账号的「应用」实际是把皮肤上传到 Mojang，按钮文案/图标都换成上传语义 */
+const applyBtnLabel = computed(() => {
+  if (isCurrentMs.value) return applying.value ? t("skin.uploading") : t("skin.uploadAndApply");
+  return applying.value ? t("skin.applying") : t("skin.apply");
+});
+const skinVariantLabel = computed(() =>
+  skinVariant.value === "slim" ? t("skin.modelSlim") : t("skin.modelClassic"),
+);
 
 const animSegRef = ref<HTMLElement | null>(null);
 const modelSegRef = ref<HTMLElement | null>(null);
@@ -193,7 +204,11 @@ function readMsSkinCache(uuid: string): MsSkinCache | null {
   }
 }
 function writeMsSkinCache(uuid: string, c: MsSkinCache) {
-  localStorage.setItem(msSkinCacheKey(uuid), JSON.stringify({ ...c, ts: Date.now() }));
+  try {
+    localStorage.setItem(msSkinCacheKey(uuid), JSON.stringify({ ...c, ts: Date.now() }));
+  } catch {
+    /* localStorage 配额超限或不可用：静默降级，下次重新从 Mojang 拉取 */
+  }
 }
 
 /** 用一份 Microsoft 皮肤数据渲染预览 + 披风列表（缓存命中与网络拉取共用） */
@@ -364,6 +379,27 @@ function resetCapeList() {
   renderer.loadCape(null);
 }
 
+/**
+ * 「应用」按钮入口。正版账号会真的把皮肤 + 披风上传到 Mojang，覆盖该账号现有的
+ * 外观且本地无法撤回，所以先弹二次确认；离线账号只是写本地资源包，直接应用。
+ */
+function requestApplySkin() {
+  if (!currentSrc.value) {
+    message.warning(t("skin.warnSelectSkin"));
+    return;
+  }
+  if (isCurrentMs.value) {
+    confirmUploadShow.value = true;
+    return;
+  }
+  void applySkin();
+}
+
+async function confirmUploadApply() {
+  confirmUploadShow.value = false;
+  await applySkin();
+}
+
 async function applySkin() {
   if (!currentSrc.value) {
     message.warning(t("skin.warnSelectSkin"));
@@ -384,10 +420,6 @@ async function applySkin() {
       lastAppliedSrc.value = currentSrc.value;
       // 应用时同样记住手动选择，切页面回来不会被缓存的 variant 覆盖
       writeVariantOverride(skinVariant.value);
-      saveOfflineSkinCache(currentAccount.value!.uuid, {
-        src: currentSrc.value,
-        variant: skinVariant.value,
-      });
       accounts.bumpAvatar();
       offlineHintShow.value = true;
       message.success(t("skin.savedAutoApply"));
@@ -409,7 +441,6 @@ async function applySkin() {
       message.warning(t("skin.capeApplyFailed", { err: String(e) }));
     }
     lastAppliedSrc.value = currentSrc.value;
-    localStorage.setItem(`qookix:offline_variant:${uuid}`, skinVariant.value);
     accounts.bumpAvatar();
     message.success(t("skin.appliedTo", { name: currentAccount.value!.username }));
   } catch (e) {
@@ -625,7 +656,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div id="skin-root" class="skin-view">
+  <div id="skin-root" class="skin-view" data-tauri-drag-region>
     <div class="skin-body">
       <section id="skin-preview" class="preview-pane glass">
         <div class="preview-stage">
@@ -688,9 +719,11 @@ onMounted(async () => {
           <button
             class="mini-btn primary apply-btn"
             :disabled="!currentSrc || applying || !currentAccount"
-            @click="applySkin"
+            @click="requestApplySkin"
           >
-            <IconCheck /> {{ applying ? t("skin.applying") : t("skin.apply") }}
+            <IconUploadCloud v-if="isCurrentMs" />
+            <IconCheck v-else />
+            {{ applyBtnLabel }}
           </button>
         </div>
       </section>
@@ -799,6 +832,27 @@ onMounted(async () => {
       </div>
     </n-modal>
 
+    <!-- 正版账号「上传并应用」的二次确认：这一步会把皮肤真实传上 Mojang，且不可撤回 -->
+    <n-modal v-model:show="confirmUploadShow" preset="card" :title="t('skin.confirmUploadTitle')" style="max-width: 440px;">
+      <div class="modal-body">
+        <p class="confirm-text">
+          {{
+            t("skin.confirmUploadBody", {
+              name: currentAccount?.username ?? "",
+              model: skinVariantLabel,
+            })
+          }}
+        </p>
+        <p class="confirm-hint">{{ t("skin.confirmUploadHint") }}</p>
+        <div class="modal-actions">
+          <n-button @click="confirmUploadShow = false">{{ t("common.cancel") }}</n-button>
+          <n-button type="primary" :loading="applying" @click="confirmUploadApply">
+            {{ t("skin.confirmUploadOk") }}
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
+
     <n-modal v-model:show="offlineHintShow" preset="card" :title="t('skin.offlineApplyTitle')" style="max-width: 420px;">
       <div class="modal-body">
         <p class="offline-hint-text">{{ t("skin.offlineHint") }}</p>
@@ -862,9 +916,15 @@ onMounted(async () => {
 
 <style scoped>
 .skin-view {
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* 底部 Dock 导航是悬浮岛（60px 高 + 距窗口底 10px），内容区只给它预留了 80px，
+     算下来卡片底边只剩 10px 缝隙，看起来就是「贴着导航栏」。皮肤页这两栏是整页
+     高度的卡片，底边永远落在那个位置，所以这里再补一段，让底部间距与页面顶部
+     （22px）保持一致。 */
+  padding-bottom: 12px;
 }
 
 /* 预览区固定、皮肤画廊自适应列数；超宽屏下预览区再放宽一些 */
@@ -872,7 +932,8 @@ onMounted(async () => {
   display: grid;
   grid-template-columns: 360px 1fr;
   gap: 16px;
-  min-height: 540px;
+  flex: 1;
+  min-height: 0;
 }
 @media (min-width: 1600px) {
   .skin-body {
@@ -884,11 +945,15 @@ onMounted(async () => {
   flex-direction: column;
   padding: 16px;
   gap: 14px;
+  min-height: 0;
+  /* 窗口较矮时面板内部滚动：预览区 min-height + 下面几行固定控件的高度是硬下限，
+     装不下时内容会溢出面板、压到下方 Dock 上（也就是「卡片贴住导航栏」）。 */
+  overflow-y: auto;
 }
 .preview-stage {
   position: relative;
   flex: 1;
-  min-height: 320px;
+  min-height: 240px;
   border-radius: 12px;
   background:
     radial-gradient(ellipse at center, var(--accent-08), transparent 70%),
@@ -1191,7 +1256,7 @@ onMounted(async () => {
 }
 .tabs-pane {
   padding: 16px 18px;
-  min-height: 540px;
+  min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1206,7 +1271,12 @@ onMounted(async () => {
 }
 .tab-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  /* 两个 tab(已保存/官方)内容高度不同:官方皮肤 9 张会触发纵向滚动条,而已保存
+     通常不会。overflow-y:auto 下滚动条时有时无,会吃掉 8px 宽度,导致 auto-fill
+     网格在切 tab 时列数跳变(5→4)。常驻槽位让两个 tab 可用宽度始终一致。 */
+  scrollbar-gutter: stable;
 }
 .tab-toolbar {
   display: flex;
@@ -1228,7 +1298,9 @@ onMounted(async () => {
 }
 .skin-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(108px, 1fr));
+  /* minmax 从 108px 降到 104px:5 列阈值由 604px 降到 584px,给上方
+     scrollbar-gutter: stable 预留的 8px 留出余量,切 tab 时不再从 5 列塌成 4 列。 */
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
   gap: 16px;
 }
 .skin-card {
@@ -1355,5 +1427,21 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-2);
+}
+.confirm-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-1);
+}
+.confirm-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-3);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--w-04);
+  border: 1px solid var(--border);
 }
 </style>
