@@ -792,11 +792,11 @@ defineExpose({
 }
 .src.modrinth {
   background: var(--info-15);
-  color: #7cb8f5;
+  color: var(--text-2);
 }
 .src.curseforge {
   background: rgba(240, 101, 67, 0.15);
-  color: #f08a67;
+  color: var(--text-2);
 }
 .src.manual {
   background: var(--w-08);
@@ -804,7 +804,7 @@ defineExpose({
 }
 .src.modpack {
   background: rgba(150, 181, 225, 0.18);
-  color: #96b5e1;
+  color: var(--text-2);
 }
 .ver {
   color: var(--text-3);

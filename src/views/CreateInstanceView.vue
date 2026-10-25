@@ -1169,6 +1169,6 @@ onUnmounted(() => {
   margin-top: 4px;
 }
 .detected-hint.warn {
-  color: #e0a85a;
+  color: var(--warn);
 }
 </style>

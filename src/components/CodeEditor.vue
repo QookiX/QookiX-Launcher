@@ -266,6 +266,20 @@ onMounted(() => {
   user-select: text;
   -webkit-user-select: text;
 }
+/* 代码编辑器恒为深色（语法高亮色 #9cdcfe 等是 VS Code Dark 色板，深色底才可读）。
+   浅色主题下 --k-22 叠浅色页面成浅灰、浅色语法色不可读；这里强制深色底并把
+   --text-1/2/3、--border、--panel 反转为深色编辑器语义，让 gutter、状态栏、语法色都正确。
+   注意：不能用 :global(.light) .ed —— Vue scoped CSS 编译器会丢弃 .ed，使规则变成全局
+   .light 选择器，导致 --panel 等暗色变量泄漏到 .app.app-bg.light 及其所有后代。 */
+html.light .ed {
+  background: #16181f;
+  --text-1: #e8eaf2;
+  --text-2: #c6c8d2;
+  --text-3: #8b8e9c;
+  --border: rgba(255, 255, 255, 0.08);
+  --panel: rgba(34, 37, 48, 0.6);
+  --accent: #e89a4b;
+}
 
 .ed-gutter {
   width: 56px;

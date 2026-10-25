@@ -417,7 +417,8 @@ watch(
 </script>
 
 <template>
-  <div v-if="instance" class="detail" data-tauri-drag-region>
+  <div class="detail-page" data-tauri-drag-region>
+  <div v-if="instance" class="detail">
     <div class="d-head glass">
       <div class="d-icon"><AppIcon :name="instance.icon" /></div>
       <div class="d-info">
@@ -671,9 +672,13 @@ watch(
     </Teleport>
   </div>
   <div v-else class="center">{{ t("instanceDetail.notFound") }}</div>
+  </div>
 </template>
 
 <style scoped>
+.detail-page {
+  min-height: 100%;
+}
 .detail {
   display: flex;
   flex-direction: column;
@@ -695,7 +700,7 @@ watch(
   margin-left: 8px;
   border-radius: 7px;
   vertical-align: middle;
-  color: #e8a33d;
+  color: var(--warn);
   background: rgba(232, 163, 61, 0.14);
   border: 1px solid rgba(232, 163, 61, 0.35);
   cursor: help;
@@ -712,7 +717,7 @@ watch(
   display: block;
   margin-bottom: 6px;
   font-size: 12px;
-  color: #e8a33d;
+  color: var(--warn);
 }
 .symlink-tip p {
   margin: 0;
@@ -968,6 +973,11 @@ watch(
 .shot-card {
   overflow: hidden;
   padding: 0;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.shot-card:hover:not(:active) {
+  box-shadow: var(--card-shadow-hover);
 }
 .shot-img {
   width: 100%;

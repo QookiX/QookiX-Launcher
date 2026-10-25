@@ -271,11 +271,11 @@ watch(
 }
 .acct-type.microsoft {
   background: var(--info-15);
-  color: #7cb8f5;
+  color: var(--text-2);
 }
 .acct-type.yggdrasil {
   background: var(--success-12);
-  color: #4ec9a0;
+  color: var(--success);
 }
 .acct-type.offline {
   background: var(--w-08);

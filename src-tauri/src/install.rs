@@ -572,12 +572,15 @@ fn libraries_path(state: &AppState, name: &str, classifier: Option<&str>) -> Pat
     if let Some(rel) = crate::models::maven_to_path(name) {
         let mut p = rel;
         if let Some(c) = classifier {
-            // replace `-version.jar` with `-version-classifier.jar`
-            let stem = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
-            let ext = p.extension().unwrap_or_default().to_string_lossy().to_string();
-            if let Some(dash) = stem.rfind('-') {
-                let base = &stem[..dash];
-                p.set_file_name(format!("{base}-{c}.{ext}"));
+            // classifier 拼进文件名，拒绝含路径分隔符的值，防穿越；合法值行为不变
+            if !c.contains('/') && !c.contains('\\') {
+                // replace `-version.jar` with `-version-classifier.jar`
+                let stem = p.file_stem().unwrap_or_default().to_string_lossy().to_string();
+                let ext = p.extension().unwrap_or_default().to_string_lossy().to_string();
+                if let Some(dash) = stem.rfind('-') {
+                    let base = &stem[..dash];
+                    p.set_file_name(format!("{base}-{c}.{ext}"));
+                }
             }
         }
         crate::paths::libraries_dir(state).join(p)
@@ -980,10 +983,18 @@ async fn run_forge_processors(
             }
         }
         let mut cmd_args: Vec<String> = match &main_class {
-            Some(cls) => vec!["-cp".into(), cp.join(";"), cls.clone()],
+            Some(cls) => vec![
+                "-cp".into(),
+                cp.join(if cfg!(windows) { ";" } else { ":" }),
+                cls.clone(),
+            ],
             None => {
                 let mc = read_jar_main_class(&main_jar_path)?;
-                vec!["-cp".into(), cp.join(";"), mc]
+                vec![
+                    "-cp".into(),
+                    cp.join(if cfg!(windows) { ";" } else { ":" }),
+                    mc,
+                ]
             }
         };
         if let Some(args) = proc_entry.get("args").and_then(|v| v.as_array()) {
@@ -1040,6 +1051,10 @@ fn maven_artifact_path(coord: &str) -> Option<PathBuf> {
         Some((c, e)) => (c, e),
         None => (coord, "jar"),
     };
+    // ext 会拼进文件名（{stem}.{ext}），拒绝含路径分隔符的扩展名，防穿越
+    if ext.contains('/') || ext.contains('\\') {
+        return None;
+    }
     let mut p = crate::models::maven_to_path(coord)?;
     let fname = p.file_name()?.to_string_lossy().to_string();
     let stem = fname.strip_suffix(".jar")?;

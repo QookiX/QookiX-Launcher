@@ -659,7 +659,7 @@ watch(
 }
 .latency .bars i {
   width: 3px;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--w-10);
   border-radius: 1px;
   opacity: 0.35;
 }
@@ -669,15 +669,15 @@ watch(
 .latency .bars i:nth-child(4) { height: 10px; }
 .latency .bars i:nth-child(5) { height: 12px; }
 .latency .bars i.on { opacity: 1; }
-.latency.good .bars i.on { background: #57c257; }
-.latency.good span:not(.bars) { color: #57c257; }
-.latency.mid .bars i.on { background: #e0c000; }
-.latency.mid span:not(.bars) { color: #e0c000; }
-.latency.bad .bars i.on { background: #e0533d; }
-.latency.bad span:not(.bars) { color: #e0533d; }
-.latency.off { color: rgba(255, 255, 255, 0.4); }
+.latency.good .bars i.on { background: var(--success); }
+.latency.good span:not(.bars) { color: var(--success); }
+.latency.mid .bars i.on { background: var(--warn); }
+.latency.mid span:not(.bars) { color: var(--warn); }
+.latency.bad .bars i.on { background: var(--danger); }
+.latency.bad span:not(.bars) { color: var(--danger); }
+.latency.off { color: var(--text-3); }
 .players { color: var(--text-2); }
-.err { color: #e0533d; }
+.err { color: var(--danger); }
 .server-motd {
   font-size: 12px;
   color: var(--text-3);

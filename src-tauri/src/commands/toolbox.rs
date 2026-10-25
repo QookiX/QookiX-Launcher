@@ -353,6 +353,7 @@ pub fn toolbox_read_world_info(
     instance_id: String,
     world: String,
 ) -> Result<WorldInfo, String> {
+    crate::instances::validate_instance_id(&instance_id)?;
     if !crate::util::is_safe_filename(&world) {
         return Err("非法存档名".into());
     }

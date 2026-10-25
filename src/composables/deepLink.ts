@@ -4,10 +4,11 @@
  * 支持的 URL：
  *   qookix://skin              → 打开皮肤中心
  *   qookix://instances         → 打开实例列表
- *   qookix://news              → 打开新闻
+ *   qookix://news              → 打开发现页（新闻已并入）
  *   qookix://settings          → 打开设置
  *   qookix://launch/<别名>      → 启动设置了该别名的实例
  *   qookix://oauth/callback     → 拾木空间 OAuth 回调（?code=..&state=..）
+ *   qookix://oauth/littleskin/callback → LittleSkin OAuth2 回调（?code=..&state=..）
  *
  * 两条到达路径（都会进入 onOpenUrl）：
  *   - 冷启动：deep-link 插件在 Rust 侧解析 argv 后发出 deep-link://new-url
@@ -16,11 +17,13 @@
  */
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { api } from "../api";
+import { useAccountsStore } from "../stores/accounts";
 import { useInstancesStore } from "../stores/instances";
 import { shimuErrorMessage, useShimuStore } from "../stores/shimu";
 import { notifySuccess, notifyError, notifyWarning } from "./notify";
 import { openDownloadsDrawer } from "./useDownloadsDrawer";
 import router from "../router";
+import i18n from "../i18n";
 import { log as devLog, warn as devWarn, error as devError } from "../utils/logger";
 
 /** 页面级 scheme → 路由路径映射 */
@@ -32,7 +35,7 @@ const PAGE_ROUTES: Record<string, string> = {
   skins: "/skins",
   skin: "/skins", // 单数别名
   settings: "/settings",
-  news: "/news",
+  news: "/browse",
 };
 
 async function handleUrl(raw: string) {
@@ -57,6 +60,12 @@ async function handleUrl(raw: string) {
   // 拾木空间 OAuth 回调（qookix://oauth/callback?code=..&state=..）
   if (host === "oauth" && path === "callback") {
     await handleShimuCallback(url);
+    return;
+  }
+
+  // LittleSkin OAuth2 回调（qookix://oauth/littleskin/callback?code=..&state=..）
+  if (host === "oauth" && path === "littleskin/callback") {
+    await handleYggOauthCallback(url);
     return;
   }
 
@@ -90,6 +99,25 @@ async function handleShimuCallback(url: URL) {
     notifySuccess("拾木空间登录成功");
   } catch (e) {
     notifyError(shimuErrorMessage(e));
+  }
+}
+
+/** LittleSkin OAuth2 回调：换 token + 拉角色（单角色直接添加，多角色交给前端选择） */
+async function handleYggOauthCallback(url: URL) {
+  const accounts = useAccountsStore();
+  try {
+    const res = await accounts.handleYggOauthCallback(url);
+    if (res === "denied") {
+      notifyWarning(i18n.global.t("yggLogin.oauthDenied"));
+      return;
+    }
+    // 多角色：store 已把列表放进 yggOauthResult，弹窗会切到角色选择
+    if (accounts.yggOauthResult) {
+      notifySuccess(i18n.global.t("yggLogin.oauthSelectProfile"));
+    }
+    // 单/自动角色：store 已设置 msSuccess，AccountDrawer 据此收起弹窗并提示
+  } catch (e) {
+    notifyError(String(e));
   }
 }
 

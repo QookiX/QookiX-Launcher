@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fmtMem, fmtSize, fmtTime } from "../utils/format";
-import { NModal, NSelect, NSlider, NTooltip, useMessage, useDialog } from "naive-ui";
+import { NModal, NSelect, NSlider, NTooltip, NInput, useMessage, useDialog } from "naive-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useMemoryInfo } from "../composables/useMemoryInfo";
 import { useSettingsStore } from "../stores/settings";
+import { useAccountsStore } from "../stores/accounts";
 import { useInstancesStore } from "../stores/instances";
 import { api } from "../api";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
@@ -51,6 +52,7 @@ import { version as appVersion } from "../../package.json";
 import { titlebarThemeToggle } from "../composables/useDevFlags";
 
 const settings = useSettingsStore();
+const accounts = useAccountsStore();
 const instances = useInstancesStore();
 const message = useMessage();
 const dialog = useDialog();
@@ -108,6 +110,42 @@ function testUpdateModal() {
   updateVersion.value = "9.9.9";
   updateModalVisible.value = true;
 }
+
+// ---- 开发者工具：OAuth2 接入凭证 ----
+const devLsClientId = ref("");
+const devLsClientSecret = ref("");
+const devCredSaving = ref(false);
+
+/** 从已加载的 accounts 配置回填到输入框 */
+function syncDevCredentials() {
+  devLsClientId.value = accounts.yggOauthConfig?.clientId ?? "";
+  // secret 不回传，只清空输入框；用 secretConfigured 标识展示是否已设
+  devLsClientSecret.value = "";
+}
+
+async function loadDevCredentials() {
+  await accounts.loadYggOauthConfig();
+  syncDevCredentials();
+}
+
+async function saveDevLsCredentials() {
+  devCredSaving.value = true;
+  try {
+    const id = devLsClientId.value.trim();
+    const sec = devLsClientSecret.value.trim();
+    // secret 留空表示保持原值不变
+    await accounts.setYggOauthCredentials(id, sec || undefined);
+    syncDevCredentials();
+    message.success(t("settings.dev.credSaved"));
+  } catch (e) {
+    message.error(String(e));
+  } finally {
+    devCredSaving.value = false;
+  }
+}
+
+// 进入开发者模式时拉一次凭证回填
+watch(devMode, (on) => { if (on) void loadDevCredentials(); });
 
 /**
  * 「检查更新」弹窗里展示的更新内容：当前版本 → 最新版本之间跨过的所有版本
@@ -1964,6 +2002,28 @@ onUnmounted(() => {
               {{ titlebarThemeToggle ? t("common.on") : t("common.off") }}
             </button>
           </div>
+
+          <!-- OAuth2 接入凭证（开发期测试用） -->
+          <h4 class="dev-subtitle">{{ t("settings.dev.oauthCredTitle") }}</h4>
+          <p class="dev-hint">{{ t("settings.dev.oauthCredHint") }}</p>
+          <div class="dev-cred-group">
+            <label class="dev-cred-label">{{ t("settings.dev.lsClientId") }}</label>
+            <div class="dev-cred-row">
+              <n-input v-model:value="devLsClientId" :placeholder="t('settings.dev.lsClientIdPh')" />
+              <button class="mini-btn primary" :disabled="devCredSaving" @click="saveDevLsCredentials">{{ t("settings.dev.credSave") }}</button>
+            </div>
+            <label class="dev-cred-label">{{ t("settings.dev.lsClientSecret") }}</label>
+            <div class="dev-cred-row">
+              <n-input v-model:value="devLsClientSecret" type="password" show-password-on="click" :placeholder="t('settings.dev.lsSecretPh')" />
+            </div>
+            <p class="dev-hint">
+              <span v-if="accounts.yggOauthConfig?.configured" class="dev-cred-ok">{{ t("settings.dev.lsConfigured") }}</span>
+              <span v-else class="dev-cred-no">{{ t("settings.dev.lsNotConfigured") }}</span>
+              <span v-if="accounts.yggOauthConfig?.secretConfigured" class="dev-cred-ok"> · {{ t("settings.dev.lsSecretSet") }}</span>
+              <span v-else class="dev-cred-no"> · {{ t("settings.dev.lsSecretUnset") }}</span>
+            </p>
+            <p class="dev-hint">{{ t("settings.dev.lsRedirect") }}：<code class="mono">{{ accounts.yggOauthConfig?.redirectUri ?? "qookix://oauth/littleskin/callback" }}</code></p>
+          </div>
         </div>
       </div>
     </div>
@@ -2861,7 +2921,7 @@ textarea.text-input {
 }
 .migrate-warn {
   font-size: 12px;
-  color: #e89a4b;
+  color: var(--accent);
   margin-top: 10px;
 }
 .migrate-ok {
@@ -3510,7 +3570,7 @@ textarea.text-input {
   border-color: rgba(229, 83, 75, 0.45);
 }
 .mini-btn.danger:hover {
-  color: #ff7a70;
+  color: var(--danger);
   border-color: var(--danger);
 }
 
@@ -3560,6 +3620,41 @@ textarea.text-input {
 .dev-section-label {
   font-size: 13px;
   color: var(--text-2);
+}
+.dev-subtitle {
+  margin: 4px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.dev-hint {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-3);
+  line-height: 1.6;
+}
+.dev-cred-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dev-cred-label {
+  font-size: 13px;
+  color: var(--text-2);
+}
+.dev-cred-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.dev-cred-row .n-input {
+  flex: 1;
+}
+.dev-cred-ok {
+  color: var(--success, #18a058);
+}
+.dev-cred-no {
+  color: var(--error, #d03050);
 }
 .about-changelog-card h3 {
   margin: 0;
@@ -3659,15 +3754,15 @@ textarea.text-input {
   background: rgba(229, 83, 75, 0.12);
 }
 .cl-tag.cat-feature {
-  color: #3fb950;
+  color: var(--success);
   background: rgba(63, 185, 80, 0.12);
 }
 .cl-tag.cat-improve {
-  color: #4493f8;
+  color: var(--text-2);
   background: rgba(68, 147, 248, 0.12);
 }
 .cl-tag.cat-refactor {
-  color: #a371f7;
+  color: var(--text-2);
   background: rgba(163, 113, 247, 0.12);
 }
 .cl-tag.cat-other {

@@ -16,4 +16,15 @@ export default {
   openFailed: "打开失败：{error}",
   fillServerUrl: "请填写皮肤站地址",
   selectProfile: "请选择一个角色",
+  // ---- LittleSkin OAuth2（Yggdrasil Connect） ----
+  oauthOr: "或",
+  oauthLogin: "OAuth2 登录",
+  oauthHint: "在浏览器里授权登录，无需向启动器输入密码，支持二步验证。",
+  oauthWaiting: "已打开浏览器，请在浏览器中完成 LittleSkin 授权…",
+  oauthCancel: "取消等待",
+  oauthErrNoCode: "回调地址缺少授权码",
+  oauthDenied: "LittleSkin 授权已取消",
+  oauthSuccess: "LittleSkin 登录成功",
+  oauthSelectProfile: "授权成功，请选择要添加的角色",
+  oauthAutoProfile: "已自动选择角色「{name}」，可在账号管理中切换",
 };

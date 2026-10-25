@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { copyText as doCopy } from "../utils/clipboard";
 import { useMessage } from "naive-ui";
 import { api } from "../api";
 import { fmtDate, fmtSize } from "../utils/format";
@@ -375,22 +376,9 @@ function closeMenu() {
 const selected = ref<string | null>(null);
 
 async function copyText(text: string, tip: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    message.success(tip);
-  } catch {
-    // 剪贴板 API 不可用时回退到 execCommand
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    if (ok) message.success(tip);
-    else message.error(t("fileManager.copyFailed"));
-  }
+  const ok = await doCopy(text);
+  if (ok) message.success(tip);
+  else message.error(t("fileManager.copyFailed"));
 }
 
 function entryMenu(e: FsEntry): ContextMenuItem[] {
@@ -615,12 +603,8 @@ function onGlobalKeydown(e: KeyboardEvent) {
   const tag = (e.target as HTMLElement | null)?.tagName;
   if (tag === "INPUT" || tag === "TEXTAREA") return;
 
-  // 文件列表快捷键：F2 重命名、Delete 删除、F5 刷新
-  if (e.key === "F5") {
-    e.preventDefault();
-    reload();
-    return;
-  }
+  // 文件列表快捷键：F2 重命名、Delete 删除
+  // F5 不拦截——留给页面刷新用；文件列表刷新用工具栏按钮或右键菜单
   if (selected.value) {
     const entry = entries.value.find((x) => x.rel === selected.value);
     if (entry && e.key === "F2") {

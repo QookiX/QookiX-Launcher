@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, markRaw, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { copyText as doCopy } from "../utils/clipboard";
 import { useMessage } from "naive-ui";
 import { api } from "../api";
 import { fmtDate, fmtSize } from "../utils/format";
@@ -255,21 +256,9 @@ function closeMenu() {
 const selected = ref<string | null>(null);
 
 async function copyText(text: string, tip: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-    message.success(tip);
-  } catch {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    if (ok) message.success(tip);
-    else message.error(t("serverFileManager.copyFailed"));
-  }
+  const ok = await doCopy(text);
+  if (ok) message.success(tip);
+  else message.error(t("serverFileManager.copyFailed"));
 }
 
 function entryMenu(e: FsEntry): ContextMenuItem[] {

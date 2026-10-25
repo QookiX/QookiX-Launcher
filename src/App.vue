@@ -58,7 +58,17 @@ function applyLocale(lang: string | undefined | null) {
 
 watch(() => settings.settings?.language, (lang) => applyLocale(lang));
 
-const isDark = computed(() => settings.settings?.theme !== "light");
+// 主题判定：缓存最后一次从 settings 读到的 theme 值。
+// 当 settings 被重新拉取/patch 时，如果后端返回的对象恰好缺 theme 字段（IPC 序列化
+// 异常、部分写入等），裸的 settings.settings?.theme !== "light" 会把 undefined 当成
+// 非 "light" → isDark 翻成 true → 浅色模式瞬间切暗，且 .light 类被摘掉后 watch 不再
+// 触发，状态永久卡死直到刷新。缓存上一次的 theme 可避免这种翻转。
+const lastTheme = ref<string | undefined>(undefined);
+const isDark = computed(() => {
+  const t = settings.settings?.theme;
+  if (t !== undefined) lastTheme.value = t;
+  return (t ?? lastTheme.value) !== "light";
+});
 const activeTheme = computed(() => (isDark.value ? darkTheme : lightTheme));
 
 const accentColor = computed(() => settings.settings?.theme_color || DEFAULT_ACCENT);
@@ -89,6 +99,23 @@ onBeforeUnmount(() => {
   if (themeTransitionTimer) clearTimeout(themeTransitionTimer);
 });
 
+// 页面转场 out-in：旧页面离开后、新页面进入前（此时容器瞬时空白）归零滚动容器。
+// 不能在 router.afterEach 里归零——那会在旧页面仍可见时就跳到顶，造成"先跳顶再转场"的突兀感。
+function onPageBeforeEnter() {
+  const el = document.getElementById("app-content");
+  if (el) el.scrollTop = 0;
+}
+
+// 过渡结束后：WebView2 在 out-in 转场时，旧页面 transform 合成层可能残留，
+// 新页面 .glass 的 backdrop-filter 采样到 stale 暗色合成层 → 内容发暗。
+// 强制 reflow + 瞬间摘/加 backdrop-filter 让渲染器重新采样背景。
+function onPageAfterEnter() {
+  const root = document.documentElement;
+  root.classList.add("bf-reset");
+  void document.getElementById("app-content")?.offsetHeight; // 强制 reflow
+  requestAnimationFrame(() => root.classList.remove("bf-reset"));
+}
+
 // 将主题色应用到 CSS 变量上（accent / accent-deep / accent-soft / 各级 alpha）
 watch(accentColor, (hex) => {
   const root = document.documentElement;
@@ -109,7 +136,7 @@ const bgStyle = computed(() => {
     "--bg-image": `url("${convertFileSrc(s.background_image)}")`,
     "--bg-blur": `${s.background_blur}px`,
     "--bg-dim": String(s.background_dim / 100),
-    "--bg-dim-light": String((s.background_dim / 100) * 0.45),
+    "--bg-dim-light": String((s.background_dim / 100) * 0.12),
   } as Record<string, string>;
 });
 
@@ -194,7 +221,7 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <n-config-provider :theme="activeTheme" :theme-overrides="themeOverrides" :inline-theme-disabled="true">
+  <n-config-provider :theme="activeTheme" :theme-overrides="themeOverrides">
     <n-loading-bar-provider>
       <LoadingBarBridge>
         <n-dialog-provider>
@@ -205,14 +232,14 @@ onBeforeUnmount(() => {
                      Tauri 2 的语义（src/window/scripts/drag.js）：
                        - 无值 / "true" → 只有**直接**点在带属性的这个元素上才拖（子元素不受影响）
                        - "deep"        → 整个子树都可拖（卡片、按钮等 div 点击会被吞掉，故不用）
-                     .content 带的是裸属性：外围留白（上 22 / 左右 26 / 下 80）落点就是它自己，
-                     所以那块背景可以直接拽窗口；页面里的卡片、按钮、画布仍然是它自己的落点，
-                     点击行为完全不变。 -->
+                     .app-bg / .body 带裸属性：它们自身的留白落点可以拽窗口。
+                     .content（滚动容器）**不带** drag-region：否则滚动条落在拖拽区上，
+                     按下滚动条会被 Tauri 拦截成拖窗口而无法滚屏。窗口拖动靠标题栏 + 侧栏留白。 -->
                 <div class="app app-bg" data-tauri-drag-region :class="{ light: !isDark, 'show-texture': showTexture }" :style="bgStyle">
                 <TitleBar />
                 <div class="body" data-tauri-drag-region>
                   <SideBar />
-                  <main id="app-content" class="content" data-tauri-drag-region>
+                  <main id="app-content" class="content">
                     <router-view v-slot="{ Component, route }">
                       <!-- duration 必须显式给：out-in 靠 transitionend 判断"旧页面退场完毕"，
                            一旦某次没收到结束事件（元素被替换 / 过渡被打断），这个 out-in
@@ -221,6 +248,8 @@ onBeforeUnmount(() => {
                         :name="transitionName"
                         mode="out-in"
                         :duration="{ enter: 260, leave: 200 }"
+                        @before-enter="onPageBeforeEnter"
+                        @after-enter="onPageAfterEnter"
                       >
                         <KeepAlive :include="['BrowseView']">
                           <component :is="Component" :key="route.path" />

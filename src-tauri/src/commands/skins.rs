@@ -93,7 +93,7 @@ pub fn list_skins(state: State<AppState>) -> Result<Vec<SkinEntry>, String> {
 #[tauri::command]
 pub fn read_skin_data_url(state: State<AppState>, filename: String) -> Result<String, String> {
     use base64::{engine::general_purpose::STANDARD, Engine};
-    let is_abs = filename.contains('/') || filename.contains('\\');
+    let is_abs = std::path::Path::new(&filename).is_absolute();
     let path = if is_abs {
         std::path::PathBuf::from(&filename)
     } else {

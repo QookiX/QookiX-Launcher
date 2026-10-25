@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
+import { copyText } from "../utils/clipboard";
 import { fmtSize } from "../utils/format";
 import { useRoute, useRouter } from "vue-router";
 import { NInput, NInputNumber, NCheckbox, NSwitch, NSelect, NModal, useMessage } from "naive-ui";
@@ -9,6 +10,7 @@ import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { useServersStore } from "../stores/servers";
 import ServerFileManager from "../components/ServerFileManager.vue";
+import McMotd from "../components/McMotd.vue";
 import { CORE_COLORS, CORE_LABELS } from "../utils/cores";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import {
@@ -472,19 +474,9 @@ const logText = computed(() => logs.value.map((l) => l.line).join("\n"));
 
 async function copyLogs() {
   if (!logText.value) return message.info(t("serverDetail.msg.noLogs"));
-  try {
-    await navigator.clipboard.writeText(logText.value);
-    message.success(t("serverDetail.msg.logsCopied"));
-  } catch {
-    const ta = document.createElement("textarea");
-    ta.value = logText.value;
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    if (ok) message.success(t("serverDetail.msg.logsCopied"));
-    else message.error(t("serverDetail.msg.copyFailed"));
-  }
+  const ok = await copyText(logText.value);
+  if (ok) message.success(t("serverDetail.msg.logsCopied"));
+  else message.error(t("serverDetail.msg.copyFailed"));
 }
 
 async function exportLogs() {
@@ -626,7 +618,8 @@ onBeforeUnmount(() => {
 </script>
 
 <template>
-  <div class="server-detail" v-if="server" data-tauri-drag-region>
+  <div class="server-detail-page" data-tauri-drag-region>
+  <div class="server-detail" v-if="server">
     <button class="back" @click="router.push('/multiplayer')">
       <IconChevronLeft /> {{ t('serverDetail.back') }}
     </button>
@@ -790,6 +783,9 @@ onBeforeUnmount(() => {
                       size="small"
                       @update:value="(v: string) => propsData[f.key] = v"
                     />
+                  </div>
+                  <div v-if="f.key === 'motd'" class="prop-motd-preview glass">
+                    <McMotd :text="propsData[f.key]" default-text="A Minecraft Server" />
                   </div>
                 </div>
               </div>
@@ -960,9 +956,13 @@ onBeforeUnmount(() => {
   </div>
 
   <div v-else class="loading">{{ t('serverDetail.loading') }}</div>
+  </div>
 </template>
 
 <style scoped>
+.server-detail-page {
+  min-height: 100%;
+}
 .server-detail {
   display: flex;
   flex-direction: column;
@@ -1058,7 +1058,7 @@ onBeforeUnmount(() => {
 }
 .btn.warn {
   background: rgba(224, 168, 90, 0.18);
-  color: #e0a85a;
+  color: var(--warn);
   border: 1px solid rgba(224, 168, 90, 0.4);
 }
 .btn.warn:hover {
@@ -1155,6 +1155,16 @@ onBeforeUnmount(() => {
   font-size: 13px;
   font-weight: 600;
   color: var(--text-2);
+}
+/* MOTD 实时预览：模拟服务器列表里的彩色描述 */
+.prop-motd-preview {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-2);
+  min-height: 34px;
 }
 .field-row {
   display: flex;
@@ -1290,14 +1300,30 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .run-dot {
+  position: relative;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--text-3);
 }
 .run-dot.on {
-  background: #57c98a;
-  box-shadow: 0 0 6px rgba(87, 201, 138, 0.6);
+  background: var(--success);
+}
+.run-dot.on::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--success);
+  opacity: 0.5;
+  animation: run-dot-pulse 1.8s ease-out infinite;
+}
+@keyframes run-dot-pulse {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .run-dot.on::after { animation: none; opacity: 0; }
 }
 .run-text {
   font-size: 12px;

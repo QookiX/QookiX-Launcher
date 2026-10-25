@@ -46,6 +46,89 @@ pub fn save_server(state: &AppState, server: &ServerConfig) -> Result<(), String
     std::fs::write(&path, json).map_err(|e| e.to_string())
 }
 
+/// 从服务器的 `server.properties` 读取 `motd`，并解码 Java properties 转义
+/// （至少把 `\u00A7` 还原成 `§`，`\n` 还原成换行），让前端能按 MC 颜色码渲染。
+/// 文件不存在或没有 motd 行时返回 `None`，由调用方回退到 server.json 里的旧值。
+pub fn read_server_motd(state: &AppState, id: &str) -> Option<String> {
+    let path = server_dir(state, id).join("server.properties");
+    let text = std::fs::read_to_string(&path).ok()?;
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let eq = match t.find('=') {
+            Some(i) => i,
+            None => continue,
+        };
+        if t[..eq].trim() == "motd" {
+            return Some(decode_java_properties(t[eq + 1..].trim()));
+        }
+    }
+    None
+}
+
+/// 解码 Java `.properties` 的转义序列：`\uXXXX`、`\n`、`\t`、`\r`、`\\`、`\"`、`\'`。
+/// 无效的 `\u` 原样保留反斜杠。
+fn decode_java_properties(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            match chars[i + 1] {
+                'u' if i + 6 <= chars.len() => {
+                    let hex: String = chars[i + 2..i + 6].iter().collect();
+                    if let Ok(cp) = u32::from_str_radix(&hex, 16) {
+                        if let Some(ch) = char::from_u32(cp) {
+                            out.push(ch);
+                            i += 6;
+                            continue;
+                        }
+                    }
+                    out.push('\\');
+                    i += 1;
+                    continue;
+                }
+                'n' => {
+                    out.push('\n');
+                    i += 2;
+                    continue;
+                }
+                't' => {
+                    out.push('\t');
+                    i += 2;
+                    continue;
+                }
+                'r' => {
+                    out.push('\r');
+                    i += 2;
+                    continue;
+                }
+                '\\' => {
+                    out.push('\\');
+                    i += 2;
+                    continue;
+                }
+                '"' => {
+                    out.push('"');
+                    i += 2;
+                    continue;
+                }
+                '\'' => {
+                    out.push('\'');
+                    i += 2;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
+}
+
 pub fn create_server(
     state: &AppState,
     name: String,
@@ -735,13 +818,35 @@ fn estimate_java_version(mc_version: &str) -> u32 {
         25
     } else if major >= 21 || (major == 20 && minor >= 5) {
         21
-    } else if major >= 18 {
-        17
     } else if major >= 17 {
         17
     } else {
         8
     }
+}
+
+/// 把用户自定义 JVM 参数字符串拆成单独参数：支持双引号包裹含空格的参数
+/// （如 `-javaagent:"C:\Program Files\x.jar"`），未加引号时按空白拆分；
+/// 换行也作为分隔符，方便一行一个参数地填写。比 split_whitespace 更稳。
+fn split_jvm_args(s: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    let mut in_quote = false;
+    for ch in s.chars() {
+        match ch {
+            '"' => in_quote = !in_quote,
+            c if c.is_whitespace() && !in_quote => {
+                if !cur.is_empty() {
+                    out.push(std::mem::take(&mut cur));
+                }
+            }
+            c => cur.push(c),
+        }
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
 }
 
 pub async fn start_server(
@@ -834,7 +939,7 @@ pub async fn start_server(
         .stderr(Stdio::piped());
     if args_file.is_none() {
         if let Some(extra) = &server.jvm_args {
-            for arg in extra.split_whitespace() {
+            for arg in split_jvm_args(extra) {
                 cmd.arg(arg);
             }
         }

@@ -72,26 +72,6 @@ export function codeToMc(code: string): string | null {
   return null;
 }
 
-/** MouseEvent.button → MC 按键码（侧键 4/5/6 是 1.16+ 的写法） */
-export function mouseButtonToMc(button: number): string | null {
-  switch (button) {
-    case 0:
-      return "key.mouse.left";
-    case 1:
-      return "key.mouse.middle";
-    case 2:
-      return "key.mouse.right";
-    case 3:
-      return "key.mouse.4";
-    case 4:
-      return "key.mouse.5";
-    case 5:
-      return "key.mouse.6";
-    default:
-      return null;
-  }
-}
-
 /** 有中英文之分的按键名：[中文, English] */
 const NAMED: Record<string, [string, string]> = {
   "key.keyboard.space": ["空格", "Space"],

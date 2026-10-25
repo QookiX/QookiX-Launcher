@@ -66,8 +66,10 @@ onBeforeUnmount(() => {
 .launch-progress {
   position: fixed;
   bottom: 20px;
-  left: 50%;
-  transform: translateX(-50%);
+  /* 居中不用 transform：transform 会隔离合成层，让 backdrop-filter 磨砂失效 */
+  left: 0;
+  right: 0;
+  margin: 0 auto;
   width: 360px;
   max-width: 90vw;
   background: var(--panel, #1e2230);
@@ -75,6 +77,8 @@ onBeforeUnmount(() => {
   border-radius: 12px;
   padding: 14px 18px;
   box-shadow: 0 8px 32px var(--k-40);
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   z-index: 9999;
 }
 .lp-bar {
@@ -91,7 +95,7 @@ onBeforeUnmount(() => {
   transition: width 0.3s ease;
 }
 .lp-fill.done {
-  background: linear-gradient(90deg, #4ec9a0, #2b9a74);
+  background: var(--success);
 }
 .lp-info {
   display: flex;
@@ -107,13 +111,14 @@ onBeforeUnmount(() => {
   font-weight: 600;
   font-variant-numeric: tabular-nums;
 }
+/* 进场/退场也用 layout 位移（bottom），不用 transform，避免磨砂被合成层隔离 */
 .lp-slide-enter-active,
 .lp-slide-leave-active {
-  transition: all 0.3s ease;
+  transition: opacity 0.25s ease, bottom 0.25s ease;
 }
 .lp-slide-enter-from,
 .lp-slide-leave-to {
   opacity: 0;
-  transform: translateX(-50%) translateY(20px);
+  bottom: 0;
 }
 </style>

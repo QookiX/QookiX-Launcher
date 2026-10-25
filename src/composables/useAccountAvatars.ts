@@ -54,7 +54,8 @@ function loadOnlineAvatarCache(uuid: string) {
 async function refreshOnlineAvatar(uuid: string, url: string) {
   try {
     const dataUrl = await api.fetchImageDataURL(url);
-    if (dataUrl) {
+    // 与现有缓存相同则跳过，避免无谓的 <img src> 切换闪烁
+    if (dataUrl && dataUrl !== onlineAvatarCache[uuid]) {
       onlineAvatarCache[uuid] = dataUrl;
       localStorage.setItem(`qookix:avatar:${uuid}`, dataUrl);
     }
@@ -98,6 +99,20 @@ function ensureWatches() {
   watch(
     () => accounts.accounts.map((a) => `${a.uuid}:${a.type}`).join(","),
     async () => {
+      // 先同步预填本地缓存（localStorage），确保首帧渲染 avatar() 即可命中，
+      // 避免在线源拉取期间头像先消失再出现。正版/皮肤站头像都走这套「本地优先」。
+      // 必须在任意 await 之前完成，否则被离线账号的 loadOfflineSkin 挂起后会
+      // 晚于组件首帧渲染，导致头像短暂落到在线直链/兜底图标。
+      for (const acc of accounts.accounts) {
+        if (acc.type === "microsoft" && !onlineAvatarCache[acc.uuid]) {
+          loadOnlineAvatarCache(acc.uuid);
+        }
+        if (acc.type === "yggdrasil" && !yggAvatarCache[acc.uuid]) {
+          const cached = localStorage.getItem(`qookix:yggavatar:${acc.uuid}`);
+          if (cached) yggAvatarCache[acc.uuid] = cached;
+        }
+      }
+      // 再后台异步拉取/刷新；加载完成后写入缓存，reactive 自动替换为最新头像。
       for (const acc of accounts.accounts) {
         if (acc.type === "offline" && !offlineAvatarCache[acc.uuid]) {
           const skin = await loadOfflineSkin(acc.uuid);
@@ -107,7 +122,6 @@ function ensureWatches() {
           }
         }
         if (acc.type === "microsoft") {
-          if (!onlineAvatarCache[acc.uuid]) loadOnlineAvatarCache(acc.uuid);
           refreshOnlineAvatar(acc.uuid, AVATAR_SOURCES[0](acc.uuid));
         }
         if (acc.type === "yggdrasil" && !yggAvatarCache[acc.uuid]) {

@@ -38,6 +38,7 @@ mod updater;
 mod util;
 mod world_backup;
 mod yggdrasil;
+mod yggdrasil_oauth;
 mod cubiomes;
 
 use state::AppState;
@@ -102,6 +103,8 @@ pub fn run() {
     };
     // 拾木空间登录态：在 root 被 move 进 AppState 之前读盘
     let shimu_auth = shimu::load_saved(&root);
+    // LittleSkin OAuth2 待校验 state：同样在 root 被 move 之前读盘
+    let ygg_oauth_pending = yggdrasil_oauth::load_saved(&root);
     let app_state = AppState {
         root,
         settings: RwLock::new(loaded),
@@ -115,6 +118,7 @@ pub fn run() {
         install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         ms_flow: Arc::new(Mutex::new(None)),
         shimu: Mutex::new(shimu_auth),
+        ygg_oauth: Mutex::new(ygg_oauth_pending),
         java_cache: Mutex::new(None),
         terracotta: Mutex::new(None),
         pending_update: Mutex::new(None),
@@ -293,6 +297,12 @@ pub fn run() {
             yggdrasil::yggdrasil_add_account,
             yggdrasil::yggdrasil_ensure_token,
             yggdrasil::yggdrasil_textures,
+            // LittleSkin OAuth2（Yggdrasil Connect）：授权码流登录皮肤站账号
+            yggdrasil_oauth::yggdrasil_oauth_config,
+            yggdrasil_oauth::yggdrasil_set_credentials,
+            yggdrasil_oauth::yggdrasil_oauth_start,
+            yggdrasil_oauth::yggdrasil_oauth_complete,
+            yggdrasil_oauth::yggdrasil_oauth_add_account,
             // 拾木空间（www.mcimg.com）OAuth 登录 + 开放 API
             shimu::shimu_config,
             shimu::shimu_set_credentials,
@@ -566,6 +576,24 @@ mod smoke {
     }
 
     #[test]
+    fn maven_path_rejects_traversal() {
+        // 恶意 maven 坐标不得拼出逃出 libraries_dir 的路径（路径穿越防护）
+        for bad in [
+            "..:evil:1.0",                   // group = ..
+            "com.evil:evil:1.0:../../pwned", // classifier 含 .. 与 /
+            "com.evil:evil:../pwned:1.0",    // version 含 /
+            "com.evil:evil:1.0:x/y",         // classifier 含 /
+            "com.evil:evil:1.0:x\\y",        // classifier 含反斜杠
+            ":evil:1.0",                     // 空 group
+            "com.evil::1.0",                 // 空 artifact
+        ] {
+            assert!(maven_to_path(bad).is_none(), "应拒绝恶意坐标: {bad}");
+        }
+        // 合法坐标仍正常解析
+        assert!(maven_to_path("net.fabricmc:fabric-loader:0.15.11").is_some());
+    }
+
+    #[test]
     fn java_detection_report() {
         let found = crate::java::detect_java(None, None);
         eprintln!("=== detected {} Java installations ===", found.len());
@@ -671,6 +699,7 @@ mod smoke {
             install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
+            ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
@@ -717,6 +746,7 @@ mod smoke {
             install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
+            ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
@@ -764,6 +794,7 @@ mod smoke {
             install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
+            ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),

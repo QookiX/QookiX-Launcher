@@ -64,7 +64,7 @@ export default {
   },
   nav: {
     home: "Home",
-    browse: "Browse",
+    browse: "Discover",
     instances: "Instances",
     multiplayer: "Multiplayer",
     skins: "Skins",

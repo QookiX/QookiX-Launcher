@@ -902,7 +902,7 @@ watch(instanceId, () => {
   color: var(--text-3);
 }
 .tag.warn {
-  color: #e0a000;
+  color: var(--warn);
   border-color: #e0a00055;
 }
 .tag.manual {

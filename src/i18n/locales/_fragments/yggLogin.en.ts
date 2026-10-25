@@ -16,4 +16,15 @@ export default {
   openFailed: "Open failed: {error}",
   fillServerUrl: "Please enter the skin station URL",
   selectProfile: "Please select a profile",
+  // ---- LittleSkin OAuth2 (Yggdrasil Connect) ----
+  oauthOr: "or",
+  oauthLogin: "Log in with OAuth2",
+  oauthHint: "Authorize in the browser — no password entered into the launcher, supports 2FA.",
+  oauthWaiting: "Browser opened. Please complete LittleSkin authorization in the browser…",
+  oauthCancel: "Cancel waiting",
+  oauthErrNoCode: "Callback URL is missing the authorization code",
+  oauthDenied: "LittleSkin authorization cancelled",
+  oauthSuccess: "LittleSkin login successful",
+  oauthSelectProfile: "Authorized. Please select a profile to add",
+  oauthAutoProfile: "Auto-selected profile \"{name}\"; switch in account manager",
 };

@@ -11,7 +11,14 @@ use crate::fsutil::{self, FsEntry};
 
 #[tauri::command]
 pub fn list_hosted_servers(state: State<AppState>) -> Result<Vec<ServerConfig>, String> {
-    Ok(crate::servers::load_servers(&state))
+    let mut servers = crate::servers::load_servers(&state);
+    // motd 以 server.properties 为准（不存在则保留 server.json 里的回退值）
+    for s in servers.iter_mut() {
+        if let Some(m) = crate::servers::read_server_motd(&state, &s.id) {
+            s.motd = m;
+        }
+    }
+    Ok(servers)
 }
 
 #[tauri::command]

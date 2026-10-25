@@ -212,6 +212,21 @@ export interface ShimuConfig {
   downloadDir: string;
 }
 
+/** LittleSkin OAuth2（Yggdrasil Connect）接入配置 */
+export interface YggOauthConfig {
+  /** client_id 是否已配置（决定是否露出「OAuth2 登录」入口） */
+  configured: boolean;
+  clientId: string;
+  /** 回调地址 qookix://oauth/littleskin/callback */
+  redirectUri: string;
+  authorizeUrl: string;
+  scope: string;
+  /** client_secret 是否已配置（只返回真假，不回传密钥） */
+  secretConfigured: boolean;
+  /** 开发构建才为 true */
+  devMode: boolean;
+}
+
 /** `getInfo` 返回的用户资料（字段以服务端为准，未给出的为可选） */
 export interface ShimuUser {
   userId?: number;

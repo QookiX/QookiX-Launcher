@@ -1260,7 +1260,7 @@ async function install() {
 }
 .id-dep-chip.optional .id-dep-tag {
   background: var(--info-15);
-  color: #7cb8f5;
+  color: var(--text-2);
 }
 .id-dep-chip.incompatible .id-dep-tag {
   background: var(--border);

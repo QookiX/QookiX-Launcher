@@ -146,6 +146,9 @@ jobs:
           # 拾木空间（投影库）OAuth 凭证：编译期注入，正式包里不留用户可填入口
           SHIMU_CLIENT_ID: ${{ secrets.SHIMU_CLIENT_ID }}
           SHIMU_CLIENT_SECRET: ${{ secrets.SHIMU_CLIENT_SECRET }}
+          # LittleSkin OAuth2（Yggdrasil Connect）凭证：编译期注入，回调地址 qookix://oauth/littleskin/callback
+          LITTLESKIN_CLIENT_ID: ${{ secrets.LITTLESKIN_CLIENT_ID }}
+          LITTLESKIN_CLIENT_SECRET: ${{ secrets.LITTLESKIN_CLIENT_SECRET }}
           QOOKIX_CERT_PFX: ${{ runner.temp }}/qookix.pfx
           QOOKIX_CERT_PASSWORD: ${{ secrets.QOOKIX_CERT_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}

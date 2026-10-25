@@ -54,6 +54,9 @@ body,
   --text-3: #8b8e9c;
   --scrollbar-thumb: rgba(255, 255, 255, 0.12);
   --scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
+  /* 卡片阴影：静止时贴在表面上，悬停浮起时加深加大传达高度 */
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
+  --card-shadow-hover: 0 10px 28px rgba(0, 0, 0, 0.42);
   /* 中性叠加色阶：--w-* 为白色叠加（表面 / 描边 / 悬停），--k-* 为黑色叠加（遮罩 / 阴影）。
      命名与 --accent-* 一致，数值 = alpha × 100。 */
   --w-02: rgba(255, 255, 255, 0.02);
@@ -146,6 +149,38 @@ body,
   --text-3: #55586a;
   --scrollbar-thumb: rgba(0, 0, 0, 0.15);
   --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
+  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --card-shadow-hover: 0 10px 28px rgba(0, 0, 0, 0.14);
+  /* --w-* 在深色主题是白色叠加（浅化表面）；浅色底上白色不可见，改为黑色叠加（加深表面），
+     与本主题 --border / --scrollbar-thumb 的黑色叠加语义一致。全应用 234 处 --w-* 用作
+     微妙背景 / 边框 / 悬停态 / 进度槽等，不重定义则浅色主题下全部消失。 */
+  --w-02: rgba(0, 0, 0, 0.02);
+  --w-03: rgba(0, 0, 0, 0.03);
+  --w-04: rgba(0, 0, 0, 0.04);
+  --w-05: rgba(0, 0, 0, 0.05);
+  --w-06: rgba(0, 0, 0, 0.06);
+  --w-07: rgba(0, 0, 0, 0.07);
+  --w-08: rgba(0, 0, 0, 0.08);
+  --w-09: rgba(0, 0, 0, 0.09);
+  --w-10: rgba(0, 0, 0, 0.1);
+  --w-12: rgba(0, 0, 0, 0.12);
+  --w-14: rgba(0, 0, 0, 0.14);
+  --w-20: rgba(0, 0, 0, 0.2);
+  /* 语义色阶：深色用 rgb(229,83,75)/rgb(78,201,160)，浅色主题 --danger/--success 已改为
+     更深的 #d63d35 / #2d9b6f（白底可读），这里 alpha 变体同步用浅色 RGB，避免底色色相与
+     文字色不一致（如 --danger-12 做徽章底色时与 --danger 文字色对不上）。 */
+  --danger-08: rgba(214, 61, 53, 0.08);
+  --danger-10: rgba(214, 61, 53, 0.1);
+  --danger-12: rgba(214, 61, 53, 0.12);
+  --danger-14: rgba(214, 61, 53, 0.14);
+  --danger-16: rgba(214, 61, 53, 0.16);
+  --danger-26: rgba(214, 61, 53, 0.26);
+  --danger-30: rgba(214, 61, 53, 0.3);
+  --danger-35: rgba(214, 61, 53, 0.35);
+  --danger-40: rgba(214, 61, 53, 0.4);
+  --danger-45: rgba(214, 61, 53, 0.45);
+  --danger-50: rgba(214, 61, 53, 0.5);
+  --success-12: rgba(45, 155, 111, 0.12);
   /* 浅色主题语义纯色：比深色档更深，保证白底可读 */
   --danger: #d63d35;
   --danger-text: #c9332c;
@@ -170,6 +205,16 @@ body,
 :root.has-bg.light .content h1,
 :root.has-bg.light .content h3 {
   text-shadow: 0 1px 2px rgba(255, 255, 255, 0.65);
+}
+
+/* 无背景图的深色模式：导航栏与抽屉面板加一点黑底。
+   这些悬浮岛平时用 --panel（深色无图时仅 4% 白），在深色渐变底上过于通透、
+   轮廓发虚；叠一层淡黑让导航栏与抽屉更沉得下来。有背景图时 --panel 已是半透
+   深色（rgba(22,25,34,0.62)），无需此处理；浅色模式同理不走这里。 */
+:root:not(.light):not(.has-bg) .dock,
+:root:not(.light):not(.has-bg) .dl-drawer,
+:root:not(.light):not(.has-bg) .acct-drawer {
+  background: rgba(0, 0, 0, 0.2), var(--panel);
 }
 
 /* 深浅色切换过渡：仅在切换瞬间由脚本给 <html> 挂上 .theme-transition，
@@ -251,8 +296,12 @@ body,
 ::-webkit-scrollbar-thumb {
   background: var(--scrollbar-thumb);
   border-radius: 8px;
+  transition: background 0.18s ease;
 }
 ::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-thumb:active {
   background: var(--scrollbar-thumb-hover);
 }
 ::-webkit-scrollbar-track {
@@ -264,6 +313,11 @@ body,
   border-radius: 14px;
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+}
+/* 过渡结束后瞬间摘掉 backdrop-filter 强制 WebView2 重新采样背景 */
+.bf-reset .glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 /* naive-ui 下拉菜单（Select 等）统一成应用内的玻璃面板风格。
@@ -305,6 +359,43 @@ a {
 }
 a:active {
   transform: scale(0.96);
+}
+
+/* 键盘聚焦时给一个清晰的 accent 焦点环（鼠标点击不触发 :focus-visible，不会干扰）。
+   outline 在 Chromium 下跟随 border-radius，所以圆角元素得到圆角环。 */
+button:focus-visible,
+a:focus-visible,
+.clickable:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent-50);
+  outline-offset: 2px;
+}
+
+/* 尊重用户「减少动效」系统偏好：把所有动画/过渡压到近乎瞬时。
+   覆盖页面转场、卡片进场、splash 脉冲、hover 抬升、滚动条过渡等全部动画，
+   让前庭功能敏感用户不被运动干扰。交互态（hover/active 背景变化）仍生效，只是不再渐变。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* 全局文本选中色：用 accent 半透明底替代浏览器默认蓝，与品牌统一。
+   半透明保证原文字色仍可读。 */
+::selection {
+  background: var(--accent-25);
+}
+
+/* 模态框 / 抽屉遮罩磨砂化：与全局玻璃风格统一，背景内容被柔焦而非纯黑压暗 */
+.n-modal-mask,
+.n-drawer-mask {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
 }
 
 .mono {

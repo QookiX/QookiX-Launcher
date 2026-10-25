@@ -5,7 +5,7 @@
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { NCollapse, NCollapseItem, NButton, NInput, NModal, NScrollbar, useMessage } from "naive-ui";
+import { NCollapse, NCollapseItem, NButton, NInput, NModal, NScrollbar, NCheckbox, useMessage } from "naive-ui";
 import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../../api";
@@ -558,11 +558,11 @@ function toggleCollapsed(g: ExportGroup) {
   background: rgba(128, 128, 128, 0.15);
 }
 .badge-blue {
-  color: #5aa9e6;
+  color: var(--text-2);
   background: rgba(90, 169, 230, 0.12);
 }
 .badge-yellow {
-  color: #e0a44b;
+  color: var(--warn);
   background: rgba(224, 164, 75, 0.12);
 }
 .badge-green {
@@ -617,7 +617,7 @@ function toggleCollapsed(g: ExportGroup) {
   border-radius: 6px;
 }
 .ex-ident-warn b {
-  color: #e0a44b;
+  color: var(--warn);
 }
 .ex-tip {
   margin: 0;

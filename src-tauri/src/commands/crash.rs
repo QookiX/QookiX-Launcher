@@ -65,6 +65,10 @@ pub fn list_crash_logs(state: State<AppState>, id: String) -> Result<Vec<CrashLo
 /// 这里只负责读取报告文本并回填报告文件名。
 #[tauri::command]
 pub fn analyze_crash_log(state: State<AppState>, id: String, filename: String) -> Result<CrashDiagnosis, String> {
+    crate::fsutil::validate_id(&id, "实例")?;
+    if filename.is_empty() || filename.contains('/') || filename.contains('\\') || filename == ".." || filename == "." {
+        return Err("非法文件名".into());
+    }
     let inst_dir = state.root.join("instances").join(&id);
     let crash_path = if filename.starts_with("crash-") {
         inst_dir.join("crash-reports").join(&filename)
@@ -85,6 +89,10 @@ pub fn analyze_crash_log(state: State<AppState>, id: String, filename: String) -
 /// Read the raw content of a crash report or hs_err log.
 #[tauri::command]
 pub fn get_crash_report_content(state: State<AppState>, id: String, filename: String) -> Result<String, String> {
+    crate::fsutil::validate_id(&id, "实例")?;
+    if filename.is_empty() || filename.contains('/') || filename.contains('\\') || filename == ".." || filename == "." {
+        return Err("非法文件名".into());
+    }
     let inst_dir = state.root.join("instances").join(&id);
     let path = if filename.starts_with("crash-") {
         inst_dir.join("crash-reports").join(&filename)

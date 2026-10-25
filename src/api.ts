@@ -33,6 +33,7 @@ import type {
   Settings,
   ShimuConfig,
   ShimuDownloadResult,
+  YggOauthConfig,
   ShimuCategory,
   ShimuPage,
   ShimuPost,
@@ -796,6 +797,31 @@ export const api = {
       "yggdrasil_textures",
       { server, profileId }
     ),
+
+  // ---------------------------------------------------------------
+  // LittleSkin OAuth2（Yggdrasil Connect）：授权码流登录皮肤站账号
+  // 仅在配置了 client_id 时才在界面露出入口（「有专门设置的才有」）
+  // client_secret 只在 Rust 侧使用，前端只拿到「配没配」
+  // ---------------------------------------------------------------
+  /** 当前接入配置（configured 决定是否露出 OAuth2 登录入口） */
+  yggdrasilOauthConfig: () => invoke<YggOauthConfig>("yggdrasil_oauth_config"),
+  /** 写入 client_id / client_secret（仅 dev 构建；secret 留空表示保持原值） */
+  yggdrasilSetCredentials: (clientId: string, clientSecret?: string) =>
+    invoke<YggOauthConfig>("yggdrasil_set_credentials", { clientId, clientSecret }),
+  /** 第一步：生成授权页地址（用系统浏览器打开） */
+  yggdrasilOauthStart: () =>
+    invoke<{ url: string; state: string; redirectUri: string }>("yggdrasil_oauth_start"),
+  /** 第三步：授权码换 OAuth token + 拉角色列表（多角色时前端展示选择） */
+  yggdrasilOauthComplete: (code: string, state: string) =>
+    invoke<{
+      profiles: { id: string; name: string }[];
+      server: string;
+      serverName: string;
+      links: { homepage: string; register: string };
+    }>("yggdrasil_oauth_complete", { code, state }, { net: true }),
+  /** 第四步：为选定角色签发 Minecraft 令牌并登记为皮肤站账号 */
+  yggdrasilOauthAddAccount: (profileId: string) =>
+    invoke<Account>("yggdrasil_oauth_add_account", { profileId }, { net: true }),
 
   // ---------------------------------------------------------------
   // 拾木空间（www.mcimg.com）OAuth 授权登录 + 开放 API

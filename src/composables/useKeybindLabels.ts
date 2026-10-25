@@ -4,9 +4,6 @@
  */
 import { useI18n } from "vue-i18n";
 
-/** 分组展示顺序；未登记的动作归入 other */
-export const KEYBIND_GROUPS = ["movement", "combat", "inventory", "multiplayer", "misc", "other"] as const;
-
 /** 各组内的动作与顺序（对齐游戏内控制设置） */
 const ORDERED: Record<string, string[]> = {
   movement: ["forward", "left", "back", "right", "jump", "sneak", "sprint"],

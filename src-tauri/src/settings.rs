@@ -118,7 +118,12 @@ pub fn persist(state: &AppState) -> Result<(), String> {
 ///
 /// 命令返回值在前端 DevTools 里一条 `await api.getSettings()` 就能拿到，
 /// 所以 API Key 这类东西绝不能出现在 `get_settings` / `set_settings` 的返回体里。
-const SECRET_FIELDS: [&str; 3] = ["curseforge_api_key", "translate_api_key", "shimu_client_secret"];
+const SECRET_FIELDS: [&str; 4] = [
+    "curseforge_api_key",
+    "translate_api_key",
+    "shimu_client_secret",
+    "littleskin_client_secret",
+];
 
 /// 给前端的设置视图：敏感字段替换成「是否已配置 + 掩码尾号」。
 ///
@@ -248,6 +253,13 @@ pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Set
     }
     if let Some(v) = patch.get("shimu_client_secret") {
         set_secret(&mut settings.shimu_client_secret, v);
+    }
+    // LittleSkin OAuth2 凭证：client_id 非敏感可直接回传，client_secret 走 set_secret
+    if let Some(v) = patch.get("littleskin_client_id").and_then(|v| v.as_str()) {
+        settings.littleskin_client_id = v.trim().to_string();
+    }
+    if let Some(v) = patch.get("littleskin_client_secret") {
+        set_secret(&mut settings.littleskin_client_secret, v);
     }
     if let Some(v) = patch.get("selected_account") {
         settings.selected_account = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());
@@ -550,14 +562,32 @@ pub fn ensure_layout(root: &std::path::Path) -> std::io::Result<()> {
 
 /// Shared http client builder with a browser-ish UA.
 pub fn http_client(proxy_mode: &str, proxy: Option<&str>) -> reqwest::Client {
+    http_client_timed(
+        proxy_mode,
+        proxy,
+        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(60),
+    )
+}
+
+/// 与 [`http_client`] 使用完全相同的 UA / 代理配置，但可指定超时。
+///
+/// 供"探测类"请求使用：既要走用户配置的代理（否则配了代理也照样直连失败），
+/// 又要用短超时让坏源尽快失败、不拖住启动流程。
+pub fn http_client_timed(
+    proxy_mode: &str,
+    proxy: Option<&str>,
+    connect_timeout: std::time::Duration,
+    total_timeout: std::time::Duration,
+) -> reqwest::Client {
     let user_agent = format!("QookiX-Launcher/{} (desktop)", env!("CARGO_PKG_VERSION"));
     let base = || {
         reqwest::Client::builder()
             .user_agent(&user_agent)
             .gzip(true)
             .brotli(true)
-            .connect_timeout(std::time::Duration::from_secs(15))
-            .timeout(std::time::Duration::from_secs(60))
+            .connect_timeout(connect_timeout)
+            .timeout(total_timeout)
     };
     let mut builder = base();
     match proxy_mode {

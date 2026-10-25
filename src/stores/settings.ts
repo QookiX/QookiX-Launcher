@@ -23,17 +23,22 @@ export const useSettingsStore = defineStore("settings", {
     async load() {
       this.loading = true;
       try {
-        this.settings = await api.getSettings();
+        const s = await api.getSettings();
+        // 防御：后端偶尔返回 null/undefined（IPC 序列化异常、settings 文件损坏等）
+        // 不能用空值覆盖已有 settings——否则 isDark 翻转成 true，浅色模式瞬间失效。
+        if (s) this.settings = s;
       } finally {
         this.loading = false;
       }
     },
     async patch(patch: Record<string, unknown>) {
-      this.settings = await api.setSettings(patch);
+      const s = await api.setSettings(patch);
+      if (s) this.settings = s;
     },
     async save() {
       if (this.settings) {
-        this.settings = await api.setSettings(this.settings as unknown as Record<string, unknown>);
+        const s = await api.setSettings(this.settings as unknown as Record<string, unknown>);
+        if (s) this.settings = s;
       }
     },
     /** Fetch detected Java, reusing the cache unless `force` (查找 Java). */

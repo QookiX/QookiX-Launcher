@@ -980,7 +980,7 @@ onBeforeUnmount(() => {
 }
 .cw-warn {
   font-size: 11px;
-  color: #e0a000;
+  color: var(--warn);
   background: rgba(224, 160, 0, 0.08);
   border: 1px solid rgba(224, 160, 0, 0.25);
   border-radius: 8px;

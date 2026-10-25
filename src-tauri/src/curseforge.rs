@@ -721,7 +721,7 @@ async fn install_modpack_inner(
     let pairs = manifest_file_pairs(&manifest);
     let mut metas: Vec<(u64, u64, Value)> = Vec::with_capacity(pairs.len());
     for (idx, (pid, fid)) in pairs.iter().enumerate() {
-        let _ = crate::install::emit_progress(
+        crate::install::emit_progress(
             &app,
             task_id,
             "modpack",

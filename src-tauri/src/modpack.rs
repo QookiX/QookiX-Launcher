@@ -464,6 +464,7 @@ mod tests {
             install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
+            ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),

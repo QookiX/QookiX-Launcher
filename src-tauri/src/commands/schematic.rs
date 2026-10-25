@@ -785,7 +785,7 @@ impl SessionRegion {
 // ---------------------------------------------------------------------------
 
 fn volume(size: [u32; 3]) -> u64 {
-    size[0] as u64 * size[1] as u64 * size[2] as u64
+    (size[0] as u64).saturating_mul(size[1] as u64).saturating_mul(size[2] as u64)
 }
 
 fn validate_volume(size: [u32; 3]) -> Result<(), String> {
@@ -812,31 +812,28 @@ fn signed_region_bounds(
     position: [i32; 3],
     signed_size: [i32; 3],
 ) -> Result<([i32; 3], [i32; 3]), String> {
-    let min = [
-        position[0].min(position[0] + signed_size[0] - 1),
-        position[1].min(position[1] + signed_size[1] - 1),
-        position[2].min(position[2] + signed_size[2] - 1),
-    ];
-    let max = [
-        position[0].max(position[0] + signed_size[0] - 1),
-        position[1].max(position[1] + signed_size[1] - 1),
-        position[2].max(position[2] + signed_size[2] - 1),
-    ];
+    let mut min = [0i32; 3];
+    let mut max = [0i32; 3];
+    for axis in 0..3 {
+        let end = position[axis]
+            .checked_add(signed_size[axis])
+            .and_then(|v| v.checked_sub(1))
+            .ok_or("区域坐标溢出")?;
+        min[axis] = position[axis].min(end);
+        max[axis] = position[axis].max(end);
+    }
     Ok((min, max))
 }
 
 fn checked_region_max(min: [i32; 3], size: [u32; 3]) -> Result<[i32; 3], String> {
-    let max = [
-        min[0]
-            .checked_add(size[0] as i32 - 1)
-            .ok_or("区域坐标溢出")?,
-        min[1]
-            .checked_add(size[1] as i32 - 1)
-            .ok_or("区域坐标溢出")?,
-        min[2]
-            .checked_add(size[2] as i32 - 1)
-            .ok_or("区域坐标溢出")?,
-    ];
+    let mut max = [0i32; 3];
+    for axis in 0..3 {
+        let end = (min[axis] as i64)
+            .checked_add(size[axis] as i64)
+            .and_then(|v| v.checked_sub(1))
+            .ok_or("区域坐标溢出")?;
+        max[axis] = i32::try_from(end).map_err(|_| "区域坐标溢出".to_string())?;
+    }
     Ok(max)
 }
 
@@ -925,6 +922,7 @@ fn resolve_source(
             {
                 return Err("非法实例投影路径".into());
             }
+            crate::fsutil::validate_id(instance_id, "实例")?;
             let dir = state
                 .instances_dir()
                 .join(instance_id)
@@ -968,6 +966,7 @@ pub fn schematic_preview_list_instance_files(
     state: tauri::State<'_, crate::state::AppState>,
     instance_id: String,
 ) -> Result<Vec<InstanceSchematicFile>, String> {
+    crate::instances::validate_instance_id(&instance_id)?;
     let dir = state.instances_dir().join(&instance_id).join("schematics");
     if !dir.is_dir() {
         return Ok(Vec::new());
@@ -1156,9 +1155,11 @@ mod tests {
 
         const BASE: usize = CHUNK_VOLUME;
         // 西面：(i=y, j=z)，世界 (-1,5,7) 是石头
-        assert_eq!(word(BASE + 0 * 256 + 5 * 16 + 7), inside, "西邻面索引应为 y*16+z");
+        // 西面 i=0：邻面偏移 0*256 省略（避免 erasing_op），即 y*16+z
+        assert_eq!(word(BASE + 5 * 16 + 7), inside, "西邻面索引应为 y*16+z");
         // 东面上同一个位置应该是空气
-        assert_eq!(word(BASE + 1 * 256 + 5 * 16 + 7), 0, "东边没有方块");
+        // 东面 i=1：邻面偏移 1*256 = 256
+        assert_eq!(word(BASE + 256 + 5 * 16 + 7), 0, "东边没有方块");
         // 下面：(i=z, j=x)，世界 (2,-1,4) 没东西
         assert_eq!(word(BASE + 2 * 256 + 4 * 16 + 2), 0);
         // 北面：(i=y, j=x)，世界 (2,3,-1) 没东西
@@ -1185,6 +1186,7 @@ pub fn copy_file_to_instance_schematics(
     instance_id: String,
     filename: Option<String>,
 ) -> Result<String, String> {
+    crate::instances::validate_instance_id(&instance_id)?;
     let src = std::path::Path::new(&source_path);
     if !src.is_file() {
         return Err(format!("源文件不存在: {}", source_path));
@@ -1196,6 +1198,9 @@ pub fn copy_file_to_instance_schematics(
         .map(|s| s.trim().to_string())
         .or_else(|| src.file_name().map(|f| f.to_string_lossy().to_string()))
         .unwrap_or_else(|| "schematic".to_string());
+    if !crate::util::is_safe_filename(&raw_name) {
+        return Err("非法文件名".into());
+    }
     let mut dest = dir.join(&raw_name);
     if dest.exists() {
         let p = std::path::Path::new(&raw_name);

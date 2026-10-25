@@ -15,7 +15,8 @@ pub const DOWNLOAD_URL: &str = "https://github.com/burningtnt/Terracotta/release
 /// 陶瓦联机 GitHub 仓库
 const GITHUB_REPO: &str = "burningtnt/Terracotta";
 /// GitHub 加速代理前缀（空串 = 直连）。中国大陆无法直连 GitHub 时按顺序回退。
-const GITHUB_PROXIES: &[&str] = &[
+/// 也被 `yggdrasil` 复用：皮肤站 authlib-injector 的 jar 同样只在 GitHub 上。
+pub(crate) const GITHUB_PROXIES: &[&str] = &[
     "",
     "https://gh-proxy.com/",
     "https://ghproxy.net/",
@@ -25,7 +26,7 @@ const GITHUB_PROXIES: &[&str] = &[
 ];
 
 /// 为 GitHub 地址套上代理前缀
-fn proxied(url: &str, proxy: &str) -> String {
+pub(crate) fn proxied(url: &str, proxy: &str) -> String {
     if proxy.is_empty() {
         url.to_string()
     } else {

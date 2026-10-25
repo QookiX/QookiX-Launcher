@@ -76,6 +76,14 @@ pub struct Settings {
     /// 敏感：下发给前端前必须过 `settings::frontend_view`。
     #[serde(default)]
     pub shimu_client_secret: Option<String>,
+    /// LittleSkin OAuth2 应用 ID（用于「通过 OAuth 访问 Yggdrasil API」）。
+    /// 空则回退到 LITTLESKIN_CLIENT_ID 编译期常量。非敏感，可下发前端。
+    #[serde(default)]
+    pub littleskin_client_id: String,
+    /// LittleSkin OAuth2 应用密钥，**仅用于后端换 token**。
+    /// 敏感：下发给前端前必须过 `settings::frontend_view`。
+    #[serde(default)]
+    pub littleskin_client_secret: Option<String>,
     /// Currently selected account (uuid) used when an instance has no override
     pub selected_account: Option<String>,
     /// 下载代理模式："system"（系统代理，默认）| "direct"（直连）| "custom"（自定义）
@@ -145,6 +153,8 @@ impl Default for Settings {
             ms_client_id: "00000000-0000-0000-0000-000000000000".into(),
             shimu_client_id: String::new(),
             shimu_client_secret: None,
+            littleskin_client_id: String::new(),
+            littleskin_client_secret: None,
             selected_account: None,
             proxy_mode: "system".into(),
             proxy: None,
@@ -709,6 +719,19 @@ pub fn maven_to_path(name: &str) -> Option<PathBuf> {
     }
     let (group, artifact, version) = (parts[0], parts[1], parts[2]);
     let classifier = if parts.len() > 3 { parts[3] } else { "" };
+    // 路径穿越防护：逐段拒绝空 / "." / ".." / 含路径分隔符的片段。maven 坐标来自
+    // version JSON（可经恶意整合包或自定义镜像注入），不校验则能拼出逃出 libraries_dir
+    // 的路径（如 group=.. 或 version=1.0/../../evil），进而任意写库目录外文件。
+    let bad = |s: &str| {
+        s.is_empty() || s == "." || s == ".." || s.contains('/') || s.contains('\\')
+    };
+    if group.split('.').any(bad)
+        || bad(artifact)
+        || bad(version)
+        || (!classifier.is_empty() && bad(classifier))
+    {
+        return None;
+    }
     let mut p = PathBuf::new();
     for seg in group.split('.') {
         p.push(seg);

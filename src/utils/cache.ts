@@ -24,11 +24,6 @@ export function cacheSet<T>(key: string, data: T, ttlMs: number) {
   store.set(key, { data, expire: Date.now() + ttlMs });
 }
 
-/** 清空全部缓存 */
-export function cacheClear() {
-  store.clear();
-}
-
 // —— 持久化层（localStorage，跨会话）——
 // Tauri webview2 的 localStorage 默认持久化到磁盘，应用重启后仍在。
 // 用于发现页等"有缓存就不重新调 API"的场景。

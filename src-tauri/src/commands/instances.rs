@@ -199,6 +199,7 @@ pub fn open_instance_folder(
     instance_id: String,
     sub: Option<String>,
 ) -> Result<(), String> {
+    crate::instances::validate_instance_id(&instance_id)?;
     let mut dir = state.instances_dir().join(&instance_id);
     if let Some(s) = sub {
         if !SUBFOLDERS.contains(&s.as_str()) {
@@ -222,6 +223,7 @@ pub const SUBFOLDERS: [&str; 9] = [
 
 #[tauri::command]
 pub fn list_instance_folders(state: State<AppState>, instance_id: String) -> Result<Value, String> {
+    crate::instances::validate_instance_id(&instance_id)?;
     let dir = state.instances_dir().join(&instance_id);
     let folders: Vec<Value> = SUBFOLDERS
         .iter()
@@ -236,6 +238,7 @@ pub async fn list_instance_files(
     instance_id: String,
     sub: String,
 ) -> Result<Value, String> {
+    crate::instances::validate_instance_id(&instance_id)?;
     if !SUBFOLDERS.contains(&sub.as_str()) {
         return Err("非法目录".into());
     }

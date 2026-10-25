@@ -17,6 +17,7 @@ import {
 } from "./icons";
 import { useTasksStore } from "../stores/tasks";
 import { useServersStore } from "../stores/servers";
+import { useNewsStore } from "../stores/news";
 import { useSettingsStore } from "../stores/settings";
 import AccountChip from "./AccountChip.vue";
 import { titlebarThemeToggle } from "../composables/useDevFlags";
@@ -34,6 +35,7 @@ const route = useRoute();
 const router = useRouter();
 const tasks = useTasksStore();
 const servers = useServersStore();
+const newsStore = useNewsStore();
 const settings = useSettingsStore();
 const { t } = useI18n();
 
@@ -124,6 +126,15 @@ onMounted(async () => {
           @click="servers.requestCreate()"
         >
           <IconPlus class="tb-action-icon" /> {{ t("titlebar.createServer") }}
+        </button>
+        <button
+          v-if="route.name === 'browse' && newsStore.active"
+          class="tb-action"
+          :disabled="newsStore.loading"
+          @click="newsStore.refreshSignal++"
+        >
+          <IconRefresh class="tb-action-icon" />
+          {{ newsStore.loading ? t("news.refreshing") : t("common.refresh") }}
         </button>
         <button
           v-if="pageAction?.to"

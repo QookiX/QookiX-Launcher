@@ -14,7 +14,7 @@ import { useMessage } from "naive-ui";
 import AppIcon from "../components/AppIcon.vue";
 import OnboardingBar from "../components/OnboardingBar.vue";
 import type { ServerStatus } from "../types";
-import { IconClose, IconFolder, IconGlobe, IconPlay, IconBookOpen } from "../components/icons";
+import { IconClose, IconFolder, IconGlobe, IconPlay, IconBookOpen, IconGrid } from "../components/icons";
 import { useOnboarding } from "../composables/useOnboarding";
 
 const router = useRouter();
@@ -198,7 +198,7 @@ onBeforeRouteLeave(() => {
 
     <section v-if="validPins.length" class="pin-block">
       <div class="pin-grid">
-        <div v-for="p in validPins" :key="p.id" class="pin-card glass" @click="openInstance(p)">
+        <div v-for="p in validPins" :key="p.id" class="pin-card glass clickable" @click="openInstance(p)">
           <div class="pin-icon">
             <template v-if="p.type === 'server'">
               <img v-if="pinIconSrc(p)" :src="pinIconSrc(p)" class="pin-icon-img" alt="" />
@@ -247,6 +247,7 @@ onBeforeRouteLeave(() => {
 
     <section ref="sectionEl" class="section">
       <div v-if="!instances.instances.length" class="empty glass">
+        <div class="empty-icon"><IconGrid /></div>
         <p>{{ t("home.empty.noInstance") }}</p>
         <div class="home-empty-actions">
           <button class="btn primary" @click="router.push('/instances')">{{ t("home.empty.createFirst") }}</button>
@@ -368,7 +369,13 @@ onBeforeRouteLeave(() => {
   gap: 14px;
   padding: 18px;
   cursor: pointer;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.12s ease, border-color 0.12s ease;
   animation: home-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+/* 悬停：阴影加深，不位移；:not(:active) 排除按下态让 .clickable:active 的 scale(0.97) 接管按压 */
+.pin-card:hover:not(:active) {
+  box-shadow: var(--card-shadow-hover);
 }
 .pin-icon {
   width: 46px;
@@ -411,7 +418,7 @@ onBeforeRouteLeave(() => {
 }
 .pin-type.server {
   background: rgba(90, 176, 255, 0.15);
-  color: #5ab0ff;
+  color: var(--text-2);
 }
 .pin-type.world {
   background: rgba(122, 208, 138, 0.15);
@@ -444,7 +451,7 @@ onBeforeRouteLeave(() => {
   width: 4px;
   height: 10px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--w-08);
 }
 .pin-status .bars i.on {
   background: currentColor;
@@ -521,6 +528,10 @@ onBeforeRouteLeave(() => {
   flex-direction: column;
   gap: 12px;
   align-items: center;
+}
+.empty-icon {
+  font-size: 36px;
+  opacity: 0.6;
 }
 .home-empty-actions {
   display: flex;

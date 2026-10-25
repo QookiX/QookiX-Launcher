@@ -279,11 +279,11 @@ function typeLabel(a: Account) {
 }
 .acctp-type.microsoft {
   background: var(--info-15);
-  color: #7cb8f5;
+  color: var(--text-2);
 }
 .acctp-type.yggdrasil {
   background: var(--success-12);
-  color: #4ec9a0;
+  color: var(--success);
 }
 .acctp-type.offline {
   background: var(--w-08);

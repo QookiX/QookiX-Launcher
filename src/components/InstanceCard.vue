@@ -20,7 +20,7 @@ import {
 import type { Instance } from "../types";
 import { useI18n } from "vue-i18n";
 
-const props = defineProps<{ instance: Instance }>();
+const props = defineProps<{ instance: Instance; animationDelay?: string }>();
 const emit = defineEmits<{ move: [instance: Instance] }>();
 const instances = useInstancesStore();
 const pins = usePinsStore();
@@ -145,7 +145,7 @@ function confirmDelete() {
 </script>
 
 <template>
-  <div class="inst-card glass clickable" :class="{ 'menu-open': menuOpen }" @click="router.push(`/instance/${instance.id}`)">
+  <div class="inst-card glass clickable" :class="{ 'menu-open': menuOpen }" :style="animationDelay ? { animationDelay } : undefined" @click="router.push(`/instance/${instance.id}`)">
     <div class="card-top">
       <div class="icon"><AppIcon :name="instance.icon" /></div>
       <div class="title-wrap">
@@ -245,6 +245,14 @@ function confirmDelete() {
   flex-direction: column;
   gap: 14px;
   position: relative;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.12s ease, border-color 0.12s ease;
+}
+/* 悬停：阴影加深传达可交互，但不位移（用户偏好卡片不上升）。
+   z-index 抬高让加深的阴影不被相邻卡片遮挡；:not(:active) 让按下态交给 .clickable:active 的 scale(0.97) */
+.inst-card:hover:not(:active) {
+  z-index: 2;
+  box-shadow: var(--card-shadow-hover);
 }
 /* 菜单弹出时把整张卡片抬到最上层，避免被相邻卡片遮挡 */
 .inst-card.menu-open {

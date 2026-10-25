@@ -1132,7 +1132,7 @@ async function save() {
 .kb-key.conflict {
   background: rgba(229, 83, 75, 0.28);
   border-color: var(--danger);
-  color: #ffb4ad;
+  color: var(--danger);
 }
 /* 多媒体键：纯装饰，游戏内无法绑定 */
 .kb-key.decor {

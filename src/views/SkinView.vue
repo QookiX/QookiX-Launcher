@@ -1002,7 +1002,7 @@ onMounted(async () => {
   font-weight: 600;
 }
 .preview-label.applied {
-  color: #6fcf6f;
+  color: var(--success);
   background: rgba(60, 180, 60, 0.2);
 }
 .preview-info {
@@ -1337,7 +1337,6 @@ onMounted(async () => {
 .skin-card:hover {
   background: var(--w-07);
   border-color: var(--accent-35);
-  transform: translateY(-1px);
 }
 .skin-card:active {
   transform: scale(0.97);

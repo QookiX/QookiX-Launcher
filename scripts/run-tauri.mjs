@@ -12,7 +12,7 @@
 // When the variable is unset the NSIS template falls back to the classic
 // (dark-styled) wizard, so building still works.
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -73,6 +73,22 @@ if (process.platform === 'win32' && existsSync(uiExe)) {
   env.QOOKIX_INSTALLER_UI = uiExe
 } else {
   delete env.QOOKIX_INSTALLER_UI
+}
+
+// 开发期凭证（client_id / secret 等）放在 gitignore 的 .env.local 里，避免提交到仓库。
+// 这里在调用 tauri CLI 前把它们注入子进程环境，Rust 侧的 option_env! 即可在编译期读到。
+// 仅覆盖未设置的变量：留空的占位行不会清掉已在 shell 里设好的同名变量。
+const envLocal = path.join(projectRoot, '.env.local')
+if (existsSync(envLocal)) {
+  for (const line of readFileSync(envLocal, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const eq = trimmed.indexOf('=')
+    if (eq < 0) continue
+    const key = trimmed.slice(0, eq).trim()
+    const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '')
+    if (key && val && env[key] === undefined) env[key] = val
+  }
 }
 
 const result = spawnSync('tauri', args, {

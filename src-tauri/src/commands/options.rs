@@ -46,6 +46,7 @@ pub async fn keybind_action_labels(
     state: State<'_, AppState>,
     instance_id: String,
 ) -> Result<Value, String> {
+    crate::instances::validate_instance_id(&instance_id)?;
     // 读 jar / 资源索引是同步 IO，放到阻塞线程池，避免卡住 UI
     let inst_dir = state.instances_dir().join(&instance_id);
     let version_dir = crate::paths::resolve_version_dir(&state, &instance_id);

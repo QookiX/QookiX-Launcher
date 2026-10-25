@@ -327,7 +327,7 @@ async function moveTo(groupId: string | null) {
               v-for="inst in s.items"
               :key="inst.id"
               :instance="inst"
-              :style="{ animationDelay: cardDelay(inst.id) }"
+              :animation-delay="cardDelay(inst.id)"
               @move="movingInstance = $event"
             />
             <p v-if="!s.items.length" class="group-empty">{{ t("instances.groupEmpty") }}</p>
@@ -341,7 +341,7 @@ async function moveTo(groupId: string | null) {
           v-for="inst in filtered"
           :key="inst.id"
           :instance="inst"
-          :style="{ animationDelay: cardDelay(inst.id) }"
+          :animation-delay="cardDelay(inst.id)"
           @move="movingInstance = $event"
         />
         <p v-if="!filtered.length" class="group-empty">{{ t("instances.filteredGroupEmpty") }}</p>
@@ -469,21 +469,29 @@ async function moveTo(groupId: string | null) {
   padding: 6px 12px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--w-04);
+  /* 用 --panel 而非 --w-04：无背景图时仍是 4% 白（与原观感一致），有背景图时
+     自动升为半透深色磨砂底（见 :root.has-bg），配 backdrop-filter 与 .glass
+     面板同语言，标签不再被背景图"吃掉"、也不再游离于主题之外。 */
+  background: var(--panel);
   color: var(--text-2);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
 }
 .chip:hover {
-  background: var(--w-08);
+  background: var(--panel-hover);
   color: var(--text-1);
 }
 .chip.active {
   border-color: var(--accent);
   color: var(--accent);
-  background: var(--accent-soft);
+  /* 选中态：在磨砂底上叠一层 accent 染色，既保留背景图上的可读性，
+     又有明确的主题色识别（比单独的 14% accent 更稳）。 */
+  background-color: var(--panel);
+  background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
 }
 .chip-count {
   font-size: 11px;

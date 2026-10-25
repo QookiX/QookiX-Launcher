@@ -17,7 +17,6 @@ import {
   IconCompass,
   IconGrid,
   IconHome,
-  IconNewspaper,
   IconSkin,
   IconStop,
   IconTool,
@@ -105,7 +104,6 @@ async function launchSelected() {
   }
 }
 
-// 新闻可隐藏：settings.show_news 为 false 时不显示该导航项（默认显示）
 const nav = computed(() => {
   const hidden = new Set(settingsStore.settings?.hidden_nav_items ?? []);
   const list = [
@@ -117,9 +115,7 @@ const nav = computed(() => {
     { name: "toolbox", label: t("nav.toolbox"), icon: IconTool, to: "/toolbox" },
     { name: "timemachine", label: t("nav.timemachine"), icon: IconClock, to: "/timemachine" },
   ];
-  if (settingsStore.settings?.show_news ?? true) {
-    list.push({ name: "news", label: t("nav.news"), icon: IconNewspaper, to: "/news" });
-  }
+  // 新闻已并入「发现」页（右上角入口 + 抽屉），不再作为独立导航项。
   // 设置 / 下载入口已移至标题栏，不再显示在 Dock
   return list.filter((n) => n.name === "home" || !hidden.has(n.name));
 });
@@ -414,6 +410,7 @@ async function stopAll() {
    悬停激活项时 hover 的背景色覆盖（背景仍会响应）。 */
 .nav-item.active {
   color: var(--accent);
+  background: var(--accent-14);
   grid-template-columns: 48px 1fr 12px;
 }
 .nav-item.active .nav-tip {
@@ -628,7 +625,7 @@ async function stopAll() {
   flex-shrink: 0;
   border-radius: 10px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--w-10);
   display: flex;
   align-items: center;
   justify-content: center;

@@ -21,8 +21,6 @@ import {
   IconDoorOpen,
   IconDownload,
   IconExternal,
-  IconGlobe,
-  IconPackage,
   IconPlay,
   IconPlus,
   IconRefresh,
@@ -31,6 +29,7 @@ import {
   IconTrash,
   IconUsers,
 } from "../components/icons";
+import McMotd from "../components/McMotd.vue";
 
 const router = useRouter();
 const { t } = useI18n();
@@ -479,41 +478,41 @@ onUnmounted(() => stopTcPoll());
           :style="{ animationDelay: cardDelay(i) }"
           @click="router.push(`/multiplayer/${s.id}`)"
         >
-          <div class="card-head">
-            <span
-              class="core-badge"
-              :style="{ color: CORE_COLORS[s.core], borderColor: CORE_COLORS[s.core] }"
-            >
-              {{ CORE_LABELS[s.core] }}
-            </span>
-            <h3 class="card-name">{{ s.name }}</h3>
+          <div class="card-top">
+            <div class="icon"><IconServer /></div>
+            <div class="title-wrap">
+              <div class="name text-ellipsis">{{ s.name }}</div>
+              <div class="meta">
+                <span
+                  class="core-badge"
+                  :style="{ color: CORE_COLORS[s.core], borderColor: CORE_COLORS[s.core] }"
+                >{{ CORE_LABELS[s.core] }}</span>
+                <span class="mc">{{ s.mc_version }}</span>
+                <span class="lv">:{{ s.port }}</span>
+              </div>
+            </div>
           </div>
-          <div class="card-tags">
-            <span class="tag" :title="t('multiplayer.card.version')">
-              <IconPackage />
-              {{ s.mc_version }}
-            </span>
-            <span class="tag" :title="t('multiplayer.card.port')">
-              <IconGlobe />
-              {{ s.port }}
-            </span>
+          <div class="card-motd">
+            <McMotd :text="s.motd" default-text="A Minecraft Server" />
           </div>
-          <div class="card-motd">{{ s.motd || "A Minecraft Server" }}</div>
           <div class="card-foot" @click.stop>
-            <span class="status" :class="{ on: servers.isRunning(s.id) }">
-              {{ servers.isRunning(s.id) ? t('multiplayer.card.running') : t('multiplayer.card.stopped') }}
-            </span>
-            <div class="ops">
+            <div class="foot-info">
+              <span class="status" :class="{ on: servers.isRunning(s.id) }">
+                <i v-if="servers.isRunning(s.id)" class="status-dot"></i>
+                {{ servers.isRunning(s.id) ? t('multiplayer.card.running') : t('multiplayer.card.stopped') }}
+              </span>
+            </div>
+            <div class="actions">
               <button
-                class="op"
-                :class="servers.isRunning(s.id) ? 'stop' : 'start'"
+                class="icon-btn play"
+                :class="{ stop: servers.isRunning(s.id) }"
+                :title="servers.isRunning(s.id) ? t('multiplayer.card.stop') : t('multiplayer.card.start')"
                 @click="toggleRun(s.id, servers.isRunning(s.id))"
               >
                 <IconStop v-if="servers.isRunning(s.id)" />
                 <IconPlay v-else />
-                {{ servers.isRunning(s.id) ? t('multiplayer.card.stop') : t('multiplayer.card.start') }}
               </button>
-              <button class="op danger" :title="t('multiplayer.card.delete')" @click="confirmDelete(s.id, s.name)">
+              <button class="icon-btn danger" :title="t('multiplayer.card.delete')" @click="confirmDelete(s.id, s.name)">
                 <IconTrash />
               </button>
             </div>
@@ -982,9 +981,16 @@ onUnmounted(() => stopTcPoll());
   flex-direction: column;
   gap: 14px;
   cursor: pointer;
+  position: relative;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.12s ease, border-color 0.12s ease;
   /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
      未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
   animation: mp-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+.server-card:hover:not(:active) {
+  z-index: 2;
+  box-shadow: var(--card-shadow-hover);
 }
 @keyframes mp-card-enter {
   from {
@@ -996,120 +1002,149 @@ onUnmounted(() => stopTcPoll());
     opacity: 1;
   }
 }
-.card-head {
+/* —— 服务器卡片：与 InstanceCard 同一套结构（card-top + card-foot）与按钮规格 —— */
+.card-top {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 13px;
+}
+.icon {
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 21px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.title-wrap {
+  flex: 1;
+  min-width: 0;
+}
+.name {
+  font-weight: 600;
+  font-size: 15px;
+  margin-bottom: 5px;
+}
+.meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
 }
 .core-badge {
   font-size: 11px;
   font-weight: 700;
-  padding: 3px 9px;
-  border-radius: 999px;
+  padding: 1px 7px;
+  border-radius: 6px;
   border: 1px solid;
-  background: var(--w-04);
   letter-spacing: 0.02em;
   flex-shrink: 0;
 }
-.card-name {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.card-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 11px;
-  font-weight: 600;
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: var(--w-04);
-  border: 1px solid var(--border);
+.mc {
   color: var(--text-2);
-  line-height: 1.4;
+  font-weight: 600;
 }
-.tag svg {
-  width: 12px;
-  height: 12px;
-  opacity: 0.85;
-  flex-shrink: 0;
+.lv {
+  color: var(--text-3);
 }
+/* 服务器描述（MOTD）：MC 客户端风格的彩色文本区，支持 § / & 格式化码 */
 .card-motd {
-  font-size: 12px;
+  font-size: 13px;
+  line-height: 1.5;
   color: var(--text-2);
-  font-style: italic;
-  padding: 0 2px;
+  min-width: 0;
+  /* 限制最多两行，超出省略，避免长 MOTD 撑高卡片 */
+  max-height: 2.6em;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .card-foot {
   display: flex;
-  align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  margin-top: 2px;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding-top: 11px;
 }
-.status {
-  font-size: 11px;
-  font-weight: 600;
+.foot-info {
+  font-size: 12px;
   color: var(--text-3);
-  padding: 3px 8px;
-  border-radius: 999px;
-  background: var(--w-05);
-}
-.status.on {
-  color: #57c98a;
-  background: rgba(87, 201, 138, 0.14);
-}
-.ops {
   display: flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
 }
-.op {
+.status {
+  font-weight: 600;
+  color: var(--text-3);
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.13s;
+  gap: 6px;
 }
-.op:hover {
-  background: var(--w-09);
+.status.on {
+  color: var(--success);
+}
+/* 运行中状态点：雷达式扩散环，让"运行中"有呼吸感 */
+.status-dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--success);
+  flex-shrink: 0;
+}
+.status-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--success);
+  opacity: 0.5;
+  animation: status-pulse 1.8s ease-out infinite;
+}
+@keyframes status-pulse {
+  0% { transform: scale(1); opacity: 0.5; }
+  100% { transform: scale(2.6); opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-dot::after { animation: none; opacity: 0; }
+}
+.actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.icon-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.12s;
+}
+.icon-btn:hover {
+  background: var(--w-08);
   color: var(--text-1);
 }
-.op.start {
+.icon-btn.play {
   color: var(--accent);
-  border-color: var(--accent-35);
-}
-.op.start:hover {
+  border-color: var(--accent-04);
   background: var(--accent-soft);
 }
-.op.stop {
-  color: #e0a85a;
+.icon-btn.play.stop {
+  color: var(--warn);
   border-color: rgba(224, 168, 90, 0.4);
-}
-.op.stop:hover {
   background: rgba(224, 168, 90, 0.12);
 }
-.op.danger:hover {
+.icon-btn.danger:hover {
   color: var(--danger);
   border-color: var(--danger-50);
 }

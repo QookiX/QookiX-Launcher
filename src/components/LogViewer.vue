@@ -6,6 +6,7 @@ import { useTasksStore } from "../stores/tasks";
 import { api } from "../api";
 import { IconClose, IconCopy, IconDownload } from "./icons";
 import { useI18n } from "vue-i18n";
+import { copyText } from "../utils/clipboard";
 
 const props = defineProps<{ instanceId: string }>();
 const tasks = useTasksStore();
@@ -40,20 +41,9 @@ async function copyAll() {
     message.info(t("logViewer.noLogContent"));
     return;
   }
-  try {
-    await navigator.clipboard.writeText(logText.value);
-    message.success(t("logViewer.copiedAll"));
-  } catch {
-    // fallback for restricted contexts
-    const ta = document.createElement("textarea");
-    ta.value = logText.value;
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    if (ok) message.success(t("logViewer.copiedAll"));
-    else message.error(t("logViewer.copyFailed"));
-  }
+  const ok = await copyText(logText.value);
+  if (ok) message.success(t("logViewer.copiedAll"));
+  else message.error(t("logViewer.copyFailed"));
 }
 
 async function exportLog() {

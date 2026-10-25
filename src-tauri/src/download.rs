@@ -233,7 +233,7 @@ pub async fn download_many(
             Err(e) => errors.push(e.to_string()),
         }
     }
-    let _ = emitter.abort();
+    emitter.abort();
     if state.install_cancel.load(Ordering::Relaxed) {
         state.install_cancel.store(false, Ordering::Relaxed);
         return Err("下载已取消".into());
@@ -731,6 +731,7 @@ mod diag {
                 install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
                 ms_flow: Arc::new(Mutex::new(None)),
                 shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
+                ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
                 java_cache: Mutex::new(None),
                 terracotta: Mutex::new(None),
                 pending_update: Mutex::new(None),

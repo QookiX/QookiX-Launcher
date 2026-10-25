@@ -2049,7 +2049,6 @@ onBeforeUnmount(() => {
   transition: transform 0.3s cubic-bezier(0.22, 1, 0.36, 1), box-shadow 0.3s ease;
 }
 .shot-pic:hover {
-  transform: translateY(-3px);
   box-shadow: 0 12px 28px var(--k-25);
 }
 .shot-pic img {

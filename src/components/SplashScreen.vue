@@ -123,7 +123,9 @@ function onLeave() {
   max-width: 72vw;
   height: 4px;
   border-radius: 999px;
-  background: var(--w-08);
+  /* 启动屏恒为深色背景（下方硬编码渐变），不随主题变；用固定白色叠加而非 --w-08，
+     否则浅色主题下 --w-08 为黑色叠加、在深色启动屏上不可见 */
+  background: rgba(255, 255, 255, 0.08);
   overflow: hidden;
   margin-top: 4px;
 }

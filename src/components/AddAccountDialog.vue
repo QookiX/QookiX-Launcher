@@ -4,6 +4,7 @@ import { NButton, NInput, NModal, NSelect, NTabs, NTabPane, useMessage } from "n
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useAccountsStore } from "../stores/accounts";
 import { useI18n } from "vue-i18n";
+import { copyText } from "../utils/clipboard";
 import { api } from "../api";
 import type { Account } from "../types";
 
@@ -58,15 +59,50 @@ const yggLoggingIn = ref(false);
 const yggAdding = ref(false);
 
 interface LoginResult {
-  accessToken: string;
-  clientToken: string;
+  /** 密码登录有；OAuth2 登录在选角色后才由后端签发，此处为空 */
+  accessToken?: string;
+  clientToken?: string;
   server: string;
   serverName: string;
   links: { homepage: string; register: string };
   profiles: { id: string; name: string }[];
+  /** 来自 OAuth2 流程：yggAdd 时改走 yggdrasil_oauth_add_account */
+  fromOauth?: boolean;
 }
 const yggResult = ref<LoginResult | null>(null);
 const chosenProfile = ref("");
+
+/** LittleSkin 是否已配置 OAuth2 接入（决定是否露出「OAuth2 登录」入口） */
+const yggOauthReady = computed(() => accounts.yggOauthConfig?.configured && serverChoice.value === "little");
+const yggOauthStarting = ref(false);
+
+async function yggOauthLogin() {
+  if (yggOauthStarting.value || accounts.yggOauthWaiting) return;
+  yggOauthStarting.value = true;
+  try {
+    await accounts.startYggOauth();
+  } catch (e) {
+    message.error(String(e));
+  } finally {
+    yggOauthStarting.value = false;
+  }
+}
+
+// OAuth2 回调拿到多角色时，把列表塞进 yggResult 复用既有角色选择 UI
+watch(
+  () => accounts.yggOauthResult,
+  (r) => {
+    if (!r) return;
+    yggResult.value = {
+      server: r.server,
+      serverName: r.serverName,
+      links: r.links,
+      profiles: r.profiles,
+      fromOauth: true,
+    };
+    chosenProfile.value = "";
+  },
+);
 
 const serverOptions = computed(() => [
   { label: "LittleSkin", value: "little" },
@@ -129,16 +165,22 @@ async function yggAdd() {
   }
   yggAdding.value = true;
   try {
-    const acc = await api.yggdrasilAddAccount({
-      serverUrl: r.server,
-      serverName: r.serverName,
-      accessToken: r.accessToken,
-      clientToken: r.clientToken,
-      profileId: profile.id,
-      profileName: profile.name,
-    });
-    await accounts.refresh();
-    await accounts.select(acc.uuid);
+    let acc: Account;
+    if (r.fromOauth) {
+      // OAuth2 流程：Minecraft 令牌由后端用临时 OAuth token 签发
+      acc = await accounts.addYggOauthAccount(profile.id);
+    } else {
+      acc = await api.yggdrasilAddAccount({
+        serverUrl: r.server,
+        serverName: r.serverName,
+        accessToken: r.accessToken || "",
+        clientToken: r.clientToken || "",
+        profileId: profile.id,
+        profileName: profile.name,
+      });
+      await accounts.refresh();
+      await accounts.select(acc.uuid);
+    }
     message.success(t("accountChip.yggAccountAdded", { username: acc.username }));
     show.value = false;
     emit("added", acc);
@@ -151,19 +193,6 @@ async function yggAdd() {
 
 // ---- 微软账号（设备码 OAuth） ----
 const msStarting = ref(false);
-
-async function copyText(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
-  } catch {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    document.body.appendChild(ta);
-    ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-  }
-}
 
 async function startMs() {
   if (msStarting.value || accounts.msPolling) return;
@@ -217,6 +246,9 @@ function open() {
   chosenProfile.value = "";
   accounts.msFlow = null;
   accounts.msError = "";
+  accounts.yggOauthWaiting = false;
+  accounts.yggOauthResult = null;
+  void accounts.loadYggOauthConfig();
   show.value = true;
 }
 
@@ -224,6 +256,8 @@ function close() {
   show.value = false;
   accounts.msFlow = null;
   accounts.msError = "";
+  accounts.yggOauthWaiting = false;
+  accounts.yggOauthResult = null;
 }
 
 defineExpose({ open, close });
@@ -301,7 +335,7 @@ defineExpose({ open, close });
       <!-- 第三方认证 -->
       <n-tab-pane name="ygg" :tab="t('accountChip.addYggAccount')">
         <div class="qk-add-box">
-          <template v-if="!yggResult">
+          <template v-if="!yggResult && !accounts.yggOauthWaiting">
             <label class="qk-field-label">{{ t("accountChip.authSourceLabel") }}</label>
             <n-select
               v-model:value="serverChoice"
@@ -337,8 +371,19 @@ defineExpose({ open, close });
             <n-button type="primary" block :loading="yggLoggingIn" @click="yggLogin">
               {{ yggLoggingIn ? t("yggLogin.loggingIn") : t("yggLogin.login") }}
             </n-button>
+            <template v-if="yggOauthReady">
+              <div class="ygg-oauth-divider"><span>{{ t("yggLogin.oauthOr") }}</span></div>
+              <n-button block :loading="yggOauthStarting" @click="yggOauthLogin">
+                {{ t("yggLogin.oauthLogin") }}
+              </n-button>
+              <p class="qk-add-hint">{{ t("yggLogin.oauthHint") }}</p>
+            </template>
           </template>
-          <template v-else>
+          <template v-else-if="accounts.yggOauthWaiting">
+            <p class="qk-add-hint">{{ t("yggLogin.oauthWaiting") }}</p>
+            <n-button block @click="accounts.yggOauthWaiting = false">{{ t("yggLogin.oauthCancel") }}</n-button>
+          </template>
+          <template v-else-if="yggResult">
             <p class="qk-add-hint">{{ t("yggLogin.loginSuccess", { server: yggResult.serverName }) }}</p>
             <div class="ygg-profiles">
               <button
@@ -473,6 +518,21 @@ defineExpose({ open, close });
 .ygg-link:hover {
   text-decoration: underline;
 }
+.ygg-oauth-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text-3);
+  font-size: 12px;
+  margin: 2px 0;
+}
+.ygg-oauth-divider::before,
+.ygg-oauth-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--w-08);
+}
 .ygg-profiles {
   display: flex;
   flex-direction: column;
@@ -511,11 +571,11 @@ defineExpose({ open, close });
 .qkms-box p {
   margin: 0;
   font-size: 13px;
-  color: #c6c8d2;
+  color: var(--text-2);
   text-align: center;
 }
 .qkms-link {
-  color: #e89a4b;
+  color: var(--accent);
   font-size: 14px;
   word-break: break-all;
   cursor: pointer;
@@ -526,7 +586,7 @@ defineExpose({ open, close });
   font-weight: 800;
   letter-spacing: 10px;
   text-align: center;
-  color: #e89a4b;
+  color: var(--accent);
   background: var(--accent-08);
   border: 1px dashed var(--accent-04);
   border-radius: 12px;
@@ -535,11 +595,11 @@ defineExpose({ open, close });
 }
 .qkms-hint {
   font-size: 12px;
-  color: #8b8e9c;
+  color: var(--text-3);
 }
 .qkms-polling {
   font-size: 12px;
-  color: #e89a4b;
+  color: var(--accent);
 }
 .qkms-error-box {
   color: var(--danger);

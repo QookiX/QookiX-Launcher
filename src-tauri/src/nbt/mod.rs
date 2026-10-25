@@ -43,6 +43,7 @@ pub fn resolve_world(state: &AppState, instance_id: &str, world: &str) -> Result
         if instance_id.is_empty() {
             return Err("请先选择实例，或手动指定世界文件夹".into());
         }
+        crate::fsutil::validate_id(instance_id, "实例")?;
         saves_dir(state, instance_id).join(world)
     };
     if !path.is_dir() {
@@ -75,6 +76,7 @@ pub fn list_worlds(
     instance_id: &str,
     mut progress: impl FnMut(usize, usize, &str),
 ) -> Result<Vec<Json>, String> {
+    crate::fsutil::validate_id(instance_id, "实例")?;
     let saves = saves_dir(state, instance_id);
     if !saves.is_dir() {
         return Ok(Vec::new());

@@ -1,5 +1,4 @@
 import { createRouter, createWebHistory } from "vue-router";
-import { useSettingsStore } from "./stores/settings";
 import { trackNavStart, trackNavEnd, trackError } from "./loadingBar";
 import { setTransitionName } from "./composables/usePageTransition";
 import { openDownloadsDrawer } from "./composables/useDownloadsDrawer";
@@ -8,7 +7,8 @@ const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: "/", name: "home", component: () => import("./views/HomeView.vue"), meta: { titleKey: "nav.home", icon: "home" } },
-    { path: "/news", name: "news", component: () => import("./views/NewsView.vue"), meta: { titleKey: "nav.news", icon: "newspaper" } },
+    // 新闻已并入「发现」页（右上角入口 + 抽屉），旧地址 /news 重定向到 /browse
+    { path: "/news", name: "news", redirect: "/browse" },
     { path: "/browse", name: "browse", component: () => import("./views/BrowseView.vue"), meta: { titleKey: "nav.browse", icon: "compass" } },
     { path: "/instances", name: "instances", component: () => import("./views/InstancesView.vue"), meta: { titleKey: "nav.instances", icon: "grid", action: { textKey: "page.newInstance", icon: "plus", to: "/create" } } },
     { path: "/instance/:id", name: "instance", component: () => import("./views/InstanceDetailView.vue"), meta: { titleKey: "page.instanceDetail", icon: "grid" } },
@@ -39,21 +39,13 @@ router.beforeEach((to, from) => {
     trackNavStart();
     setTransitionName(from.path, to.path);
   }
-
-  // 关闭「新闻」后，直接访问 /news 会跳回首页（侧边栏入口本身也已隐藏）。
-  // 设置尚未加载时按「显示」处理，避免启动瞬间误跳转。
-  if (to.path !== "/news") return true;
-  try {
-    const s = useSettingsStore();
-    if (s.settings && s.settings.show_news === false) return { path: "/", replace: true };
-  } catch {
-    // store 尚未初始化（Pinia 未激活）时放行
-  }
   return true;
 });
 
 // 导航结束（成功、失败或重定向）都收尾，trackNavEnd 幂等
-router.afterEach(() => trackNavEnd());
+router.afterEach(() => {
+  trackNavEnd();
+});
 router.onError(() => {
   trackError();
   trackNavEnd();

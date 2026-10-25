@@ -13,6 +13,7 @@ pub async fn ping_mc_server(address: String) -> mcping::ServerStatus {
 
 #[tauri::command]
 pub fn list_servers(state: State<AppState>, instance_id: String) -> Result<Value, String> {
+    crate::instances::validate_instance_id(&instance_id)?;
     let dir = state.instances_dir().join(&instance_id);
 
     // 现代 Minecraft (1.20.5+) 使用 servers.json

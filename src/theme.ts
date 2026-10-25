@@ -154,7 +154,7 @@ export function buildLightOverrides(accent: string): GlobalThemeOverrides {
       hoverColor: "rgba(0,0,0,0.04)",
       successColor: "#2d9b6f",
       errorColor: "#d63d35",
-      warningColor: "#d97f33",
+      warningColor: "#c87420",
       infoColor: "#3b82c4",
     },
     Button: {

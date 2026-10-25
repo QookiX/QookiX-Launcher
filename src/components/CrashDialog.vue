@@ -135,13 +135,15 @@ onBeforeUnmount(() => {
   font-weight: 700;
   color: var(--text-1, #e8eaf2);
 }
-.sev-jvm { background: rgba(224, 72, 72, 0.16); color: #f0716f; }
-.sev-oom { background: rgba(230, 162, 60, 0.16); color: #f0b46a; }
-.sev-gl  { background: rgba(120, 140, 220, 0.16); color: #9fafe8; }
-.sev-java{ background: rgba(96, 180, 160, 0.16); color: #6dcfae; }
-.sev-lwjgl { background: rgba(224, 72, 72, 0.16); color: #f0716f; }
-.sev-mod { background: rgba(230, 162, 60, 0.16); color: #f0b46a; }
-.sev-unknown { background: rgba(128, 132, 150, 0.16); color: #aeb2c4; }
+/* 严重性标签：底色按类别着色（红/橙/蓝/绿），文字用主题语义色保证深浅模态都可读。
+   原硬编码浅色（#f0716f 等）为深色模态设计，浅色白底模态上对比度不足。 */
+.sev-jvm { background: rgba(224, 72, 72, 0.16); color: var(--danger); }
+.sev-oom { background: rgba(230, 162, 60, 0.16); color: var(--warn); }
+.sev-gl  { background: rgba(120, 140, 220, 0.16); color: var(--text-2); }
+.sev-java{ background: rgba(96, 180, 160, 0.16); color: var(--success); }
+.sev-lwjgl { background: rgba(224, 72, 72, 0.16); color: var(--danger); }
+.sev-mod { background: rgba(230, 162, 60, 0.16); color: var(--warn); }
+.sev-unknown { background: rgba(128, 132, 150, 0.16); color: var(--text-3); }
 
 .crash-body { display: flex; flex-direction: column; gap: 10px; }
 .crash-reason {
@@ -173,7 +175,9 @@ onBeforeUnmount(() => {
   border-radius: 999px;
   background: rgba(150, 181, 225, 0.14);
   border: 1px solid rgba(150, 181, 225, 0.35);
-  color: var(--accent-light, #a8c4ea);
+  /* 蓝色底/边标识「模组」类别；文字用 --text-2 保证深浅模态都可读
+     （原 fallback #a8c4ea 浅蓝在浅色白底模态上对比度仅 ~1.7:1） */
+  color: var(--text-2);
 }
 .crash-code {
   font-size: 12px;

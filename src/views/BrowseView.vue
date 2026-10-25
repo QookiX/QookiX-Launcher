@@ -15,13 +15,15 @@ import {
   IconGrid,
   IconLayers,
   IconList,
+  IconNewspaper,
   IconSearch,
   IconSliders,
 } from "../components/icons";
 import { cnCfName, translateCategory } from "../utils/categories";
 import { cacheGet, cacheSet, cacheGetPersistent, cacheSetPersistent } from "../utils/cache";
-import { instanceLabel } from "../utils/format";
+import { fmtDateShort as fmtDate, instanceLabel } from "../utils/format";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
+import { useNewsStore } from "../stores/news";
 import type { Instance, ProjectDependency, ProjectHit } from "../types";
 
 defineOptions({ name: "BrowseView" });
@@ -30,9 +32,27 @@ const message = useMessage();
 const { t } = useI18n();
 const settingsStore = useSettingsStore();
 const route = useRoute();
+const newsStore = useNewsStore();
+
+// —— 新闻（已并入「发现」页：作为「数据包」右侧的第 6 个 tab，选中后替换下方内容） ——
+const showNewsEntry = computed(() => settingsStore.settings?.show_news ?? true);
+async function refreshNews() {
+  try {
+    await newsStore.load(true);
+  } catch (e) {
+    message.error(String(e));
+  }
+}
+function newsDelay(i: number): string {
+  const step = Math.min(0.045, 0.6 / Math.max(1, newsStore.news.length));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
 const provider = ref<"all" | "modrinth" | "curseforge">("all");
 const query = ref(typeof route.query.q === "string" ? route.query.q : "");
 const type = ref("mod");
+// 同步「新闻标签激活」状态给标题栏（决定是否显示刷新按钮），并响应标题栏发来的刷新信号
+watch(type, (v) => { newsStore.active = v === "news"; }, { immediate: true });
+watch(() => newsStore.refreshSignal, () => { void refreshNews(); });
 const category = ref("");
 const page = ref(0);
 const results = ref<ProjectHit[]>([]);
@@ -144,6 +164,8 @@ const displayVersionOptions = computed(() => {
 
 let searchSeq = 0;
 async function search() {
+  // 新闻 tab 不走内容搜索
+  if (type.value === "news") return;
   const seq = ++searchSeq;
   // 缓存：内存（5 分钟，会话内）+ localStorage 持久化（6 小时，跨会话）。
   // 应用重启后内存清空，但 localStorage 仍在，打开发现页命中持久化缓存不调 API。
@@ -299,6 +321,8 @@ interface TypeTab {
 }
 const typeTabs = reactive<Record<string, TypeTab>>({});
 function saveTypeTab() {
+  // 新闻 tab 无内容筛选状态，不保存
+  if (type.value === "news") return;
   typeTabs[type.value] = {
     category: category.value,
     page: page.value,
@@ -327,12 +351,16 @@ function switchType(key: string) {
   if (key === type.value) return;
   saveTypeTab();
   type.value = key;
+  // 切到新闻 tab 时拉取新闻（已有缓存则秒回）
+  if (key === "news") void newsStore.load().catch((e) => message.error(String(e)));
 }
 
 watch([provider, type], async (n, o) => {
   if (n[0] !== o?.[0]) {
     for (const k in typeTabs) delete typeTabs[k];
   }
+  // 新闻 tab 不触发内容搜索/分类重建
+  if (type.value === "news") return;
   if (restoreTypeTab(type.value)) return;
   category.value = "";
   if (!showLoaderFilter.value) loader.value = "";
@@ -488,7 +516,7 @@ const typeBox = ref<HTMLElement | null>(null);
 const { indicatorStyle: typeIndicatorStyle, refresh: refreshTypeIndicator } = useSlidingIndicator(
   typeBox,
   () => Array.from(typeBox.value?.querySelectorAll<HTMLElement>(".type-card button") ?? []),
-  () => types.value.findIndex((tp) => tp.key === type.value),
+  () => (type.value === "news" ? types.value.length : types.value.findIndex((tp) => tp.key === type.value)),
 );
 watch(type, () => nextTick(() => refreshTypeIndicator()));
 
@@ -534,8 +562,16 @@ onMounted(async () => {
       >
         {{ tp.label }}
       </button>
+      <template v-if="showNewsEntry">
+        <span class="type-divider"></span>
+        <button class="news-tab" :class="{ active: type === 'news' }" @click="switchType('news')">
+          <IconNewspaper class="news-tab-icon" />
+          <span>{{ t("nav.news") }}</span>
+        </button>
+      </template>
     </div>
 
+    <template v-if="type !== 'news'">
     <div class="toolbar glass">
       <div class="toolbar-row">
         <div id="browse-search" class="search-box">
@@ -618,8 +654,31 @@ onMounted(async () => {
       {{ t("browse.cf.loadFailedPre", { error: cfError }) }} <router-link to="/settings">{{ t("browse.cf.settings") }}</router-link> {{ t("browse.cf.loadFailedPost") }}
     </div>
 
-    <div v-show="loading" class="center">{{ t("browse.search.searching") }}</div>
-    <div v-show="!loading && !results.length" class="center">{{ t("browse.search.noResult") }}</div>
+    <div v-show="loading" class="grid skel-grid">
+      <div v-for="i in 8" :key="i" class="skel-card glass">
+        <div class="skel-main">
+          <div class="skel-icon"></div>
+          <div class="skel-body">
+            <div class="skel-line w-60"></div>
+            <div class="skel-line w-32"></div>
+            <div class="skel-line w-92"></div>
+            <div class="skel-line w-70"></div>
+            <div class="skel-cats">
+              <div class="skel-tag"></div>
+              <div class="skel-tag"></div>
+            </div>
+          </div>
+        </div>
+        <div class="skel-foot">
+          <div class="skel-line w-40"></div>
+          <div class="skel-btn"></div>
+        </div>
+      </div>
+    </div>
+    <div v-show="!loading && !results.length" class="center">
+      <div class="center-icon"><IconSearch /></div>
+      <p>{{ t("browse.search.noResult") }}</p>
+    </div>
     <div v-show="!loading && results.length" class="grid" :class="`view-${view}`">
       <ProjectCard
         v-for="(p, i) in results"
@@ -642,6 +701,36 @@ onMounted(async () => {
         :page-count="pageCount"
         @update:page="onPage"
       />
+    </div>
+    </template>
+
+    <div v-else class="news-content">
+      <div v-if="newsStore.loading && !newsStore.news.length" class="news-state">{{ t("common.loading") }}</div>
+      <div v-else-if="!newsStore.news.length" class="news-state">
+        <div class="news-state-icon"><IconNewspaper /></div>
+        <p>{{ t("news.empty") }}</p>
+      </div>
+      <div v-else class="news-list">
+        <div
+          v-for="(n, i) in newsStore.news"
+          :key="n.url"
+          class="news-card"
+          :style="{ animationDelay: newsDelay(i) }"
+          @click="n.url && openUrl(n.url).catch(() => {})"
+        >
+          <div v-if="n.image" class="news-image">
+            <img :src="n.image" :alt="n.image_alt" loading="lazy" />
+          </div>
+          <div class="news-body">
+            <h3 class="news-title">{{ n.title }}</h3>
+            <p v-if="n.description" class="news-desc">{{ n.description }}</p>
+            <div class="news-meta">
+              <span v-if="n.author" class="meta-author">{{ n.author }}</span>
+              <span class="meta-date">{{ fmtDate(n.time) }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <n-drawer v-model:show="showFilter" :width="330" placement="right">
@@ -848,11 +937,63 @@ onMounted(async () => {
   padding: 70px;
   text-align: center;
   color: var(--text-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.center-icon {
+  font-size: 36px;
+  opacity: 0.5;
+}
+.center p {
+  margin: 0;
 }
 .grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: 16px;
+}
+/* 骨架屏：搜索时用 shimmer 占位卡，替代纯文字"搜索中" */
+.skel-card {
+  --skel-c: rgba(255, 255, 255, 0.07);
+  --skel-hi: rgba(255, 255, 255, 0.14);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+:root.light .skel-card {
+  --skel-c: rgba(0, 0, 0, 0.06);
+  --skel-hi: rgba(0, 0, 0, 0.10);
+}
+.skel-icon,
+.skel-line,
+.skel-tag,
+.skel-btn {
+  background: linear-gradient(90deg, var(--skel-c), var(--skel-hi), var(--skel-c));
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.3s ease-in-out infinite;
+}
+.skel-main { display: flex; gap: 12px; }
+.skel-icon { width: 56px; height: 56px; border-radius: 12px; flex-shrink: 0; }
+.skel-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.skel-line { height: 11px; border-radius: 6px; }
+.skel-line.w-32 { width: 32%; }
+.skel-line.w-40 { width: 40%; }
+.skel-line.w-60 { width: 60%; }
+.skel-line.w-70 { width: 70%; }
+.skel-line.w-92 { width: 92%; }
+.skel-cats { display: flex; gap: 6px; margin-top: 2px; }
+.skel-tag { width: 52px; height: 18px; border-radius: 9px; }
+.skel-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.skel-btn { width: 84px; height: 28px; border-radius: 8px; }
+@keyframes skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-icon, .skel-line, .skel-tag, .skel-btn { animation: none; }
 }
 /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
    未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
@@ -974,5 +1115,123 @@ onMounted(async () => {
 }
 .pager-total {
   color: var(--text-3);
+}
+
+/* —— 新闻 tab（数据包右侧，分割线隔开） —— */
+.type-divider {
+  width: 1px;
+  align-self: stretch;
+  margin: 7px 6px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.news-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.news-tab-icon {
+  font-size: 15px;
+}
+/* —— 新闻内容区（替换下方浏览结果） —— */
+.news-content {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.news-state {
+  padding: 48px 24px;
+  text-align: center;
+  color: var(--text-3);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+}
+.news-state-icon {
+  font-size: 36px;
+  opacity: 0.5;
+}
+.news-state p {
+  margin: 0;
+}
+.news-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.news-card {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--panel);
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  animation: news-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes news-card-enter {
+  from { transform: translateY(20px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.news-card:hover {
+  box-shadow: 0 4px 20px var(--k-15);
+}
+.news-image {
+  flex-shrink: 0;
+  width: 130px;
+  height: 100px;
+  overflow: hidden;
+  background: var(--w-03);
+}
+.news-image img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform 0.32s ease;
+}
+.news-card:hover .news-image img {
+  transform: scale(1.06);
+}
+.news-body {
+  flex: 1;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+.news-title {
+  font-size: 14px;
+  font-weight: 700;
+  margin: 0;
+  color: var(--text-1);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.news-desc {
+  font-size: 12px;
+  color: var(--text-3);
+  margin: 0;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-height: 1.5;
+}
+.news-meta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  color: var(--text-3);
+  margin-top: auto;
+}
+.meta-author {
+  color: var(--accent);
+  font-weight: 600;
 }
 </style>

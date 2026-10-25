@@ -64,7 +64,7 @@ export default {
   },
   nav: {
     home: "首页",
-    browse: "内容",
+    browse: "发现",
     instances: "实例",
     multiplayer: "多人",
     skins: "皮肤",

@@ -7,7 +7,7 @@ export const transitionName = ref("page-fade");
 
 // 转场方向按侧边栏顺序算（详情页/子页归到父级）。新增侧边栏页面要在这里补一条，
 // 否则落到默认 0 会被当成首页，切出去的转场方向是反的。
-// home(0) browse(1) instances(2) multiplayer(3) skins(4) toolbox(5) timemachine(6) settings(7) news(8)
+// home(0) browse(1) instances(2) multiplayer(3) skins(4) toolbox(5) timemachine(6) settings(7)
 const NAV_ORDER: { match: RegExp; order: number }[] = [
   { match: /^\/$/, order: 0 },
   { match: /^\/browse/, order: 1 },
@@ -17,7 +17,6 @@ const NAV_ORDER: { match: RegExp; order: number }[] = [
   { match: /^\/toolbox/, order: 5 },
   { match: /^\/timemachine/, order: 6 },
   { match: /^\/settings/, order: 7 },
-  { match: /^\/news/, order: 8 },
 ];
 
 function getNavOrder(path: string): number {

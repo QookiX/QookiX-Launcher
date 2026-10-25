@@ -217,7 +217,7 @@ function onKeydown(e: KeyboardEvent) {
   background: rgba(0, 0, 0, 0.22);
   backdrop-filter: blur(2px);
 }
-:global(.light) .cp-overlay {
+html.light .cp-overlay {
   background: rgba(0, 0, 0, 0.1);
 }
 .cp-panel {
@@ -230,7 +230,7 @@ function onKeydown(e: KeyboardEvent) {
   border: 1px solid var(--border);
   backdrop-filter: blur(18px) saturate(1.2);
 }
-:global(.light) .cp-panel {
+html.light .cp-panel {
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
 }
