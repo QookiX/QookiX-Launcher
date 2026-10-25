@@ -251,6 +251,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TAG: ${{ github.ref_name }}
+          QOOKIX_MIN_VERSION: ${{ vars.QOOKIX_MIN_VERSION || secrets.QOOKIX_MIN_VERSION }}
         run: |
           node scripts/fix-update-manifest.mjs
 

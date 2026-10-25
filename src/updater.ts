@@ -114,11 +114,17 @@ export function entryTypeClass(text: string): string {
 
 /**
  * 版本号比较：按 `.` 分段数值比较（`0.10.0 > 0.9.0`，字符串比较会搞错）。
- * 无法解析的段按 0 处理，返回 -1 / 0 / 1。
+ * 无法解析的段按 0 处理，返回 -1 / 0 / 1。前置的 `v` / `V` 会被自动剔除。
  */
 export function compareVersions(a: string, b: string): number {
-  const pa = a.split(/[.+-]/).map((s) => Number.parseInt(s, 10) || 0);
-  const pb = b.split(/[.+-]/).map((s) => Number.parseInt(s, 10) || 0);
+  const parse = (s: string) =>
+    s
+      .trim()
+      .replace(/^[vV]/, "")
+      .split(/[.+-]/)
+      .map((seg) => Number.parseInt(seg, 10) || 0);
+  const pa = parse(a);
+  const pb = parse(b);
   const n = Math.max(pa.length, pb.length);
   for (let i = 0; i < n; i++) {
     const d = (pa[i] ?? 0) - (pb[i] ?? 0);
@@ -316,13 +322,13 @@ export async function applyUpdateNow(): Promise<void> {
   updateInstalling.value = true;
   try {
     await invoke("apply_app_update");
+    await relaunchApp();
   } catch (err) {
-    // 没有已下载的更新（或安装失败）→ 兜底直接重启，避免卡在旧版本
     devError("[updater] apply_update failed:", err);
+    throw err instanceof Error ? err : new Error(String(err));
   } finally {
     updateInstalling.value = false;
   }
-  await relaunchApp();
 }
 
 /** Relaunch the app (used after an update was installed). */

@@ -73,8 +73,17 @@ const manifest = {
   platforms,
 }
 // 强制更新：低于此版本的客户端必须更新（全屏锁死遮罩 + 自动重启）。
-// CI 通过 QOOKIX_MIN_VERSION 环境变量注入；不设则普通更新流程。
-const minVersion = process.env.QOOKIX_MIN_VERSION
+// 优先使用 QOOKIX_MIN_VERSION 环境变量；若未指定，尝试从已有 latest.json 中继承。
+let minVersion = process.env.QOOKIX_MIN_VERSION
+if (!minVersion) {
+  try {
+    const existingPath = path.join(dir, 'latest.json')
+    if (fs.existsSync(existingPath)) {
+      const existing = JSON.parse(fs.readFileSync(existingPath, 'utf8'))
+      if (existing.minVersion) minVersion = existing.minVersion
+    }
+  } catch {}
+}
 if (minVersion) manifest.minVersion = minVersion
 
 fs.writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`)

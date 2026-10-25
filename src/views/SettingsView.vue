@@ -33,7 +33,7 @@ import {
   IconBookOpen,
   IconTerminal,
 } from "../components/icons";
-import { peekUpdate, downloadUpdate, updateReady, updateReadyVersion, loadChangelogReleases, releasesInRange, entryTypeClass, type ChangelogRelease } from "../updater";
+import { peekUpdate, downloadUpdate, updateReady, updateReadyVersion, forceUpdateInfo, loadChangelogReleases, releasesInRange, entryTypeClass, type ChangelogRelease } from "../updater";
 import type { JavaInfo, MirrorPreset, StorageStats } from "../types";
 import devWeimoshengUrl from "../assets/dev-weimosheng.jpg";
 import devZhayiUrl from "../assets/dev-zhayi.jpg";
@@ -176,6 +176,11 @@ async function checkUpdate() {
     const update = await peekUpdate(true);
     if (!update) {
       message.success(t("settings.update.upToDate"));
+      return;
+    }
+    // 强制更新：当前版本低于 minVersion 时激活全屏锁定遮罩
+    if (update.forceUpdate) {
+      forceUpdateInfo.value = update;
       return;
     }
     updateVersion.value = update.version;

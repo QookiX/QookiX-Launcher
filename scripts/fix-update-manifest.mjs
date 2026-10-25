@@ -87,17 +87,33 @@ if (Object.keys(platforms).length === 0) {
   throw new Error('No signed updater bundles found on the release; nothing to publish')
 }
 
+const old = assets.find((a) => a.name === 'latest.json')
+
+// 强制更新：低于此版本的客户端必须更新。
+// 优先使用 QOOKIX_MIN_VERSION 环境变量；若未指定，尝试从已有 latest.json 中保留。
+let minVersion = process.env.QOOKIX_MIN_VERSION
+if (!minVersion && old) {
+  try {
+    const oldRes = await fetch(old.browser_download_url)
+    if (oldRes.ok) {
+      const oldJson = await oldRes.json()
+      if (oldJson.minVersion) minVersion = oldJson.minVersion
+    }
+  } catch {}
+}
+
 const manifest = {
   version: tag.replace(/^v/, ''),
   notes: release.body ?? '',
   pub_date: new Date().toISOString(),
   platforms,
 }
+if (minVersion) manifest.minVersion = minVersion
+
 fs.writeFileSync('latest.json', `${JSON.stringify(manifest, null, 2)}\n`)
-console.log('Wrote latest.json with platforms:', Object.keys(platforms).join(', '))
+console.log('Wrote latest.json with platforms:', Object.keys(platforms).join(', '), minVersion ? `(minVersion=${minVersion})` : '')
 
 // Overwrite the old manifest on the release (delete then upload).
-const old = assets.find((a) => a.name === 'latest.json')
 if (old) {
   const del = await fetch(`${api}/repos/${repo}/releases/assets/${old.id}`, { method: 'DELETE', headers })
   if (!del.ok && del.status !== 404) {

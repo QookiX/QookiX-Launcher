@@ -645,6 +645,7 @@ mod tests {
         assert!(bx >= ax + aw + 2, "两张贴图之间要隔开：{ax}+{aw} vs {bx}");
     }
 
+    #[test]
     fn looks_like_version() {
         assert!(looks_like_mc_version("1.21.4"));
         assert!(looks_like_mc_version("26.2"));

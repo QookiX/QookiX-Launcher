@@ -14,10 +14,12 @@ pub const SOURCE_BUCKET: &str = "bucket";
 pub const SOURCE_GITHUB: &str = "github";
 
 /// 版本号比较：按 `.` / `-` / `+` 分段数值比较（与前端 `compareVersions` 对齐）。
-/// 返回 -1 / 0 / 1。无法解析的段按 0 处理。
+/// 返回 -1 / 0 / 1。无法解析的段按 0 处理。前置的 `v` / `V` 会被自动剔除。
 fn compare_versions(a: &str, b: &str) -> i8 {
     let parse = |s: &str| -> Vec<u64> {
-        s.split(['.', '-', '+'])
+        let clean = s.trim().trim_start_matches(['v', 'V']);
+        clean
+            .split(['.', '-', '+'])
             .map(|seg| seg.parse::<u64>().unwrap_or(0))
             .collect()
     };
@@ -285,5 +287,10 @@ mod tests {
     fn compare_versions_unparseable_segments_treated_as_zero() {
         assert_eq!(compare_versions("0.15.x", "0.15.0"), 0);
         assert_eq!(compare_versions("v0.15.1", "0.15.1"), 0);
+        // 关键用例：v 前缀跨越 1.0.0 主版本号时不能被误判为 0.0.0
+        assert_eq!(compare_versions("v1.0.0", "1.0.0"), 0);
+        assert_eq!(compare_versions("v1.0.0", "0.15.5"), 1);
+        assert_eq!(compare_versions("0.15.5", "v1.0.0"), -1);
+        assert_eq!(compare_versions("V2.1.0", "2.1.0"), 0);
     }
 }
