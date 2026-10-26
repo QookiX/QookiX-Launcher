@@ -63,6 +63,17 @@ fn show_main_window(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // ── Linux Wayland: WebKitGTK dmabuf 渲染器在 explicit-sync 合成器
+    //    （umbriel / 较新 wlroots）上触发 Gdk Error 71 协议违规崩溃。
+    //    回退到 SHM 渲染避免崩溃；代价是 CPU 拷贝、略感不丝滑。
+    //    仅当用户未手动设置时才覆盖，尊重用户显式选择。（Issue #2）
+    #[cfg(target_os = "linux")]
+    if std::env::var("WAYLAND_DISPLAY").is_ok()
+        && std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").is_err()
+    {
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+
     // QOOKIX_DATA_DIR：调试时指向空目录可模拟全新用户（优先级最高）
     let default_root = std::env::var("QOOKIX_DATA_DIR")
         .map(std::path::PathBuf::from)
