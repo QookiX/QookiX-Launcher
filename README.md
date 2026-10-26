@@ -75,6 +75,17 @@
 - 付费内容（若干投影帖）的定价、扣费与作者分成均在该站点内完成，本启动器仅代为发起下单请求，**不参与收款与结算**
 - 拾木空间与本项目无任何隶属、合作或背书关系
 
+### 第三方开源软件（Axolotl Launcher）
+
+- 本启动器的 **WebView2 现代安装器**（`src-tauri/installer-ui/`）、**中文词库解析器**（`src-tauri/src/mcmod.rs`）与**投影工坊**（`src-tauri/src/commands/schematic.rs`）部分实现参考或衍生自 [Axolotl Launcher](https://github.com/Axolotl-Launcher/Axolotl)（Copyright © Axolotl-Launcher Contributors，**GPL-3.0**）
+- 依据 GPL-3.0 第 5 条，上述衍生代码以相同许可证（GPL-3.0）纳入本启动器分发，完整版权与许可声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+- Axolotl Launcher 与本启动器是两个相互独立、各自以自身许可证发布的开源项目，二者之间无任何隶属或背书关系
+
+### 第三方开源软件（PCL2）
+
+- 本启动器的中文模组百科词库 `WikiEntries.txt` 数据源自 [PCL2（Plain Craft Launcher 2）](https://github.com/LTCat/PCL2)（Copyright © 龙腾猫跃，**GPL-3.0**）收录的 [MCMod 百科](https://www.mcmod.cn) 词条索引
+- 依据 GPL-3.0 第 5 条，该数据以相同许可证纳入本启动器分发，完整版权与许可声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+
 ### 免责条款
 
 - 本项目按“原样”提供，不附带任何明示或默示担保

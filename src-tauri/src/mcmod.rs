@@ -1,3 +1,10 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// 本文件的中文词库解析逻辑（parse_slugs、分隔符与星号还原算法）参考自
+// Axolotl Launcher (https://github.com/Axolotl-Launcher/Axolotl, GPL-3.0)。
+// 词库数据 WikiEntries.txt 源自 PCL2 (https://github.com/LTCat/PCL2, GPL-3.0)
+// 收录的 MCMod 百科 (https://www.mcmod.cn) 中文词条索引。
+// 完整版权声明见 THIRD_PARTY_NOTICES.md。
+
 use std::collections::HashMap;
 use std::sync::OnceLock;
 

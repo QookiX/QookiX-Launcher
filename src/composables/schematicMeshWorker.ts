@@ -1,3 +1,7 @@
+// 本文件的 appendFallbackCube 占位方块绘制逻辑（含字符哈希颜色计算公式）
+// 参考自 Axolotl Launcher (https://github.com/Axolotl-Launcher/Axolotl, GPL-3.0)。
+// 完整版权声明见 THIRD_PARTY_NOTICES.md。
+
 import * as deepslate from "deepslate";
 import { log } from "../utils/logger";
 

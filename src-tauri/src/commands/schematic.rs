@@ -1,4 +1,8 @@
 //! 投影文件预览：解析 .litematic / .schem（Sponge v2/v3），返回 manifest + 分块方块数据。
+//!
+//! 本文件的分块解析、限制常量与数据结构体定义参考自
+//! Axolotl Launcher (https://github.com/Axolotl-Launcher/Axolotl, GPL-3.0)。
+//! 完整版权声明见 THIRD_PARTY_NOTICES.md。
 #![allow(non_snake_case)]
 
 use std::collections::{BTreeMap, HashMap};

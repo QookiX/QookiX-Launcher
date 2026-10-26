@@ -139,6 +139,40 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
 ---
 
+## Axolotl Launcher
+
+- **项目**：Axolotl Launcher
+- **作者 / 版权**：Copyright © Axolotl-Launcher Contributors
+- **仓库**：https://github.com/Axolotl-Launcher/Axolotl
+- **许可证**：GNU General Public License v3.0（**GPL-3.0**）
+- **完整许可证文本**：https://github.com/Axolotl-Launcher/Axolotl/blob/main/LICENSE
+
+**使用说明**：本启动器以下模块的实现参考或衍生自 Axolotl Launcher（GPL-3.0），依据 GPL-3.0 第 5 条（「组合作品」/「衍生作品」）将其源码纳入本启动器并以相同许可证（GPL-3.0）分发：
+
+1. **WebView2 现代安装器**（`src-tauri/installer-ui/`、`src-tauri/nsis/installer.nsi`）：独立的 WebView2 子 crate 与 NSIS 深色主题逻辑，参考自 Axolotl 的 `installer-ui` 模块与定制安装脚本。
+2. **中文词库解析器**（`src-tauri/src/mcmod.rs`）：`@` 前后缀切片、分隔符与星号还原等解析逻辑，参考自 Axolotl 的 `packages/app-lib/src/api/content_search.rs` 中的 Rust 实现。
+3. **投影工坊**（`src-tauri/src/commands/schematic.rs`、前端 `schematicMeshWorker.ts`）：分块解析、限制常量、数据结构体定义，以及 `appendFallbackCube` 占位方块绘制逻辑（含字符哈希颜色计算公式），参考自 Axolotl 的对应模块。
+
+Axolotl Launcher 与本启动器是两个相互独立、各自以 GPL-3.0 许可证发布的开源项目，二者之间不存在任何隶属或背书关系。感谢 Axolotl Launcher 项目及其贡献者的开源工作。
+
+---
+
+## PCL2（Plain Craft Launcher 2）
+
+- **项目**：PCL2（Plain Craft Launcher 2）
+- **作者 / 版权**：Copyright © 龙腾猫跃（LTCat）
+- **仓库**：https://github.com/LTCat/PCL2
+- **许可证**：GNU General Public License v3.0（**GPL-3.0**）
+- **完整许可证文本**：https://github.com/LTCat/PCL2/blob/main/LICENSE
+
+**使用说明**：本启动器的 `WikiEntries.txt`（中文模组百科词条词库）的数据源自 PCL2 项目收录的 MCMod 百科中文词条索引。该数据由 PCL2 以 GPL-3.0 许可证分发，本启动器依据 GPL-3.0 第 5 条将其纳入并以相同许可证分发。
+
+同时感谢 [MCMod 百科](https://www.mcmod.cn) 提供的中文 Minecraft 模组百科内容，本词库仅为其词条名称的结构化索引，不包含百科正文内容。
+
+PCL2 与本启动器是两个相互独立、各自以 GPL-3.0 许可证发布的开源项目，二者之间不存在任何隶属或背书关系。
+
+---
+
 ## 前端（npm）依赖
 
 本启动器前端构建产物（Vue 3、naive-ui、skinview3d、marked、DOMPurify、driver.js 等）所使用的第三方库均为宽松许可证（MIT / Apache-2.0 / ISC / BSD 等），其许可证文本随各自包分发于 `node_modules/<包名>/LICENSE*`，完整清单以 `package.json` 中的依赖列表为准。

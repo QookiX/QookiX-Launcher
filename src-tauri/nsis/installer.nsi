@@ -1,3 +1,6 @@
+; 本文件的 DWM 深色标题栏注入与 DarkMode_Explorer 机制参考自
+; Axolotl Launcher (https://github.com/Axolotl-Launcher/Axolotl, GPL-3.0)。
+; 完整版权声明见 THIRD_PARTY_NOTICES.md。
 Unicode true
 ManifestDPIAware true
 ; Add in `dpiAwareness` `PerMonitorV2` to manifest for Windows 10 1607+
