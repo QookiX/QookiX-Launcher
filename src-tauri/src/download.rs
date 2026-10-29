@@ -735,6 +735,7 @@ mod diag {
                 java_cache: Mutex::new(None),
                 terracotta: Mutex::new(None),
                 pending_update: Mutex::new(None),
+                lan_sync: Mutex::new(None),
             };
             let started = std::time::Instant::now();
             let r = crate::curseforge::search(&state, "RLCraft", "modpack", 0, 0, 3, "", "", "relevance").await;

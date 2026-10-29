@@ -4,6 +4,7 @@ pub mod crash;
 pub mod files;
 pub mod hosted;
 pub mod instances;
+pub mod lan_sync;
 pub mod multiplayer;
 pub mod nbt;
 pub mod options;

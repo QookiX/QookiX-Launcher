@@ -1,6 +1,6 @@
 [package]
 name = "qookix-launcher"
-version = "0.17.0"
+version = "0.18.0"
 description = "QookiX Launcher - a modern, clean and ad-free Minecraft launcher"
 authors = ["QookiX"]
 edition = "2021"
@@ -30,8 +30,10 @@ tauri-plugin-updater = "2"
 tauri-plugin-deep-link = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "process", "time", "sync", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "process", "time", "sync", "signal", "net"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "multipart", "rustls-tls", "stream", "gzip", "brotli", "socks", "system-proxy"] }
+axum = "0.7"
+tower-http = { version = "0.5", features = ["cors"] }
 bytes = "1"
 futures-util = "0.3"
 uuid = { version = "1", features = ["v3", "v4"] }
@@ -55,6 +57,7 @@ encoding_rs = "0.8"
 tauri-plugin-single-instance = "2.4.4"
 # PNG 编解码：跨平台使用（投影预览解析贴图、Windows 下图标提取），不能放在平台段
 png = "0.17"
+if-addrs = "0.15.0"
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Graphics_Gdi", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_System_Registry", "Win32_Security_Cryptography", "Win32_System_Memory"] }

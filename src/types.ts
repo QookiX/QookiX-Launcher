@@ -651,6 +651,18 @@ export interface CloudSnapshot {
   trigger?: string | null;
 }
 
+/** 局域网同步服务状态（lan_sync_* 命令返回值） */
+export interface LanSyncState {
+  /** 推荐给手机连接的地址 */
+  ip: string;
+  port: number;
+  token: string;
+  /** 二维码内容：qookix://lan/pair?host=…&port=…&token=… */
+  qrUrl: string;
+  /** 本机所有候选局域网 IPv4（多网卡时给用户切换） */
+  ips: string[];
+}
+
 /** 从存档 level.dat 里读出的世界信息 */
 export interface WorldInfo {
   /** 种子的十进制字符串（64 位，可能超出 JS 安全整数范围）；随机种子世界为 null */

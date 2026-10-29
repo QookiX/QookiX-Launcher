@@ -42,6 +42,7 @@ import AboutShowcase from "../components/AboutShowcase.vue";
 import UpdateNotes from "../components/UpdateNotes.vue";
 import DiagnosticsDialog from "../components/DiagnosticsDialog.vue";
 import CloudSyncDialog from "../components/CloudSyncDialog.vue";
+import LanSyncPanel from "../components/LanSyncPanel.vue";
 import ColorPicker from "../components/ColorPicker.vue";
 import { IconCloud } from "../components/icons";
 import { error as devError } from "../utils/logger";
@@ -1099,6 +1100,10 @@ onUnmounted(() => {
               <button class="mini-btn" @click="pickDataDir">{{ t("settings.general.change") }}</button>
             </div>
             <p class="hint">{{ t("settings.general.dataDirHint") }}</p>
+          </div>
+
+          <div class="card glass" id="general-lan-sync">
+            <LanSyncPanel />
           </div>
         </div>
       </div>

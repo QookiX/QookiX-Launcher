@@ -2,6 +2,7 @@ mod accounts;
 mod cloud_sync;
 mod commands;
 mod instance_share;
+mod lan_sync;
 mod crash;
 mod db;
 mod diagnostics;
@@ -133,6 +134,7 @@ pub fn run() {
         java_cache: Mutex::new(None),
         terracotta: Mutex::new(None),
         pending_update: Mutex::new(None),
+        lan_sync: Mutex::new(None),
     };
 
     tauri::Builder::default()
@@ -192,6 +194,11 @@ pub fn run() {
             timemachine::timemachine_local_shots,
             cloud_sync::cloud_sync_set_auto,
             cloud_sync::cloud_sync_set_keep,
+            // 局域网同步
+            commands::lan_sync::lan_sync_start,
+            commands::lan_sync::lan_sync_stop,
+            commands::lan_sync::lan_sync_status,
+            commands::lan_sync::lan_sync_pick_ip,
             // nbt 存档编辑
             commands::nbt_list_worlds,
             commands::nbt_open_world,
@@ -714,6 +721,7 @@ mod smoke {
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
+            lan_sync: Mutex::new(None),
         };
         let instance = Instance {
             id: "test-fabric".into(),
@@ -761,6 +769,7 @@ mod smoke {
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
+            lan_sync: Mutex::new(None),
         };
         let vanilla = crate::mcmeta::fetch_version_json(&state, "1.18.2").await.unwrap();
         let vanilla_natives = vanilla.libraries.iter().filter(|l| l.natives.is_some()).count();
@@ -809,6 +818,7 @@ mod smoke {
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
+            lan_sync: Mutex::new(None),
         };
         // modpack type + empty query (regression for the 400 bug)
         let res = crate::modrinth::search(&state, "", "modpack", "", "relevance", 0, 20, "", "")

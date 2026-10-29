@@ -13,6 +13,7 @@ import type {
   Instance,
   InstanceGroup,
   JavaInfo,
+  LanSyncState,
   MirrorPreset,
   MirrorTestResult,
   NewsItem,
@@ -454,6 +455,17 @@ export const api = {
   cloudSyncSetAuto: (instanceId: string, world: string, enabled: boolean) =>
     invoke<void>("cloud_sync_set_auto", { instanceId, world, enabled }),
   cloudSyncSetKeep: (keep: number) => invoke<void>("cloud_sync_set_keep", { keep }),
+
+  // ---- 局域网同步 ----
+  lanSyncStart: () =>
+    invoke<LanSyncState>("lan_sync_start"),
+  lanSyncStop: () => invoke<void>("lan_sync_stop"),
+  lanSyncStatus: () =>
+    invoke<LanSyncState & { running: boolean }>("lan_sync_status"),
+  /** 多网卡时切换手机应连接的地址 */
+  lanSyncPickIp: (ip: string) =>
+    invoke<LanSyncState>("lan_sync_pick_ip", { ip }),
+
   estimateDownload: (mcVersion: string) =>
     invoke<{
       download_files: number;

@@ -76,6 +76,14 @@ async function handleUrl(raw: string) {
     return;
   }
 
+  // 局域网同步配对（qookix://lan/pair?host=192.168.x.x&port=8765&token=xxx）
+  // 桌面端收到说明是另一台 PC 发来的配对请求，跳转到设置页局域网同步面板。
+  if (host === "lan") {
+    devLog("[deeplink] 局域网同步配对:", raw);
+    router.push("/settings");
+    return;
+  }
+
   const route = PAGE_ROUTES[host];
   if (route) {
     await router.push(route);

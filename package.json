@@ -1,7 +1,7 @@
 {
   "name": "qookix-launcher",
   "private": true,
-  "version": "0.17.0",
+  "version": "0.18.0",
   "license": "GPL-3.0-only",
   "type": "module",
   "repository": {
@@ -30,6 +30,7 @@
     "marked": "^18.0.12",
     "naive-ui": "^2.45.2",
     "pinia": "^2.2.6",
+    "qrcode": "^1.5.4",
     "skinview3d": "^3.4.2",
     "three": "^0.186.0",
     "vue": "^3.5.13",
@@ -38,6 +39,7 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
+    "@types/qrcode": "^1.5.6",
     "@vitejs/plugin-vue": "^5.2.1",
     "typescript": "~5.6.2",
     "vite": "^6.0.3",

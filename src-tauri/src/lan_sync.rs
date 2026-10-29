@@ -13,6 +13,8 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use bytes::Bytes;
+use futures_util::stream::unfold;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path as StdPath, PathBuf};
@@ -51,6 +53,18 @@ struct SyncState {
     servers_dir: PathBuf,
     token: String,
     device_name: String,
+    /// 用来把传输进度推给前端面板（2026-10-30）。
+    /// 之前桌面端界面上完全看不出「手机正在拉哪个实例、传到哪了」，
+    /// 用户只能盯着手机那边等。
+    app: tauri::AppHandle,
+}
+
+/// 推一条传输进度给前端。失败无所谓（面板可能没打开）。
+fn emit_transfer(app: &tauri::AppHandle, payload: serde_json::Value) {
+    use tauri::Emitter;
+    if let Err(e) = app.emit("lan-sync://transfer", payload) {
+        log_lan(&format!("emit lan-sync://transfer 失败：{e}"));
+    }
 }
 
 // ── API 响应结构 ───────────────────────────────────────────────────────────
@@ -83,6 +97,7 @@ struct InstanceSummary {
 /// `instances_dir` / `servers_dir` 从 AppState 获取。
 /// `device_name` 用于手机端显示「已连接：XXX」。
 pub async fn start_server(
+    app: tauri::AppHandle,
     instances_dir: PathBuf,
     servers_dir: PathBuf,
     device_name: String,
@@ -114,6 +129,7 @@ pub async fn start_server(
         servers_dir,
         token: token.clone(),
         device_name,
+        app,
     });
     let app = Router::new()
         .route("/api/info", get(api_info))
@@ -351,15 +367,76 @@ async fn download_instance(
     //
     // 用 spawn_blocking 挪到阻塞线程池：async runtime 保持空闲，
     // 打包期间其它请求（包括安卓端的重试）都能正常处理。
+    // 传输 id：前端据此把同一批事件归成一个卡片
+    let transfer_id = uuid::Uuid::new_v4().simple().to_string();
+    let instance_name = read_instance_display_name(&instance_dir).unwrap_or_else(|| id.clone());
+    let base_payload = |phase: &str| {
+        serde_json::json!({
+            "id": transfer_id,
+            "direction": "download",
+            "instanceId": id,
+            "instanceName": instance_name,
+            "phase": phase,
+            "bytesDone": 0u64,
+            "bytesTotal": 0u64,
+            "file": "",
+            "message": "",
+        })
+    };
+    log_lan(&format!(
+        "下载请求：{}（{}）→ 开始准备",
+        id, instance_name
+    ));
+    emit_transfer(&state.app, base_payload("prepare"));
+
     let dir_for_pack = instance_dir.clone();
-    let zip_data = match tokio::task::spawn_blocking(move || pack_instance_zip(&dir_for_pack)).await
+    // 2026-10-30：改成「打包到临时文件 → 流式发送」。
+    // 原来整个 zip 先进内存、`Body::from(Vec)` 一次性发：
+    //   1) 手机在打包期间（203 MB 的实例要十几秒）收不到任何一个字节，界面就是「连接失败/卡住」；
+    //   2) 大实例容易把内存顶爆。
+    // 现在打包落盘后立刻能给出精确 Content-Length，手机端才有真实百分比；
+    // 打包过程也会把「正在读哪个文件」推给电脑端面板。
+    let app_pack = state.app.clone();
+    let tid_pack = transfer_id.clone();
+    let name_pack = instance_name.clone();
+    let id_pack = id.clone();
+    let (tmp_path, zip_size) = match tokio::task::spawn_blocking(move || {
+        pack_instance_to_file(&dir_for_pack, &|done: u64, total: u64, file: &str| {
+            emit_transfer(
+                &app_pack,
+                serde_json::json!({
+                    "id": tid_pack,
+                    "direction": "download",
+                    "instanceId": id_pack,
+                    "instanceName": name_pack,
+                    "phase": "pack",
+                    "bytesDone": done,
+                    "bytesTotal": total,
+                    "file": file,
+                    "message": "",
+                }),
+            );
+        })
+    })
+    .await
     {
-        Ok(Ok(data)) => data,
+        Ok(Ok(v)) => v,
         Ok(Err(e)) => {
+            log_lan(&format!("打包实例失败：{e}"));
+            emit_transfer(
+                &state.app,
+                serde_json::json!({
+                    "id": transfer_id, "direction": "download",
+                    "instanceId": id, "instanceName": instance_name,
+                    "phase": "error", "bytesDone": 0, "bytesTotal": 0, "file": "",
+                    "message": e,
+                }),
+            );
             return (StatusCode::INTERNAL_SERVER_ERROR, format!("Pack error: {e}"))
                 .into_response();
         }
         Err(e) => {
+            log_lan(&format!("打包任务崩溃：{e}"));
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 format!("Pack task join failed: {e}"),
@@ -368,17 +445,93 @@ async fn download_instance(
         }
     };
 
+    log_lan(&format!(
+        "打包完成：{} MB，开始发送给手机",
+        zip_size / 1024 / 1024
+    ));
+
+    let file = match tokio::fs::File::open(&tmp_path).await {
+        Ok(f) => f,
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Open packed zip failed: {e}"),
+            )
+                .into_response();
+        }
+    };
+
+    // 发送进度：状态放 Arc<Mutex>，因为 unfold 的闭包每次调用都要移动捕获
+    let sent_state = Arc::new(std::sync::Mutex::new((
+        0u64,
+        std::time::Instant::now(),
+    )));
+    let app_send = state.app.clone();
+    let tid_send = transfer_id.clone();
+    let name_send = instance_name.clone();
+    let id_send = id.clone();
+
+    let stream = unfold(file, move |mut f| {
+        let app = app_send.clone();
+        let tid = tid_send.clone();
+        let name = name_send.clone();
+        let iid = id_send.clone();
+        let sent_state = sent_state.clone();
+        async move {
+            use tokio::io::AsyncReadExt;
+            let mut buf = vec![0u8; 64 * 1024];
+            match f.read(&mut buf).await {
+                Ok(0) => {
+                    // 流结束 = 已经把所有字节交给 socket，标一个 done
+                    log_lan(&format!("发送完成：{iid}（{name}）"));
+                    emit_transfer(
+                        &app,
+                        serde_json::json!({
+                            "id": tid, "direction": "download",
+                            "instanceId": iid, "instanceName": name,
+                            "phase": "done", "bytesDone": zip_size, "bytesTotal": zip_size,
+                            "file": "", "message": "",
+                        }),
+                    );
+                    None
+                }
+                Ok(n) => {
+                    buf.truncate(n);
+                    let mut st = sent_state.lock().unwrap_or_else(|e| e.into_inner());
+                    st.0 += n as u64;
+                    // 200ms 节流：面板只需要大致跟得上，不必每 64KB 刷一次
+                    if st.1.elapsed().as_millis() >= 200 || st.0 >= zip_size {
+                        st.1 = std::time::Instant::now();
+                        let done = st.0;
+                        drop(st);
+                        emit_transfer(
+                            &app,
+                            serde_json::json!({
+                                "id": tid, "direction": "download",
+                                "instanceId": iid, "instanceName": name,
+                                "phase": "send", "bytesDone": done, "bytesTotal": zip_size,
+                                "file": "", "message": "",
+                            }),
+                        );
+                    }
+                    Some((Ok::<Bytes, std::io::Error>(Bytes::from(buf)), f))
+                }
+                Err(e) => Some((Err(e), f)),
+            }
+        }
+    });
+
     let headers = [
-        ("content-type", "application/zip"),
+        (axum::http::header::CONTENT_TYPE, "application/zip".to_string()),
         (
-            "content-disposition",
-            "attachment",
+            axum::http::header::CONTENT_LENGTH,
+            zip_size.to_string(),
         ),
     ];
     (
         StatusCode::OK,
         headers,
-        axum::body::Body::from(zip_data),
+        axum::body::Body::from_stream(stream),
     )
         .into_response()
 }
@@ -399,8 +552,12 @@ async fn download_servers(State(state): State<Arc<SyncState>>) -> Response {
 
 // ── 上传：手机 → 电脑 ───────────────────────────────────────────────────────
 
-/// 单实例最大允许上传 10 GB
-const MAX_UPLOAD_BYTES: usize = 10 * 1024 * 1024 * 1024;
+/// 单实例最大允许上传 2 GB。
+///
+/// Windows 的 IO 层有 `u32::MAX`（≈4.3 GB）硬限制 —— `IoSlice` 断言
+/// `buf.len() <= u32::MAX`。`axum::body::to_bytes` 的 limit 参数若超过这个值，
+/// 内部预分配会直接 panic。取 2 GB 既留足余量，也覆盖绝大多数实例体积。
+const MAX_UPLOAD_BYTES: usize = 2 * 1024 * 1024 * 1024;
 
 #[derive(Deserialize)]
 struct UploadQuery {
@@ -431,6 +588,18 @@ async fn upload_instance(
     Query(q): Query<UploadQuery>,
     body: axum::body::Body,
 ) -> Response {
+    // 0. 通知面板：手机开始往这边发（2026-10-30）
+    let up_id = uuid::Uuid::new_v4().simple().to_string();
+    emit_transfer(
+        &state.app,
+        serde_json::json!({
+            "id": up_id, "direction": "upload",
+            "instanceId": "", "instanceName": q.name,
+            "phase": "prepare", "bytesDone": 0, "bytesTotal": 0,
+            "file": "", "message": "",
+        }),
+    );
+
     // 1. 同名检查（409）
     if instance_name_exists(&state.instances_dir, &q.name) {
         return (
@@ -453,7 +622,7 @@ async fn upload_instance(
                     StatusCode::PAYLOAD_TOO_LARGE,
                     Json(UploadErr {
                         ok: false,
-                        error: "实例过大，超过 10 GB 限制".into(),
+                        error: "实例过大，超过 2 GB 限制".into(),
                     }),
                 )
                     .into_response();
@@ -499,6 +668,15 @@ async fn upload_instance(
     }
 
     // 6. 成功
+    emit_transfer(
+        &state.app,
+        serde_json::json!({
+            "id": up_id, "direction": "upload",
+            "instanceId": new_id, "instanceName": q.name,
+            "phase": "done", "bytesDone": 0, "bytesTotal": 0,
+            "file": "", "message": "",
+        }),
+    );
     (
         StatusCode::CREATED,
         Json(UploadOk {
@@ -692,35 +870,268 @@ fn count_instances(instances_dir: &StdPath) -> usize {
         .unwrap_or(0)
 }
 
-/// 将实例目录打包为 zip 字节缓冲。
+/// 修正发出去的 `qookix.json`：`mc_version` 必须是标准版本号。
 ///
-/// 包含目录下所有文件（mods / saves / config / resourcepacks / shaderpacks /
-/// qookix.json / options.txt / servers.dat 等），不包含游戏本体。
-fn pack_instance_zip(instance_dir: &StdPath) -> Result<Vec<u8>, String> {
-    let cursor = std::io::Cursor::new(Vec::with_capacity(8 * 1024 * 1024));
-    let mut zip = zip::ZipWriter::new(cursor);
+/// ⚠️ 2026-10-30（真机：手机端补全报 `Version not found in manifest: DeceasedCraft`）：
+/// PCL 转换过来的实例常把**整合包名**写进 `mc_version`（这里就是
+/// `"DeceasedCraft "`，带个尾空格），手机端拿它去版本清单里找必然失败，
+/// 于是永远卡在「缺 2 项 · 补全」。
+///
+/// 真实版本在 `source_path/versions/<版本>/<版本>.json` 里：`inheritsFrom`
+/// 或 `clientVersion`。用实例名去匹配版本目录名（PCL 的惯例）。
+fn fix_instance_meta(instance_dir: &StdPath) -> Option<Vec<u8>> {
+    let raw = std::fs::read_to_string(instance_dir.join("qookix.json")).ok()?;
+    let mut v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    // 先拷成拥有所有权的字符串，否则后面改 v 时借用冲突
+    let cur = v
+        .get("mc_version")
+        .and_then(|x| x.as_str())
+        .unwrap_or("")
+        .trim()
+        .to_string();
+    if looks_like_mc_version(&cur) {
+        return None;
+    }
+    let fixed = guess_mc_version(&v, &cur)?;
+    v["mc_version"] = serde_json::Value::String(fixed.clone());
+    log_lan(&format!("修正元数据：mc_version {:?} → {:?}", cur, fixed));
+    serde_json::to_vec_pretty(&v).ok()
+}
+
+/// `1.20.1` / `1.8.9` / `26.3` 这类才算版本号
+fn looks_like_mc_version(s: &str) -> bool {
+    let mut parts = s.split('.');
+    let all_numeric = parts.clone().count() >= 2
+        && parts.all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()));
+    all_numeric
+}
+
+/// 从 `source_path/versions` 里猜真实 MC 版本
+fn guess_mc_version(meta: &serde_json::Value, cur: &str) -> Option<String> {
+    let source = meta.get("source_path").and_then(|x| x.as_str())?;
+    let name = meta.get("name").and_then(|x| x.as_str()).unwrap_or("").trim();
+    let versions_dir = StdPath::new(source).join("versions");
+    let entries = std::fs::read_dir(&versions_dir).ok()?;
+
+    let mut best: Option<(usize, String)> = None;
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if !p.is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name().to_string_lossy().to_string();
+        let d = dir_name.trim();
+        // 目录名要和实例名（或那个假的 mc_version）沾边，否则容易猜错
+        let score = if d.eq_ignore_ascii_case(name) {
+            3
+        } else if !name.is_empty() && (d.starts_with(name) || name.starts_with(d)) {
+            2
+        } else if !cur.is_empty() && d.starts_with(cur) {
+            1
+        } else {
+            continue;
+        };
+        let Ok(files) = std::fs::read_dir(&p) else {
+            continue;
+        };
+        for f in files.flatten() {
+            let jp = f.path();
+            if jp.extension().map(|e| e != "json").unwrap_or(true) {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&jp) else {
+                continue;
+            };
+            let Ok(jv) = serde_json::from_str::<serde_json::Value>(&text) else {
+                continue;
+            };
+            for key in ["inheritsFrom", "clientVersion"] {
+                if let Some(val) = jv.get(key).and_then(|x| x.as_str()) {
+                    let val = val.trim();
+                    if !looks_like_mc_version(val) {
+                        continue;
+                    }
+                    let better = match &best {
+                        None => true,
+                        Some((s, _)) => score > *s,
+                    };
+                    if better {
+                        best = Some((score, val.to_string()));
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(_, v)| v)
+}
+
+/// 预扫一遍要打包的字节总量（跳过符号链接与共享目录，与打包规则一致）。
+fn measure_dir_bytes(base: &StdPath) -> u64 {
+    let mut total = 0u64;
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return 0;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if std::fs::symlink_metadata(&path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            continue;
+        }
+        if path.is_dir() {
+            if SKIP_DIRS.iter().any(|d| name.eq_ignore_ascii_case(d)) {
+                continue;
+            }
+            total += measure_dir_bytes(&path);
+        } else if let Ok(m) = std::fs::metadata(&path) {
+            total += m.len();
+        }
+    }
+    total
+}
+
+/// 读实例的显示名（桌面端元数据是 `qookix.json`）。读不到就返回 None。
+fn read_instance_display_name(dir: &StdPath) -> Option<String> {
+    let raw = std::fs::read_to_string(dir.join("qookix.json")).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v.get("name")
+        .and_then(|n| n.as_str())
+        .map(|s| s.to_string())
+        .filter(|s| !s.trim().is_empty())
+}
+
+/// 打成一个临时 zip 文件，返回 (路径, 字节数)。
+///
+/// 与「整个打进 Vec」相比：内存占用恒定、能给出精确的 `Content-Length`，
+/// 手机端才画得出真实百分比。临时文件放在系统 temp，同名覆盖。
+fn pack_instance_to_file(
+    instance_dir: &StdPath,
+    on_progress: &dyn Fn(u64, u64, &str),
+) -> Result<(PathBuf, u64), String> {
+    let id = instance_dir
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "instance".to_string());
+    let tmp_path = std::env::temp_dir().join(format!("qookix-lan-{id}.zip"));
+    let _ = std::fs::remove_file(&tmp_path);
+    SKIP_LOGGED.store(0, std::sync::atomic::Ordering::Relaxed);
+
+    let file = std::fs::File::create(&tmp_path)
+        .map_err(|e| format!("创建临时包失败（{}）：{e}", tmp_path.display()))?;
+    let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(file));
     let opts = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Stored); // 局域网传输，不压缩省 CPU
 
-    add_dir_to_zip(&mut zip, instance_dir, "", &opts)?;
+    // 先量一遍总大小，进度条才有分母（只读 metadata，几千个文件也就几毫秒）
+    let total = measure_dir_bytes(instance_dir);
+    let written = std::cell::Cell::new(0u64);
+    let last = std::cell::Cell::new(std::time::Instant::now());
+    // 元数据里 mc_version 可能不是标准版本号（PCL 会把整合包名写进去），
+    // 手机端拿它去版本清单里查会直接失败 —— 这里先修正
+    let patched = fix_instance_meta(instance_dir);
+    add_dir_to_zip(
+        &mut zip,
+        instance_dir,
+        "",
+        &opts,
+        &|size: u64, name: &str| {
+            written.set(written.get() + size);
+            // 100ms 节流，避免每个文件都推一次事件
+            if last.get().elapsed().as_millis() >= 100 {
+                last.set(std::time::Instant::now());
+                on_progress(written.get(), total, name);
+            }
+        },
+        patched.as_deref(),
+    )?;
 
-    let cursor = zip
+    let mut buf_writer = zip
         .finish()
         .map_err(|e| format!("zip finish 失败: {e}"))?;
-    Ok(cursor.into_inner())
+    buf_writer.flush().map_err(|e| format!("写包失败: {e}"))?;
+    drop(buf_writer);
+
+    let size = std::fs::metadata(&tmp_path)
+        .map_err(|e| format!("读取包大小失败: {e}"))?
+        .len();
+    Ok((tmp_path, size))
 }
 
+/// 本次打包已经记过多少条「跳过符号链接」的日志（每次打包清零，只记前 20 条）
+static SKIP_LOGGED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// 这些目录不进包。
+///
+/// * `libraries` / `assets` / `versions` / `runtimes` / `natives`：共享游戏文件，
+///   导入端按 `mc_version` + `loader` 自己装，跟着传只会让包大好几倍（本次 203 MB 的
+///   实例里 `natives` 就占 6.6 MB，完整游戏库能到几 GB）；
+/// * `logs` / `crash-reports` / `screenshots`：对迁移没用，而且日志常被占用读不开。
+const SKIP_DIRS: &[&str] = &[
+    "libraries",
+    "assets",
+    "versions",
+    "runtimes",
+    "runtime",
+    "natives",
+    "logs",
+    "crash-reports",
+    "screenshots",
+    ".git",
+    ".mixin.out",
+    ".fabric",
+];
+
 /// 递归将目录添加到 zip
+///
+/// ⚠️ 错误信息必须带**具体路径**（2026-10-30）：原来只写「读文件失败: {e}」，
+/// 桌面端 500 时手机只看到 "HTTP 500"，谁都不知道是哪个文件出了问题。
 fn add_dir_to_zip<W: Write + std::io::Seek>(
     zip: &mut zip::ZipWriter<W>,
     base: &StdPath,
     prefix: &str,
     opts: &zip::write::SimpleFileOptions,
+    on_file: &dyn Fn(u64, &str),
+    override_root_json: Option<&[u8]>,
 ) -> Result<(), String> {
-    let entries = std::fs::read_dir(base).map_err(|e| format!("读目录失败: {e}"))?;
-    for entry in entries.flatten() {
+    let entries =
+        std::fs::read_dir(base).map_err(|e| format!("读目录失败（{}）：{e}", base.display()))?;
+    for entry in entries {
+        let entry = match entry {
+            Ok(v) => v,
+            Err(e) => {
+                log_lan(&format!("跳过无法读取的目录项（{}）：{e}", base.display()));
+                continue;
+            }
+        };
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().to_string();
+
+        // ⚠️ 符号链接必须跳过（2026-10-30，实测踩到）：
+        // 桌面端实例目录里的 `xxx.jar` / `options.txt` 等是指向
+        // `E:\.minecraft\versions\<版本>\…` 的符号链接（ReparsePoint）。
+        // `std::fs::read` 会跟随链接把目标内容整个读进来 —— 一个 204 MB 的实例
+        // 打出来 5 GB，直接撞上 2 GB 上限，手机端只看到 HTTP 500。
+        // 这些文件本来就该由导入端按版本自己准备，不该跟着实例传。
+        if std::fs::symlink_metadata(&path)
+            .map(|m| m.file_type().is_symlink())
+            .unwrap_or(false)
+        {
+            // ⚠️ 只记前 20 条（2026-10-30）：这个实例有 8000+ 符号链接，
+            // 逐条写日志直接把 log 撑到 2.8 MB，真正要看的信息全被淹没。
+            let n = SKIP_LOGGED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if n < 20 {
+                log_lan(&format!("跳过符号链接：{}", path.display()));
+            } else if n == 20 {
+                log_lan("（符号链接太多，后续不再逐条记录）");
+            }
+            continue;
+        }
+
+        if path.is_dir() && SKIP_DIRS.iter().any(|d| name.eq_ignore_ascii_case(d)) {
+            continue;
+        }
         let zip_name = if prefix.is_empty() {
             name.clone()
         } else {
@@ -728,14 +1139,74 @@ fn add_dir_to_zip<W: Write + std::io::Seek>(
         };
 
         if path.is_dir() {
-            add_dir_to_zip(zip, &path, &zip_name, opts)?;
+            add_dir_to_zip(zip, &path, &zip_name, opts, on_file, override_root_json)?;
         } else {
+            // 先拿大小，读不出来才算失败 —— 顺便把路径报出去
+            let size = match std::fs::metadata(&path) {
+                Ok(m) => m.len(),
+                Err(e) => {
+                    log_lan(&format!("跳过无法读取的文件（{}）：{e}", path.display()));
+                    continue;
+                }
+            };
             zip.start_file(&zip_name, *opts)
-                .map_err(|e| format!("zip start_file 失败: {e}"))?;
-            let data = std::fs::read(&path).map_err(|e| format!("读文件失败: {e}"))?;
-            zip.write_all(&data)
-                .map_err(|e| format!("zip write 失败: {e}"))?;
+                .map_err(|e| format!("zip 写入条目失败（{zip_name}）：{e}"))?;
+            // 逐块读：别把一个 500 MB 的存档整个读进内存
+            let mut src = match std::fs::File::open(&path) {
+                Ok(f) => f,
+                Err(e) => {
+                    log_lan(&format!("跳过无法打开的文件（{}）：{e}", path.display()));
+                    continue;
+                }
+            };
+            // 根级 qookix.json 用修正版替换（版本号可能被 PCL 写成了整合包名）
+            if prefix.is_empty() && zip_name == "qookix.json" {
+                if let Some(patch) = override_root_json {
+                    zip.write_all(patch)
+                        .map_err(|e| format!("zip 写入修正元数据失败：{e}"))?;
+                    on_file(patch.len() as u64, &zip_name);
+                    continue;
+                }
+            }
+            let mut copied: u64 = 0;
+            let mut buf = vec![0u8; 256 * 1024];
+            loop {
+                use std::io::Read;
+                let n = match src.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        return Err(format!("读文件失败（{}）：{e}", path.display()));
+                    }
+                };
+                zip.write_all(&buf[..n])
+                    .map_err(|e| format!("zip 写入数据失败（{zip_name}）：{e}"))?;
+                copied += n as u64;
+            }
+            if copied != size {
+                log_lan(&format!(
+                    "文件在打包期间被改动（{}）：预期 {size} B，实际 {copied} B",
+                    path.display()
+                ));
+            }
+            on_file(copied, &zip_name);
         }
     }
     Ok(())
+}
+
+/// 局域网同步的轻量日志：写到 `%TEMP%/qookix-lan-sync.log`。
+///
+/// 桌面端是 GUI 程序，没有控制台，`println!` 全丢 —— 手机端只看到 HTTP 500、
+/// 用户也没法反馈原因。这里落一个文件，排查时直接看。
+fn log_lan(msg: &str) {
+    use std::io::Write as _;
+    let path = std::env::temp_dir().join("qookix-lan-sync.log");
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{ts}] {msg}");
+    }
 }

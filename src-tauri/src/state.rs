@@ -38,6 +38,8 @@ pub struct AppState {
     pub terracotta: Mutex<Option<crate::terracotta::TerracottaSession>>,
     /// 已下载待安装的应用更新（Update + 安装包字节），供「重启以更新」使用
     pub pending_update: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
+    /// 局域网同步服务（运行中时为 Some，关闭后为 None）
+    pub lan_sync: Mutex<Option<crate::lan_sync::LanSyncServer>>,
 }
 
 impl AppState {

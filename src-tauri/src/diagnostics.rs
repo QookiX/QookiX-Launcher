@@ -906,6 +906,7 @@ mod tests {
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
+            lan_sync: Mutex::new(None),
         }
     }
 
