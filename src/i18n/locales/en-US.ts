@@ -13,6 +13,7 @@ import updaterCheck from "./_fragments/updaterCheck.en";
 import splash from "./_fragments/splash.en";
 import launchProgress from "./_fragments/launchProgress.en";
 import installDialog from "./_fragments/installDialog.en";
+import checklist from "./_fragments/checklist.en";
 import cloudSync from "./_fragments/cloudSync.en";
 import msLogin from "./_fragments/msLogin.en";
 import yggLogin from "./_fragments/yggLogin.en";
@@ -25,6 +26,7 @@ import instances from "./_fragments/instances.en";
 import instanceDetail from "./_fragments/instanceDetail.en";
 import createInstance from "./_fragments/createInstance.en";
 import projectCard from "./_fragments/projectCard.en";
+import projectDetail from "./_fragments/projectDetail.en";
 import playtimeCard from "./_fragments/playtimeCard.en";
 import instanceCard from "./_fragments/instanceCard.en";
 import logViewer from "./_fragments/logViewer.en";
@@ -76,6 +78,7 @@ export default {
   },
   page: {
     instanceDetail: "Instance details",
+    projectDetail: "Content details",
     create: "Create instance",
     serverDetail: "Server details",
     seedMap: "Seed map",
@@ -162,6 +165,7 @@ export default {
   splash,
   launchProgress,
   installDialog,
+  checklist,
   cloudSync,
   msLogin,
   yggLogin,
@@ -174,6 +178,7 @@ export default {
   instanceDetail,
   createInstance,
   projectCard,
+  projectDetail,
   playtimeCard,
   instanceCard,
   logViewer,

@@ -155,6 +155,44 @@ pub fn check(state: &AppState, instance_id: &str) -> Result<Value, String> {
 /// - 已安装判定：实例 mods 目录中 jar 声明的 mod id / 项目 slug / 标题归一化匹配
 /// - 环：按「平台:项目」去重，展开层数上限 64
 /// - 推荐版本：兼容实例 MC 版本与加载器的第一个正式版
+/// 列出实例 mods 目录下所有已启用 jar 的归一化 mod_id（供前端批量判断已安装）。
+pub fn list_installed_mod_ids(state: &AppState, instance_id: &str) -> Vec<String> {
+    let norm = |s: &str| s.to_lowercase().replace(['-', '_', ' '], "");
+    let dir = state.instances_dir().join(instance_id).join("mods");
+    let mut out = Vec::new();
+    for (_, path, enabled) in collect_jars(&dir) {
+        if !enabled {
+            continue;
+        }
+        if let Some(meta) = util::parse_mod_jar(&path) {
+            if let Some(id) = &meta.mod_id {
+                out.push(norm(id));
+            }
+        }
+    }
+    out
+}
+
+/// 检测某 mod（按 slug 或 title 归一化匹配 mod_id）是否已安装在实例的 mods 目录。
+pub fn is_mod_installed(state: &AppState, instance_id: &str, slug: &str, title: &str) -> bool {
+    let norm = |s: &str| s.to_lowercase().replace(['-', '_', ' '], "");
+    let dir = state.instances_dir().join(instance_id).join("mods");
+    for (_, path, enabled) in collect_jars(&dir) {
+        if !enabled {
+            continue;
+        }
+        if let Some(meta) = util::parse_mod_jar(&path) {
+            if let Some(id) = &meta.mod_id {
+                let n = norm(id);
+                if n == norm(slug) || n == norm(title) {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
 pub async fn resolve_dependency_tree(
     state: &AppState,
     instance_id: &str,
@@ -234,7 +272,7 @@ pub async fn resolve_dependency_tree(
             }
             // 推荐版本：兼容实例 MC/加载器的第一个正式版
             let versions = if dep_prov == "curseforge" {
-                crate::curseforge::files(state, &dep_pid, &mc).await?
+                crate::curseforge::files(state, &dep_pid, &mc, &loader, 0).await?.0
             } else {
                 crate::modrinth::versions(state, &dep_pid, &mc, &loader).await?
             };

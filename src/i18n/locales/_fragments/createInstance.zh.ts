@@ -51,7 +51,7 @@ export default {
   copyFiles: "复制文件",
   symlink: "符号链接",
   copy: "复制",
-  migrateMethodDesc: "复制方式占用额外磁盘空间但完全独立；符号链接不占用空间，下载的 mod 会直接保存到原始目录，但原文件夹不可删除或移动到其他磁盘。",
+  migrateMethodDesc: "复制方式占用额外磁盘空间但完全独立；符号链接不占用空间，下载的 mod 会直接保存到原始目录，但原文件夹不可删除或移动到其他磁盘。存档始终会真实复制到实例中，不参与符号链接。",
   prevStep: "上一步",
   nextStep: "下一步",
   cancel: "取消",

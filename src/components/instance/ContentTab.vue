@@ -329,7 +329,7 @@ async function openSwitchVersion(item: ContentItem) {
     projectId: pid,
   };
   try {
-    const res = await api.projectVersions(src, pid, mc, ld);
+    const res = await api.projectVersions(src, pid, mc, ld, 0, false);
     switchState.value.versions = res.versions;
     const cur = res.versions.find((v) => v.id === item.record.version_id);
     switchState.value.selected = cur?.id ?? res.versions[0]?.id ?? null;
@@ -416,7 +416,10 @@ onMounted(async () => {
       rec.slug = p.slug;
       if (p.name) rec.name = p.name;
       if (p.description) rec.description = p.description;
-      if (p.icon) rec.icon = p.icon;
+      if (p.icon) {
+        rec.icon = p.icon;
+        iconErrors.value.delete(p.filename);
+      }
       if (p.authors) rec.authors = p.authors;
     });
   } catch {

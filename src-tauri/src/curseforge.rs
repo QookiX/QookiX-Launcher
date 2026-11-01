@@ -143,11 +143,17 @@ pub async fn dependencies(state: &AppState, mod_id: &str, file_id: &str) -> Resu
         let Some(mod_id) = dep.get("modId").and_then(|v| v.as_u64()) else { continue };
         let rt = dep.get("relationType").and_then(|v| v.as_u64()).unwrap_or(3);
         let (title, slug) = info_map.get(&mod_id).cloned().unwrap_or_default();
+        let vid = dep
+            .get("fileId")
+            .and_then(|v| v.as_u64())
+            .map(|n| n.to_string())
+            .unwrap_or_default();
         out.push(json!({
             "projectId": mod_id.to_string(),
             "title": title,
             "slug": slug,
             "dependencyType": relation_type(rt),
+            "versionId": vid,
         }));
     }
     Ok(out)
@@ -284,6 +290,59 @@ pub async fn project_info(state: &AppState, mod_id: &str) -> Result<Value, Strin
         6945 => "datapack",
         _ => "mod",
     };
+    let mut gv: Vec<String> = m
+        .get("gameVersions")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+        .unwrap_or_default();
+    if gv.is_empty() {
+        let mut set = std::collections::HashSet::new();
+        if let Some(idx) = m.get("latestFilesIndexes").and_then(|v| v.as_array()) {
+            for e in idx {
+                if let Some(s) = e.get("gameVersion").and_then(|v| v.as_str()) {
+                    set.insert(s.to_string());
+                }
+            }
+        }
+        if set.is_empty() {
+            if let Some(files) = m.get("latestFiles").and_then(|v| v.as_array()) {
+                for f in files {
+                    if let Some(arr) = f.get("gameVersions").and_then(|v| v.as_array()) {
+                        for g in arr {
+                            if let Some(s) = g.as_str() {
+                                set.insert(s.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        gv = set.into_iter().collect();
+    }
+    // 图库：CurseForge 的 Mod 对象带 screenshots（thumbnailUrl 为缩略图，url 为原图）
+    let gallery: Vec<Value> = m
+        .get("screenshots")
+        .and_then(|s| s.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|s| {
+                    let url = s.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                    let thumb = s.get("thumbnailUrl").and_then(|v| v.as_str()).unwrap_or("");
+                    let full = if !url.is_empty() { url } else { thumb };
+                    if full.is_empty() {
+                        return None;
+                    }
+                    Some(json!({
+                        "url": full,
+                        "thumb": if thumb.is_empty() { full } else { thumb },
+                        "title": s.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                        "description": s.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+                        "featured": false,
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default();
     Ok(json!({
         "provider": "curseforge",
         "id": m.get("id").and_then(|v| v.as_u64()).unwrap_or(0).to_string(),
@@ -297,32 +356,57 @@ pub async fn project_info(state: &AppState, mod_id: &str) -> Result<Value, Strin
         "project_type": kind,
         "categories": m.get("categories").and_then(|c| c.as_array()).map(|c| c.iter().filter_map(|x| x.get("name").and_then(|v| v.as_str()).map(|s| s.to_string())).collect::<Vec<_>>()).unwrap_or_default(),
         "latest_version": "",
-        "game_versions": m.get("gameVersions").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+        "game_versions": gv,
+        "gallery": gallery,
     }))
 }
 
 /// Files of a mod, optionally filtered by game version.
-pub async fn files(state: &AppState, mod_id: &str, mc_version: &str) -> Result<Vec<Value>, String> {
-    let mut params: Vec<(&str, String)> = vec![("pageSize", "100".into())];
+pub async fn files(state: &AppState, mod_id: &str, mc_version: &str, loader: &str, index: u32) -> Result<(Vec<Value>, bool), String> {
+    let map_file = |f: &Value| -> Value {
+        let rt = f.get("releaseType").and_then(|v| v.as_u64()).unwrap_or(0);
+        let vtype = match rt {
+            2 => "beta",
+            3 => "alpha",
+            _ => "release",
+        };
+        json!({
+            "id": f.get("id").and_then(|v| v.as_u64()).unwrap_or(0).to_string(),
+            "name": f.get("displayName").and_then(|v| v.as_str()).unwrap_or(""),
+            "version_number": f.get("displayName").and_then(|v| v.as_str()).unwrap_or(""),
+            "version_type": vtype,
+            "date_published": f.get("fileDate").and_then(|v| v.as_str()).unwrap_or(""),
+            "release_type": rt,
+            "game_versions": f.get("gameVersions").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+            "loaders": []
+            // 不返回 filename/size/download_url：安装时后端用文件 id 重新取文件
+        })
+    };
+
+    let mut params: Vec<(&str, String)> = vec![
+        ("pageSize", "100".into()),
+        ("index", index.to_string()),
+    ];
     if !mc_version.is_empty() {
         params.push(("gameVersion", mc_version.to_string()));
     }
+    // CurseForge modLoaderType：1=Forge 3=LiteLoader 4=Fabric 5=Quilt 6=NeoForge
+    let ldt = match loader.to_lowercase().as_str() {
+        "forge" => 1,
+        "liteloader" => 3,
+        "fabric" => 4,
+        "quilt" => 5,
+        "neoforge" => 6,
+        _ => 0,
+    };
+    if ldt > 0 {
+        params.push(("modLoaderType", ldt.to_string()));
+    }
     let body = get(state, &format!("/mods/{mod_id}/files"), &params).await?;
     let data = body.get("data").and_then(|d| d.as_array()).cloned().unwrap_or_default();
-    Ok(data
-        .iter()
-        .map(|f| {
-            json!({
-                "id": f.get("id").and_then(|v| v.as_u64()).unwrap_or(0).to_string(),
-                "name": f.get("displayName").and_then(|v| v.as_str()).unwrap_or(""),
-                "version_number": f.get("displayName").and_then(|v| v.as_str()).unwrap_or(""),
-                "date_published": f.get("fileDate").and_then(|v| v.as_str()).unwrap_or(""),
-                "release_type": f.get("releaseType").and_then(|v| v.as_u64()).unwrap_or(0),
-                "game_versions": f.get("gameVersions").and_then(|v| v.as_array()).cloned().unwrap_or_default()
-                // 不返回 filename/size/download_url：安装时后端用文件 id 重新取文件
-            })
-        })
-        .collect())
+    let has_more = data.len() >= 100;
+    let mapped: Vec<Value> = data.iter().map(map_file).collect();
+    Ok((mapped, has_more))
 }
 
 /// Check installed CurseForge content for available updates.
@@ -350,7 +434,7 @@ pub async fn check_updates(
         else {
             continue;
         };
-        let flist = files(state, project_id, &instance.mc_version).await?;
+        let flist = files(state, project_id, &instance.mc_version, "", 0).await?.0;
         if flist.is_empty() {
             continue;
         }

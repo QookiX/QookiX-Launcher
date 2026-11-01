@@ -136,6 +136,31 @@ pub async fn dependencies(state: &AppState, version_id: &str) -> Result<Vec<Valu
         .and_then(|d| d.as_array())
         .cloned()
         .unwrap_or_default();
+    if deps.is_empty() {
+        return Ok(vec![]);
+    }
+    // 批量拉取所有前置的项目信息（一次请求，不再逐个串行）
+    let pids: Vec<&str> = deps
+        .iter()
+        .filter_map(|d| d.get("project_id").and_then(|p| p.as_str()))
+        .collect();
+    let mut info_map: std::collections::HashMap<String, (String, String)> =
+        std::collections::HashMap::new();
+    if !pids.is_empty() {
+        let ids_json = serde_json::to_string(&pids).unwrap_or_default();
+        let url = format!("{API}/projects");
+        if let Ok(resp) = state.client.get(&url).query(&[("ids", ids_json.as_str())]).send().await {
+            if let Ok(arr) = resp.json::<Vec<Value>>().await {
+                for p in arr {
+                    if let Some(pid) = p.get("id").and_then(|x| x.as_str()) {
+                        let title = p.get("title").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                        let slug = p.get("slug").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                        info_map.insert(pid.to_string(), (title, slug));
+                    }
+                }
+            }
+        }
+    }
     let mut out = Vec::new();
     for dep in deps {
         let dtype = dep
@@ -151,24 +176,18 @@ pub async fn dependencies(state: &AppState, version_id: &str) -> Result<Vec<Valu
         let Some(pid) = dep.get("project_id").and_then(|p| p.as_str()) else {
             continue;
         };
-        // enrich with title + slug (best effort)
-        let mut title = fallback;
-        let mut slug = String::new();
-        if let Ok(resp) = state.client.get(format!("{API}/project/{pid}")).send().await {
-            if let Ok(p) = resp.json::<Value>().await {
-                if let Some(t) = p.get("title").and_then(|t| t.as_str()) {
-                    title = t.to_string();
-                }
-                if let Some(s) = p.get("slug").and_then(|s| s.as_str()) {
-                    slug = s.to_string();
-                }
-            }
-        }
+        let (title, slug) = info_map.get(pid).cloned().unwrap_or((fallback, String::new()));
+        let vid = dep
+            .get("version_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         out.push(json!({
             "projectId": pid,
             "title": title,
             "slug": slug,
             "dependencyType": dtype,
+            "versionId": vid,
         }));
     }
     Ok(out)
@@ -465,10 +484,38 @@ async fn project_icon(state: &AppState, project_id: &str) -> Option<String> {
     body.get("icon_url").and_then(|i| i.as_str()).map(|s| s.to_string())
 }
 
+/// Map Modrinth's `gallery` array into the shape the detail page consumes.
+/// 条目可能只有 raw_url 而没有 url，空链接直接丢弃。
+fn gallery_of(body: &Value) -> Vec<Value> {
+    body.get("gallery")
+        .and_then(|g| g.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|g| {
+                    let url = g.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                    let raw = g.get("raw_url").and_then(|v| v.as_str()).unwrap_or("");
+                    let full = if !url.is_empty() { url } else { raw };
+                    if full.is_empty() {
+                        return None;
+                    }
+                    Some(json!({
+                        "url": full,
+                        "thumb": if url.is_empty() { raw } else { url },
+                        "title": g.get("title").and_then(|v| v.as_str()).unwrap_or(""),
+                        "description": g.get("description").and_then(|v| v.as_str()).unwrap_or(""),
+                        "featured": g.get("featured").and_then(|v| v.as_bool()).unwrap_or(false),
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
 /// Fetch a single project's full info (used when opening a dependency).
 pub async fn project_info(state: &AppState, project_id: &str) -> Result<Value, String> {
     let url = format!("{API}/project/{project_id}");
     let body: Value = crate::download::get_json(&state.client, &url).await?;
+    let gallery = gallery_of(&body);
     Ok(json!({
         "provider": "modrinth",
         "id": body.get("id").and_then(|v| v.as_str()).unwrap_or(project_id),
@@ -484,6 +531,7 @@ pub async fn project_info(state: &AppState, project_id: &str) -> Result<Value, S
         "categories": body.get("categories").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
         "latest_version": body.get("latest_version").and_then(|v| v.as_str()).unwrap_or(""),
         "game_versions": body.get("game_versions").and_then(|v| v.as_array()).cloned().unwrap_or_default(),
+        "gallery": gallery,
     }))
 }
 

@@ -300,6 +300,8 @@ pub fn run() {
             commands::check_updates,
             commands::resolve_missing_mods,
             commands::resolve_dependency_tree,
+            commands::is_mod_installed,
+            commands::list_installed_mod_ids,
             commands::save_text_file,
             commands::extract_game_icons,
             // 翻译（Mod 描述 / 名称 / 正文 互译）

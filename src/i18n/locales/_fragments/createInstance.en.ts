@@ -51,7 +51,7 @@ export default {
   copyFiles: "Copy files",
   symlink: "Symlink",
   copy: "Copy",
-  migrateMethodDesc: "Copy uses extra disk space but is fully independent; symlink uses no space and downloaded mods go directly to the original directory, but the original folder cannot be deleted or moved to another disk.",
+  migrateMethodDesc: "Copy uses extra disk space but is fully independent; symlink uses no space and downloaded mods go directly to the original directory, but the original folder cannot be deleted or moved to another disk. Worlds (saves) are always really copied into the instance, never symlinked.",
   prevStep: "Back",
   nextStep: "Next",
   cancel: "Cancel",

@@ -162,6 +162,15 @@ pub async fn browse(
     }
 }
 
+/// 按 version 的 `id` 字段去重（保留首次出现的那条）
+fn dedup_by_id(list: &mut Vec<Value>) {
+    let mut seen = std::collections::HashSet::new();
+    list.retain(|v| {
+        let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+        !id.is_empty() && seen.insert(id.to_string())
+    });
+}
+
 #[tauri::command]
 pub async fn project_versions(
     state: State<'_, AppState>,
@@ -169,15 +178,54 @@ pub async fn project_versions(
     project_id: String,
     mc_version: String,
     loader: String,
+    index: u64,
+    fetch_all: bool,
 ) -> Result<Value, String> {
+    // 单个项目的版本数量上限：列表只是给人挑一个装，没必要把上千个版本全拉回来。
+    // 默认每页 100 条，用户点「加载更多」才继续翻页。
+    const MAX_VERSIONS: usize = 1000;
+    const PAGE_SIZE: usize = 100;
     match provider.as_str() {
         "modrinth" => {
-            let list = modrinth::versions(&state, &project_id, &mc_version, &loader).await?;
-            Ok(json!({ "provider": "modrinth", "versions": list }))
+            let all = modrinth::versions(&state, &project_id, &mc_version, &loader).await?;
+            if fetch_all {
+                let mut list = all;
+                dedup_by_id(&mut list);
+                list.truncate(MAX_VERSIONS);
+                Ok(json!({ "provider": "modrinth", "versions": list, "hasMore": false }))
+            } else {
+                // Modrinth 接口不支持分页，先拿全量再本地切片，默认每页 100 条
+                let total = all.len();
+                let start = (index as usize).saturating_mul(PAGE_SIZE);
+                let list: Vec<Value> = all.into_iter().skip(start).take(PAGE_SIZE).collect();
+                let has_more = start + PAGE_SIZE < total;
+                Ok(json!({ "provider": "modrinth", "versions": list, "hasMore": has_more }))
+            }
         }
         "curseforge" => {
-            let list = curseforge::files(&state, &project_id, &mc_version).await?;
-            Ok(json!({ "provider": "curseforge", "versions": list }))
+            if fetch_all {
+                let mut all: Vec<Value> = Vec::new();
+                let mut seen = std::collections::HashSet::new();
+                let mut idx: u32 = 0;
+                loop {
+                    let (list, has_more) = curseforge::files(&state, &project_id, &mc_version, &loader, idx).await?;
+                    for v in list {
+                        let id = v.get("id").and_then(|x| x.as_str()).unwrap_or("");
+                        if !id.is_empty() && seen.insert(id.to_string()) {
+                            all.push(v);
+                        }
+                    }
+                    if all.len() >= MAX_VERSIONS || !has_more || idx >= 99 {
+                        break;
+                    }
+                    idx += 1;
+                }
+                all.truncate(MAX_VERSIONS);
+                Ok(json!({ "provider": "curseforge", "versions": all, "hasMore": false }))
+            } else {
+                let (list, has_more) = curseforge::files(&state, &project_id, &mc_version, &loader, index as u32).await?;
+                Ok(json!({ "provider": "curseforge", "versions": list, "hasMore": has_more }))
+            }
         }
         _ => Err("未知内容源".into()),
     }
@@ -366,6 +414,24 @@ pub async fn resolve_dependency_tree(
         &version_id,
     )
     .await
+}
+
+#[tauri::command]
+pub async fn is_mod_installed(
+    state: State<'_, AppState>,
+    instance_id: String,
+    slug: String,
+    title: String,
+) -> Result<bool, String> {
+    Ok(crate::deps::is_mod_installed(state.inner(), &instance_id, &slug, &title))
+}
+
+#[tauri::command]
+pub async fn list_installed_mod_ids(
+    state: State<'_, AppState>,
+    instance_id: String,
+) -> Result<Vec<String>, String> {
+    Ok(crate::deps::list_installed_mod_ids(state.inner(), &instance_id))
 }
 
 /// 翻译资源正文（详情弹窗右侧：译文优先、原文兜底）。
@@ -615,6 +681,41 @@ pub async fn identify_content(
     let folder = modrinth::kind_folder(&kind);
     let dir = state.instances_dir().join(&instance.id).join(folder);
     let records = crate::instances::list_content(&state, &instance_id, &kind);
+
+    // ---- pass 0: 修复失效的图标路径（temp 文件被清理） ----
+    let mut repaired: Vec<InstalledContent> = Vec::new();
+    for rec in &records {
+        if let Some(ref icon) = rec.icon {
+            let is_local = !icon.starts_with("http://")
+                && !icon.starts_with("https://")
+                && !icon.starts_with("data:");
+            if is_local && !std::path::Path::new(icon).is_file() {
+                let mut new_rec = rec.clone();
+                let jar_path = dir.join(&rec.filename);
+                // 从 jar 重新提取图标（现在会存成 data URL）
+                new_rec.icon = if jar_path.is_file() {
+                    crate::util::extract_archive_icon(&jar_path, &kind)
+                } else {
+                    None
+                };
+                repaired.push(new_rec);
+            }
+        }
+    }
+    if !repaired.is_empty() {
+        let repaired_clone = repaired.clone();
+        let _ = crate::instances::add_content_batch(&state, &instance_id, &kind, repaired_clone);
+        for rec in &repaired {
+            let _ = app.emit("content::identified", json!({
+                "instanceId": instance_id, "kind": kind, "filename": rec.filename,
+                "source": rec.source, "projectId": rec.project_id,
+                "versionId": rec.version_id, "slug": rec.slug,
+                "name": rec.name, "description": rec.description,
+                "icon": rec.icon, "authors": rec.authors,
+            }));
+        }
+    }
+
     let to_identify: Vec<(String, String)> = records.iter()
         .filter(|r| r.project_id.is_none() && dir.join(&r.filename).is_file())
         .filter_map(|r| {

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
+import { useRouter } from "vue-router";
 import { IconBox, IconCheck, IconClock, IconCopy, IconDownload, IconHeart } from "./icons";
 import { translateCategory } from "../utils/categories";
 import { fmtRelative as fmtDate, fmtCount as fmt } from "../utils/format";
@@ -16,8 +17,12 @@ const props = withDefaults(
     translating?: boolean;
     /** 已取到的中文描述；null = 未翻译 */
     translatedDesc?: string | null;
+    /** 在所选实例中已安装 */
+    installed?: boolean;
+    /** 发现页选中的游戏版本，跳详情页时带上作为版本 tab 默认筛选 */
+    mcVersion?: string;
   }>(),
-  { view: "grid", translateMode: false, translating: false, translatedDesc: null }
+  { view: "grid", translateMode: false, translating: false, translatedDesc: null, installed: false, mcVersion: "" }
 );
 const emit = defineEmits<{
   install: [p: ProjectHit];
@@ -25,10 +30,11 @@ const emit = defineEmits<{
 }>();
 
 const { t } = useI18n();
+const router = useRouter();
 
 function onCardClick() {
   if (props.translateMode) emit("translate", props.project);
-  else emit("install", props.project);
+  else router.push({ name: "project-detail", params: { provider: props.project.provider, id: props.project.id }, query: props.mcVersion ? { mc: props.mcVersion } : undefined });
 }
 
 const cardClass = computed(() => [
@@ -88,8 +94,8 @@ async function copyName() {
             <IconCheck v-if="copied" />
             <IconCopy v-else />
           </button>
-          <button class="install-btn" @click.stop="emit('install', project)">
-            <IconDownload /> {{ t("projectCard.install") }}
+          <button class="install-btn" :class="{ installed }" :disabled="installed" @click.stop="emit('install', project)">
+            <IconCheck v-if="installed" /><IconDownload v-else /> {{ installed ? t("projectCard.installed") : t("projectCard.install") }}
           </button>
         </div>
       </div>
@@ -129,8 +135,8 @@ async function copyName() {
             <IconCheck v-if="copied" />
             <IconCopy v-else />
           </button>
-          <button class="install-btn" @click.stop="emit('install', project)">
-            <IconDownload /> {{ t("projectCard.install") }}
+          <button class="install-btn" :class="{ installed }" :disabled="installed" @click.stop="emit('install', project)">
+            <IconCheck v-if="installed" /><IconDownload v-else /> {{ installed ? t("projectCard.installed") : t("projectCard.install") }}
           </button>
         </div>
       </div>
@@ -365,6 +371,14 @@ async function copyName() {
 }
 .install-btn:hover {
   filter: brightness(1.1);
+}
+.install-btn.installed {
+  background: rgba(76, 175, 80, 0.18);
+  color: #4caf50;
+  cursor: default;
+}
+.install-btn.installed:hover {
+  filter: none;
 }
 .p-actions {
   display: flex;

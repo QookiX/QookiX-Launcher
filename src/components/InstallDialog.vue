@@ -5,8 +5,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useRouter } from "vue-router";
 import { NModal, NSelect, NButton, useMessage } from "naive-ui";
 import { api } from "../api";
-import { marked } from "marked";
-import DOMPurify from "dompurify";
 import { fmtDateStr as fmtDate, instanceLabel } from "../utils/format";
 import { useInstancesStore } from "../stores/instances";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
@@ -18,6 +16,8 @@ const props = defineProps<{
   show: boolean;
   project: ProjectHit | null;
   defaultInstance?: string | null;
+  /** 内容详情页版本列表里点「下载」时带过来的版本 id，打开后优先选中它 */
+  defaultVersion?: string | null;
 }>();
 const emit = defineEmits<{
   "update:show": [v: boolean];
@@ -43,7 +43,7 @@ onBeforeUnmount(() => document.removeEventListener("mousedown", onDocMouseDown))
 const instances = useInstancesStore();
 const router = useRouter();
 const message = useMessage();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 
 async function copyName() {
   if (!props.project?.title) return;
@@ -77,9 +77,6 @@ const loadingDeps = ref(false);
 
 const isModpack = computed(() => props.project?.project_type === "modpack");
 
-/** 精简模式：内容中心已选实例时的快速安装——不加载正文，只留版本/前置/安装 */
-const compactMode = computed(() => !!props.defaultInstance);
-
 const mcWikiUrl = ref("");
 const sourceUrl = computed(() => {
   const p = props.project;
@@ -112,6 +109,13 @@ const instanceOptions = () =>
     value: i.id,
   }));
 
+// 用户从发现页带进来的实例若是原版，它不会出现在上面的下拉里（原版没有模组加载器，
+// 装不了模组/光影）。这种情况给一条明确提示，而不是让用户对着空列表发懵。
+const defaultInstanceIsVanilla = computed(() => {
+  if (!props.defaultInstance) return false;
+  return instances.get(props.defaultInstance)?.loader === "vanilla";
+});
+
 function versionType(v: ProjectVersion): string {
   // modrinth: version_type; curseforge: release_type (1=release,2=beta,3=alpha)
   if (v.version_type) return v.version_type;
@@ -129,8 +133,35 @@ const filteredVersions = computed(() => {
   return versions.value.filter((v) => versionType(v) === typeFilter.value);
 });
 
-// —— 缺失前置检测（与本体一起由底部「一键安装」统一安装）——
-const missingDeps = ref<{ projectId: string; title: string; provider: string; versionId: string }[]>([]);
+// —— 缺失前置检测（与本体一起由底部「一键安装」统一安装，用户可逐项取消勾选）——
+const missingDeps = ref<{ projectId: string; title: string; provider: string; versionId: string; selected: boolean }[]>([]);
+
+// 本体是否已安装在所选实例（用于把安装按钮文案改为「已安装」）
+const alreadyInstalled = ref(false);
+async function checkAlreadyInstalled() {
+  alreadyInstalled.value = false;
+  const inst = selectedInstance.value;
+  const p = props.project;
+  if (!inst || !p || isModpack.value) return;
+  try {
+    alreadyInstalled.value = await api.isModInstalled(inst, p.slug || p.title, p.title);
+  } catch { /* 忽略 */ }
+}
+
+// 按 projectId 合并声明的依赖与缺失前置，避免同一模组显示两行
+const mergedDeps = computed(() => {
+  type Miss = (typeof missingDeps.value)[number];
+  const map = new Map<string, { projectId: string; title: string; dependencyType: string; dep: ProjectDependency | null; miss: Miss | null }>();
+  for (const d of deps.value) {
+    map.set(d.projectId, { projectId: d.projectId, title: d.title, dependencyType: d.dependencyType, dep: d, miss: null });
+  }
+  for (const m of missingDeps.value) {
+    const ex = map.get(m.projectId);
+    if (ex) { ex.miss = m; }
+    else { map.set(m.projectId, { projectId: m.projectId, title: m.title, dependencyType: "required", dep: null, miss: m }); }
+  }
+  return Array.from(map.values());
+});
 
 async function loadMissing() {
   missingDeps.value = [];
@@ -153,6 +184,7 @@ async function loadMissing() {
         title: m.title,
         provider: m.provider,
         versionId: m.versionId,
+        selected: true, // 默认勾选，保留原一键体验；用户可取消
       }));
   } catch {
     /* 检测失败不影响正常安装流程 */
@@ -216,7 +248,7 @@ watch(
     feedbackPanel.value = false;
     const custom = translateService.value === "custom";
     // 百度网页模式不请求翻译；内置服务只支持 Modrinth；自定义 AI 两个平台都能翻
-    if (!show || !id || !provider || translateService.value === "baidu_web") return;
+    if (!show || !id || !provider || translateService.value === "baidu_web" || !locale.value.startsWith("zh")) return;
     if (provider !== "modrinth" && !custom) return;
     descLoading.value = true;
     try {
@@ -287,14 +319,19 @@ async function loadVersions() {
     const inst = selectedInstance.value ? instances.get(selectedInstance.value) : null;
     const mc = inst?.mc_version ?? "";
     const ld = inst && inst.loader !== "vanilla" ? inst.loader : "";
-    const res = await api.projectVersions(props.project.provider, props.project.id, mc, ld);
+    const res = await api.projectVersions(props.project.provider, props.project.id, mc, ld, 0, false);
     versions.value = res.versions;
     if (inst && !res.versions.length) {
       // 上游按实例筛选无结果时，回退拉取全部版本供选择
-      const all = await api.projectVersions(props.project.provider, props.project.id, "", "");
+      const all = await api.projectVersions(props.project.provider, props.project.id, "", "", 0, false);
       versions.value = all.versions;
     }
-    const picked = versions.value.find((v) => versionType(v) === "release") ?? versions.value[0];
+    // 详情页版本行「下载」带进来的版本优先选中；不在当前（按实例过滤后的）列表里
+    // 就退回默认的「第一个正式版」
+    const preferred = props.defaultVersion
+      ? versions.value.find((v) => v.id === props.defaultVersion)
+      : undefined;
+    const picked = preferred ?? versions.value.find((v) => versionType(v) === "release") ?? versions.value[0];
     if (picked) selectedVersion.value = picked.id;
   } catch (e) {
     message.error(String(e));
@@ -306,6 +343,7 @@ async function loadVersions() {
 // 切换实例时按新实例的 MC 版本/加载器重新拉取
 watch(selectedInstance, () => {
   if (props.show && props.project) loadVersions();
+  checkAlreadyInstalled();
 });
 
 function resetForProject() {
@@ -319,6 +357,7 @@ function resetForProject() {
   typeFilter.value = "all";
   loadVersions();
   loadMcWikiUrl();
+  checkAlreadyInstalled();
 }
 
 async function onOpen() {
@@ -327,191 +366,6 @@ async function onOpen() {
     `[fe] 对话框打开 project=${props.project?.provider}/${props.project?.id} type=${props.project?.project_type}`
   );
   resetForProject();
-  // 精简模式（已选实例的快速安装）不加载正文，保持弹窗轻量
-  if (!compactMode.value) loadBody(false);
-}
-
-// —— 正文面板（右侧栏）：译文/原文按钮切换，手动翻译的结果走缓存 ——
-type BodyState = {
-  status: "loading" | "ok" | "error";
-  bodyHtml: string; // 译文渲染后的 HTML（空 = 尚未翻译）
-  originalHtml: string; // 原文渲染后的 HTML
-  showZh: boolean; // 当前显示译文（false = 显示原文）
-  note: string; // 顶部提示（不支持 / 失败原因）
-  translating: boolean; // 正在请求译文
-};
-const bodyState = ref<BodyState | null>(null);
-let bodySeq = 0;
-
-/** 内置服务与自定义 AI 均已支持两平台；百度网页模式不支持 */
-const canTranslateBody = computed(
-  () =>
-    settingsStore.settings?.translate_provider === "default" ||
-    settingsStore.settings?.translate_provider === "custom"
-);
-
-/** 当前应渲染的内容：showZh 且有译文 → 译文，否则原文 */
-const bodyDisplayHtml = computed(() => {
-  const st = bodyState.value;
-  if (!st) return "";
-  return st.showZh && st.bodyHtml ? st.bodyHtml : st.originalHtml;
-});
-const bodyIsZh = computed(() => {
-  const st = bodyState.value;
-  return !!st && st.showZh && !!st.bodyHtml;
-});
-
-/** 原文渲染：Modrinth 是 Markdown 转 HTML；CurseForge / Spigot 本身是 HTML 原样保留 */
-function renderOriginal(text: string, provider: string): string {
-  const html =
-    provider === "curseforge" || provider === "spigot"
-      ? text
-      : (marked.parse(text, { async: false }) as string);
-  return sanitizeBody(html);
-}
-
-/** 译文渲染：LLM 输出可能是 Markdown 或 HTML 混合，统一走 Markdown 解析
- * （marked 对内嵌 HTML 宽容），再消毒。避免 CF 译文按 HTML 渲染时
- * Markdown 符号（**、#）原样显示导致格式错乱。 */
-function renderTranslated(text: string): string {
-  return sanitizeBody(marked.parse(text, { async: false }) as string);
-}
-
-/** 消毒 + 图片链接修复：http 升级 https（混合内容会被拦截）、相对路径补全 */
-function sanitizeBody(html: string): string {
-  const clean = DOMPurify.sanitize(html);
-  const doc = new DOMParser().parseFromString(clean, "text/html");
-  const provider = props.project?.provider;
-  const base =
-    provider === "curseforge"
-      ? "https://www.curseforge.com"
-      : provider === "spigot"
-        ? "https://www.spigotmc.org"
-        : "https://modrinth.com";
-  doc.querySelectorAll("img[src]").forEach((img) => {
-    const src = img.getAttribute("src") ?? "";
-    if (src.startsWith("//")) {
-      img.setAttribute("src", `https:${src}`);
-    } else if (src.startsWith("/") && !src.startsWith("//")) {
-      img.setAttribute("src", `${base}${src}`);
-    } else if (src.startsWith("http://")) {
-      img.setAttribute("src", src.replace(/^http:\/\//, "https://"));
-    }
-  });
-  return doc.body.innerHTML;
-}
-
-/** 正文翻译的项目标识：CF 推荐数字 id（与服务端预热缓存同 key），Modrinth 用 slug */
-function bodyModId(p: ProjectHit): string {
-  return p.provider === "curseforge" ? p.id : p.slug || p.id;
-}
-
-function withImages(zhHtml: string, originalHtml: string): string {
-  if (/<img/i.test(zhHtml)) return zhHtml;
-  const doc = new DOMParser().parseFromString(originalHtml, "text/html");
-  const imgs = Array.from(doc.querySelectorAll("img"))
-    .map((i) => i.outerHTML)
-    .join("");
-  return imgs ? `${zhHtml}<div class="id-body-sep">${t('installDialog.body.images')}</div>${imgs}` : zhHtml;
-}
-
-/** 拉取正文。translate=false 仅原文；缓存命中的译文会随响应直接返回 */
-async function loadBody(translate: boolean) {
-  const p = props.project;
-  if (!p) return;
-  const seq = ++bodySeq;
-  const auto = !!settingsStore.settings?.body_translate_auto;
-  const wantTranslate = translate || (auto && canTranslateBody.value);
-  bodyState.value = {
-    status: "loading",
-    bodyHtml: "",
-    originalHtml: "",
-    showZh: false,
-    note: "",
-    translating: wantTranslate,
-  };
-  try {
-    const r = await api.translateBody(p.provider, bodyModId(p), wantTranslate);
-    if (seq !== bodySeq) return; // 已切换到别的项目，丢弃过期结果
-    const state: BodyState = {
-      status: "ok",
-      bodyHtml: "",
-      originalHtml: r.original ? renderOriginal(r.original, p.provider) : "",
-      // 缓存命中的译文直接展示；未翻译则显示原文
-      showZh: !!r.body,
-      note: "",
-      translating: false,
-    };
-    if (r.body) state.bodyHtml = withImages(renderTranslated(r.body), state.originalHtml);
-    if (r.error) state.note = t('installDialog.body.translateFailed', { error: r.error });
-    else if (!r.supported) state.note = t('installDialog.body.notSupported');
-    bodyState.value = state;
-  } catch (e) {
-    if (seq !== bodySeq) return;
-    bodyState.value = {
-      status: "error",
-      bodyHtml: "",
-      originalHtml: "",
-      showZh: false,
-      note: t('installDialog.body.loadFailed', { error: String(e) }),
-      translating: false,
-    };
-  }
-}
-
-/** 正文里的链接一律用系统浏览器打开，防止 webview 就地导航覆盖整个应用 */
-function onBodyClick(e: MouseEvent) {
-  const a = (e.target as Element | null)?.closest("a[href]");
-  if (!a) return;
-  e.preventDefault();
-  const href = a.getAttribute("href") ?? "";
-  if (/^https?:\/\//i.test(href)) {
-    openUrl(href).catch(() => {});
-  }
-}
-
-/** 图片加载失败：替换成带原始 src 的占位，方便定位是 URL 坏了还是被拦截 */
-function onBodyImgError(e: Event) {
-  const img = e.target as HTMLElement;
-  if (img.tagName !== "IMG") return;
-  const src = img.getAttribute("data-failed-src") ?? img.getAttribute("src") ?? "";
-  const holder = document.createElement("div");
-  holder.className = "id-img-broken";
-  holder.textContent = t('installDialog.body.imgLoadFailed', { src: src.slice(0, 120) });
-  img.replaceWith(holder);
-}
-
-/** 标题右侧按钮：未翻译时发起翻译；已有译文时在中/英之间切换 */
-function onBodyBtn() {
-  const st = bodyState.value;
-  if (!st || st.translating || st.status !== "ok") return;
-  if (st.bodyHtml) {
-    st.showZh = !st.showZh;
-    return;
-  }
-  if (!canTranslateBody.value) {
-    message.info(t('installDialog.body.serviceNotSupported'));
-    return;
-  }
-  st.translating = true;
-  const p = props.project;
-  if (!p) return;
-  api
-    .translateBody(p.provider, bodyModId(p), true)
-    .then((r) => {
-      if (p !== props.project || !bodyState.value) return;
-      if (r.body) {
-        st.bodyHtml = withImages(renderTranslated(r.body), st.originalHtml);
-        st.showZh = true;
-        st.note = "";
-      } else {
-        st.note = r.error ?? t('installDialog.body.translateFailedShort');
-      }
-    })
-    .catch((e) => message.error(t('installDialog.body.translateFailed', { error: String(e) })))
-    .finally(() => {
-      if (bodyState.value) bodyState.value.translating = false;
-    });
 }
 
 // 弹窗内切换项目（点击前置依赖）时重新加载版本与依赖
@@ -545,8 +399,8 @@ async function install() {
     `[fe] 发起 invoke instanceId=${String(selectedInstance.value)} version=${String(selectedVersion.value)} kind=${props.project.project_type}`
   );
   installing.value = true;
-  // 缺失前置与本体一起入队（前置在前，游戏加载时前置需先就位）
-  const missing = missingDeps.value;
+  // 缺失前置与本体一起入队（前置在前，游戏加载时前置需先就位）；仅装用户勾选的前置
+  const missing = missingDeps.value.filter((m) => m.selected);
   const total = missing.length + 1;
   message.success(
     isModpack.value
@@ -602,7 +456,7 @@ async function install() {
     :show="props.show"
     preset="card"
     :title="props.project?.title ?? t('installDialog.installContent')"
-    :style="compactMode ? 'width: 640px; max-width: 94vw' : 'width: 980px; max-width: 96vw'"
+    style="width: 680px; max-width: 94vw"
     :mask-closable="true"
     :close-on-esc="true"
     @update:show="(v: boolean) => emit('update:show', v)"
@@ -610,8 +464,6 @@ async function install() {
     @after-enter="onOpen"
   >
     <div v-if="props.project" ref="cardRef" class="id-modal">
-      <div class="id-cols">
-      <div class="id-left">
       <div class="id-head">
         <img v-if="props.project.icon_url" :src="props.project.icon_url" class="id-icon" alt="" />
         <div class="id-info">
@@ -690,6 +542,9 @@ async function install() {
           <span>{{ t('installDialog.form.installToInstance') }}</span>
           <n-select v-model:value="selectedInstance" :options="instanceOptions()" :placeholder="t('installDialog.form.selectInstance')" />
         </label>
+        <div v-if="!isModpack && defaultInstanceIsVanilla" class="id-vanilla-hint">
+          {{ t('installDialog.form.vanillaHint') }}
+        </div>
 
         <div v-if="isModpack" class="id-field">
           <span class="id-modpack-hint">{{ t('installDialog.form.modpackHint') }}</span>
@@ -726,63 +581,27 @@ async function install() {
 
         <!-- dependencies -->
         <div v-if="(deps.length || loadingDeps) && !isModpack" class="id-deps">
-          <span class="id-deps-label">{{ t('installDialog.deps.label') }}</span>
-          <div v-if="missingDeps.length && !loadingDeps" class="id-missing-row">
-            <span class="id-missing-text">
-              {{ t('installDialog.deps.missingHint', { count: missingDeps.length }) }}
-            </span>
+          <div class="id-deps-head">
+            <span class="id-deps-label">{{ t('installDialog.deps.label') }}</span>
+            <span v-if="missingDeps.length && !loadingDeps" class="id-deps-hint">{{ t('installDialog.deps.missingHint') }}</span>
           </div>
           <div v-if="!loadingDeps" class="id-deps-list">
             <button
-              v-for="d in deps"
+              v-for="d in mergedDeps"
               :key="d.projectId"
-              class="id-dep-chip"
-              :class="d.dependencyType"
+              class="id-dep-row"
+              :class="[d.dependencyType, { miss: d.miss, off: d.miss && !d.miss.selected }]"
               :title="t('installDialog.deps.viewDetail', { title: d.title })"
-              @click="emit('install-dep', d)"
+              @click="emit('install-dep', d.dep ?? { projectId: d.projectId, title: d.title, slug: d.title, dependencyType: d.dependencyType })"
             >
-              <span class="id-dep-tag">{{ depLabel(d.dependencyType) }}</span>
-              {{ d.title }}
+              <span v-if="d.miss" class="id-check" :class="{ checked: d.miss.selected }" :title="d.miss.selected ? t('installDialog.deps.willInstall') : t('installDialog.deps.skipInstall')" @click.stop="d.miss.selected = !d.miss.selected"><svg viewBox="0 0 12 12" width="12" height="12"><path d="M2 6.5 L4.8 9 L10 3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+              <span class="id-dep-row-title">{{ d.title }}</span>
+              <span v-if="!d.miss" class="id-dep-row-tag installed">{{ t('installDialog.deps.installed') }}</span>
+              <span class="id-dep-row-tag">{{ depLabel(d.dependencyType) }}</span>
             </button>
           </div>
           <div v-if="loadingDeps" class="id-deps-loading">{{ t('installDialog.deps.loading') }}</div>
         </div>
-      </div>
-      </div>
-
-      <!-- 右栏：正文（译文优先，原文在后）。标题在滚动区外，永不与内容重叠。精简模式隐藏 -->
-      <aside v-if="!compactMode" class="id-right" @click="onBodyClick" @error.capture="onBodyImgError">
-        <div class="id-body-head">
-          {{ t('installDialog.body.title') }}
-          <button
-            v-if="bodyState && bodyState.status === 'ok' && canTranslateBody"
-            class="id-body-translate-btn"
-            :disabled="bodyState.translating"
-            @click="onBodyBtn"
-          >
-            {{ bodyState.translating
-              ? t('installDialog.body.translating')
-              : bodyState.showZh && bodyState.bodyHtml ? t('installDialog.body.showOriginal')
-              : bodyState.bodyHtml ? t('installDialog.body.showTranslated') : t('installDialog.body.translate') }}
-          </button>
-        </div>
-        <div class="id-body-scroll">
-          <div v-if="!bodyState || bodyState.status === 'loading'" class="id-body-note">{{ t('installDialog.body.loading') }}</div>
-          <template v-else>
-            <div v-if="bodyState.note" class="id-body-note">{{ bodyState.note }}</div>
-            <Transition name="bodyfade" mode="out-in">
-              <div
-                v-if="bodyDisplayHtml"
-                :key="bodyIsZh ? 'zh' : 'en'"
-                class="id-body-content"
-                :class="{ 'id-body-orig': !bodyIsZh }"
-                v-html="bodyDisplayHtml"
-              ></div>
-              <div v-else key="empty" class="id-body-note">{{ t('installDialog.body.empty') }}</div>
-            </Transition>
-          </template>
-        </div>
-      </aside>
       </div>
 
       <div v-if="installMsg" class="id-msg">{{ installMsg }}</div>
@@ -797,12 +616,13 @@ async function install() {
         <n-button
           type="primary"
           :loading="installing"
+          :disabled="alreadyInstalled"
           @click="
             api.logDebug('[fe] 一键安装按钮被点击');
             install();
           "
         >
-          {{ t('installDialog.install') }}
+          {{ alreadyInstalled ? t('installDialog.alreadyInstalled') : t('installDialog.install') }}
         </n-button>
       </div>
     </div>
@@ -815,175 +635,6 @@ async function install() {
   display: flex;
   flex-direction: column;
   gap: 16px;
-}
-/* —— 两栏布局：左=安装操作，右=正文 —— */
-.id-cols {
-  display: flex;
-  gap: 18px;
-  align-items: stretch;
-}
-.id-left {
-  flex: 1 1 0;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.id-right {
-  flex: 0 0 44%;
-  max-width: 44%;
-  min-width: 0;
-  border-left: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-  padding: 10px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  /* 高度完全跟随左栏（stretch 对齐），正文滚动交给 .id-body-scroll */
-  background: var(--n-color, #151924);
-  border-radius: 10px;
-}
-.id-body-scroll {
-  flex: 1 1 0;
-  min-height: 0;
-  overflow-y: auto;
-  padding-right: 6px;
-}
-.id-body-head {
-  font-size: 13px;
-  font-weight: 700;
-  color: var(--text-1);
-  flex-shrink: 0;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.id-body-translate-btn {
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.15));
-  border-radius: 6px;
-  background: transparent;
-  color: var(--accent);
-  font-size: 12px;
-  padding: 2px 10px;
-  cursor: pointer;
-}
-.id-body-translate-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.id-body-translate-btn:hover:not(:disabled) {
-  background: var(--panel-hover, rgba(255, 255, 255, 0.07));
-}
-/* 与卡片描述翻译一致的淡入淡出 */
-.bodyfade-enter-active,
-.bodyfade-leave-active {
-  transition: opacity 0.25s ease;
-}
-.bodyfade-enter-from,
-.bodyfade-leave-to {
-  opacity: 0;
-}
-.id-body-note {
-  font-size: 12px;
-  color: var(--text-3);
-}
-.id-body-sep {
-  margin-top: 10px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--border, rgba(255, 255, 255, 0.12));
-  font-size: 12px;
-  font-weight: 600;
-  color: var(--text-3);
-}
-.id-body-orig {
-  opacity: 0.75;
-  font-size: 13px;
-}
-/* 正文（markdown / html）基础排版 */
-.id-body-content {
-  font-size: 13px;
-  line-height: 1.65;
-  color: var(--text-1);
-  word-break: break-word;
-}
-.id-body-content h1,
-.id-body-content h2,
-.id-body-content h3,
-.id-body-content h4 {
-  font-size: 14px;
-  font-weight: 700;
-  margin: 12px 0 6px;
-}
-.id-body-content p {
-  margin: 6px 0;
-}
-.id-body-content ul,
-.id-body-content ol {
-  padding-left: 20px;
-  margin: 6px 0;
-}
-.id-body-content code {
-  background: var(--bg-3, rgba(128, 128, 128, 0.15));
-  border-radius: 4px;
-  padding: 1px 5px;
-  font-size: 12px;
-}
-.id-body-content pre {
-  background: var(--bg-3, rgba(128, 128, 128, 0.12));
-  border-radius: 8px;
-  padding: 10px;
-  overflow-x: auto;
-}
-.id-body-content pre code {
-  background: transparent;
-  padding: 0;
-}
-.id-body-content img {
-  max-width: 100%;
-  border-radius: 8px;
-}
-.id-body-content a {
-  color: var(--accent);
-}
-.id-body-content blockquote {
-  border-left: 3px solid var(--border, rgba(255, 255, 255, 0.15));
-  margin: 6px 0;
-  padding: 2px 12px;
-  color: var(--text-2);
-}
-.id-img-broken {
-  font-size: 11px;
-  color: var(--text-3);
-  background: var(--bg-3, rgba(128, 128, 128, 0.15));
-  border-radius: 6px;
-  padding: 6px 8px;
-  margin: 4px 0;
-  word-break: break-all;
-}
-.id-body-content table {
-  border-collapse: collapse;
-  margin: 8px 0;
-}
-.id-body-content th,
-.id-body-content td {
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.12));
-  padding: 4px 8px;
-  font-size: 12px;
-}
-/* 窄屏退化为单栏，正文移到下方 */
-@media (max-width: 860px) {
-  .id-cols {
-    flex-direction: column;
-  }
-  .id-right {
-    flex: none;
-    max-width: none;
-    border-left: none;
-    border-top: 1px solid var(--border, rgba(255, 255, 255, 0.08));
-    padding-left: 0;
-    padding-top: 12px;
-    max-height: 45vh;
-  }
 }
 .id-head {
   display: flex;
@@ -1085,6 +736,16 @@ async function install() {
   color: var(--accent, #50c878);
   font-weight: 600;
   font-size: 13px;
+}
+.id-vanilla-hint {
+  margin-top: -4px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning, #e0a400) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning, #e0a400) 35%, transparent);
+  color: var(--text-1, #ddd);
+  font-size: 12px;
+  line-height: 1.5;
 }
 .id-ver-head {
   display: flex;
@@ -1203,67 +864,109 @@ async function install() {
   font-size: 13px;
   padding: 16px 0;
 }
-.id-missing-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  background: var(--panel, rgba(255, 255, 255, 0.04));
-  border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
-  border-radius: 8px;
-  padding: 6px 10px;
-}
-.id-missing-text {
-  font-size: 12px;
-  color: var(--text-2);
-}
 .id-deps {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
+}
+.id-deps-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 .id-deps-label {
   font-size: 12px;
   font-weight: 700;
   color: var(--text-3);
 }
+.id-deps-hint {
+  font-size: 11px;
+  color: var(--text-3);
+  opacity: 0.85;
+}
 .id-deps-list {
   display: flex;
-  flex-wrap: wrap;
+  flex-direction: column;
   gap: 6px;
 }
-.id-dep-chip {
-  display: inline-flex;
+.id-dep-row {
+  display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 10px;
   border: 1px solid var(--border);
   background: var(--panel);
-  color: var(--text-2);
-  border-radius: 8px;
-  padding: 4px 10px;
-  font-size: 12px;
+  border-radius: 10px;
+  padding: 9px 12px;
+  font-size: 13px;
   cursor: pointer;
   font-family: inherit;
+  color: var(--text-1);
+  transition: border-color 0.15s, background 0.15s;
+  text-align: left;
+  width: 100%;
 }
-.id-dep-chip:hover {
+.id-dep-row:hover {
   border-color: var(--accent-45);
 }
-.id-dep-tag {
+.id-dep-row-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.id-dep-row-tag {
+  flex-shrink: 0;
   font-size: 10px;
   font-weight: 700;
-  padding: 0 6px;
-  border-radius: 5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--border);
+  color: var(--text-3);
 }
-.id-dep-chip.required .id-dep-tag {
+.id-dep-row.required .id-dep-row-tag {
   background: var(--danger-16);
   color: var(--danger);
 }
-.id-dep-chip.optional .id-dep-tag {
+.id-dep-row.optional .id-dep-row-tag {
   background: var(--info-15);
   color: var(--text-2);
 }
-.id-dep-chip.incompatible .id-dep-tag {
+.id-dep-row.incompatible .id-dep-row-tag {
   background: var(--border);
+  color: var(--text-3);
+}
+.id-dep-row .id-dep-row-tag.installed {
+  background: rgba(76, 175, 80, 0.18);
+  color: #4caf50;
+}
+.id-check {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 1.5px solid var(--border);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  transition: background 0.15s, border-color 0.15s;
+}
+.id-check svg {
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.id-check.checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.id-check.checked svg {
+  opacity: 1;
+}
+.id-dep-row.miss.off {
+  opacity: 0.55;
+}
+.id-dep-row.miss.off .id-dep-row-title {
   color: var(--text-3);
 }
 .id-deps-loading {

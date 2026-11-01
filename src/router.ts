@@ -10,6 +10,7 @@ const router = createRouter({
     // 新闻已并入「发现」页（右上角入口 + 抽屉），旧地址 /news 重定向到 /browse
     { path: "/news", name: "news", redirect: "/browse" },
     { path: "/browse", name: "browse", component: () => import("./views/BrowseView.vue"), meta: { titleKey: "nav.browse", icon: "compass" } },
+    { path: "/project/:provider/:id", name: "project-detail", component: () => import("./views/ProjectDetailView.vue"), meta: { titleKey: "page.projectDetail", icon: "compass" } },
     { path: "/instances", name: "instances", component: () => import("./views/InstancesView.vue"), meta: { titleKey: "nav.instances", icon: "grid", action: { textKey: "page.newInstance", icon: "plus", to: "/create" } } },
     { path: "/instance/:id", name: "instance", component: () => import("./views/InstanceDetailView.vue"), meta: { titleKey: "page.instanceDetail", icon: "grid" } },
     { path: "/create", name: "create", component: () => import("./views/CreateInstanceView.vue"), meta: { titleKey: "page.create", icon: "plus" } },

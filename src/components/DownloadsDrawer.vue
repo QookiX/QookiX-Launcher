@@ -526,6 +526,7 @@ watch(open, (v) => {
   display: flex;
   align-items: center;
   gap: 8px;
+  color: var(--text-1);
 }
 .caret {
   font-size: 13px;

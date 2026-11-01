@@ -170,19 +170,32 @@ const groupedVersions = computed(() => {
   for (const key of loaderOrder) {
     if (map.has(key)) {
       const items = map.get(key)!;
-      items.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+      items.sort(
+        (a, b) =>
+          a.id.localeCompare(b.id, undefined, { numeric: true }) ||
+          a.raw_id.localeCompare(b.raw_id, undefined, { numeric: true })
+      );
       groups.push({ loader: key, items });
       map.delete(key);
     }
   }
   // any loader not in the known order (shouldn't happen) goes at the end
   for (const [key, items] of map) {
-    items.sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true }));
+    items.sort(
+      (a, b) =>
+        a.id.localeCompare(b.id, undefined, { numeric: true }) ||
+        a.raw_id.localeCompare(b.raw_id, undefined, { numeric: true })
+    );
     groups.push({ loader: key, items });
   }
   return groups;
 });
-// multi-select: which detected versions to import (one instance each)
+// multi-select: which detected versions to import (one instance each).
+// Keyed by `raw_id` (the literal folder name under `versions/`), NOT by the
+// resolved MC version: a modded profile inherits its version from the vanilla
+// base, so `versions/1.20.1` and `versions/1.20.1-forge-47.1.0` both resolve to
+// `id = "1.20.1"`. Keying by `id` collapses them into one entry and silently
+// imports the wrong folder (losing that profile's mods / saves).
 const selectedVersions = ref<string[]>([]);
 // live statistics streamed from the backend as it walks the folder
 const scan = ref<{
@@ -226,12 +239,15 @@ async function calcImportSize() {
   if (mode.value !== "importmc" || selectedVersions.value.length === 0 || !importSrc.value) return;
   const list = selectedVersions.value;
   const v = list[list.length - 1];
+  // selectedVersions holds raw_ids; the download estimate wants the resolved
+  // MC version of the last selected profile.
+  const vInfo = mcVersions.value.find((x) => x.raw_id === v);
   const rawIds = list
-    .map((id) => mcVersions.value.find((x) => x.id === id)?.raw_id ?? id)
+    .map((rid) => mcVersions.value.find((x) => x.raw_id === rid)?.raw_id ?? rid)
     .filter(Boolean);
   calcSize.value = true;
   try {
-    const dl = await api.estimateDownload(v);
+    const dl = await api.estimateDownload(vInfo?.id ?? v);
     const imp = await api.estimateImport(importSrc.value, rawIds);
     scan.value = {
       import_files: imp.import_files,
@@ -257,29 +273,30 @@ function pathBasename(p: string): string {
   return parts[parts.length - 1] || t("createInstance.importedInstance");
 }
 
-function toggleVersion(id: string) {
-  const i = selectedVersions.value.indexOf(id);
+function toggleVersion(rawId: string) {
+  const i = selectedVersions.value.indexOf(rawId);
   if (i >= 0) {
     selectedVersions.value.splice(i, 1);
   } else {
-    selectedVersions.value.push(id);
+    selectedVersions.value.push(rawId);
   }
 }
 
 async function importMc() {
   if (!importSrc.value) return message.warning(t("createInstance.selectMcFolderWarn"));
   if (selectedVersions.value.length === 0) return message.warning(t("createInstance.selectAtLeastOneVersion"));
-  // align loaders / loader versions with the selected versions, using the
-  // auto-detected loader for each version
-  const loaders: string[] = [];
-  const loaderVersions: (string | null)[] = [];
-  const rawIds: string[] = [];
-  for (const sel of selectedVersions.value) {
-    const v = mcVersions.value.find((x) => x.id === sel);
-    loaders.push(v?.loader ?? "vanilla");
-    loaderVersions.push(v?.loader_version ?? null);
-    rawIds.push(v?.raw_id ?? sel);
+  // resolve the picked raw_ids back to their full profile info, then build the
+  // three index-aligned arrays the backend expects.
+  const picked: (typeof mcVersions.value)[number][] = [];
+  for (const rid of selectedVersions.value) {
+    const found = mcVersions.value.find((x) => x.raw_id === rid);
+    if (found) picked.push(found);
   }
+  if (picked.length === 0) return message.warning(t("createInstance.selectAtLeastOneVersion"));
+  const rawIds = picked.map((v) => v.raw_id);
+  const mcVers = picked.map((v) => v.id);
+  const loaders = picked.map((v) => v.loader);
+  const loaderVersions = picked.map((v) => v.loader_version ?? null);
   importingMc.value = true;
   showVersionDialog.value = false;
   importProgress.value = { current: 0, total: rawIds.length, name: "", phase: "migrate", done: false };
@@ -288,7 +305,7 @@ async function importMc() {
       importSrc.value,
       importMcBaseName.value,
       rawIds,
-      selectedVersions.value,
+      mcVers,
       loaders,
       loaderVersions,
       migrateMode.value
@@ -390,15 +407,17 @@ onMounted(async () => {
   });
   unlisteners.push(u1);
   // versions arrive one-by-one; append and auto-select the first.
-  // Dedupe by id so a re-emit (or a second listener) never shows doubles.
+  // Dedupe by `raw_id` (the actual folder under versions/) — `id` is the
+  // resolved vanilla base and is shared by every modded profile inheriting it,
+  // so deduping on `id` would drop the Forge/Fabric profiles entirely.
   const u2 = await listen<{ id: string; raw_id: string; inherits_base: boolean; loader: string; loader_version: string | null; size_bytes: number }>(
     "import://scan-version",
     (ev) => {
       const v = ev.payload;
-      if (mcVersions.value.some((x) => x.id === v.id)) return;
+      if (mcVersions.value.some((x) => x.raw_id === v.raw_id)) return;
       mcVersions.value.push(v);
       if (mcVersions.value.length === 1) {
-        selectedVersions.value = [v.id];
+        selectedVersions.value = [v.raw_id];
       }
     }
   );
@@ -604,12 +623,14 @@ onUnmounted(() => {
                 </div>
                 <button
                   v-for="v in g.items"
-                  :key="v.id"
+                  :key="v.raw_id"
                   class="ver-item"
-                  :class="{ active: selectedVersions.includes(v.id) }"
-                  @click="toggleVersion(v.id)"
+                  :class="{ active: selectedVersions.includes(v.raw_id) }"
+                  :title="v.raw_id"
+                  @click="toggleVersion(v.raw_id)"
                 >
                   <span class="ver-id mono">{{ v.id }}</span>
+                  <span v-if="v.raw_id !== v.id" class="ver-raw mono">{{ v.raw_id }}</span>
                   <span class="ver-loader" :class="'ld-' + v.loader">
                     {{ loaderLabel(v.loader) }}{{ v.loader_version ? " " + v.loader_version : "" }}
                   </span>
@@ -901,6 +922,16 @@ onUnmounted(() => {
 .ver-id {
   font-size: 12px;
   font-weight: 600;
+}
+.ver-raw {
+  font-size: 10px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+  flex: 1;
+  margin-left: 6px;
 }
 .ver-type {
   font-size: 10px;

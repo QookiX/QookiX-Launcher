@@ -511,9 +511,21 @@ fn save_icon_buf(buf: Vec<u8>) -> Option<String> {
     if buf.len() < 8 {
         return None;
     }
-    let f = std::env::temp_dir().join(format!("qookix-icon-{}.png", uuid::Uuid::new_v4().simple()));
-    std::fs::write(&f, &buf).ok()?;
-    Some(f.to_string_lossy().to_string())
+    // 内嵌为 data URL，不写临时文件——避免 temp 被清理后图标 404
+    let mime = if buf.starts_with(b"\x89PNG") {
+        "image/png"
+    } else if buf.starts_with(b"\xff\xd8\xff") {
+        "image/jpeg"
+    } else if buf.starts_with(b"GIF8") {
+        "image/gif"
+    } else {
+        "image/png"
+    };
+    use base64::Engine as _;
+    Some(format!(
+        "data:{mime};base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(&buf)
+    ))
 }
 
 fn parse_json_authors(val: &serde_json::Value) -> Option<Vec<String>> {

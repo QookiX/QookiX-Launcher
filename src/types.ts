@@ -345,6 +345,15 @@ export interface ShimuDownloadResult {
   size: number;
 }
 
+/** 详情页图库单张图片（Modrinth gallery / CurseForge screenshots） */
+export interface ProjectGalleryImage {
+  url: string;
+  thumb?: string;
+  title?: string;
+  description?: string;
+  featured?: boolean;
+}
+
 export interface ProjectHit {
   /** spigot 来源仅用于展示/翻译，不支持程序化安装 */
   provider: "modrinth" | "curseforge" | "spigot";
@@ -362,6 +371,8 @@ export interface ProjectHit {
   game_versions: string[];
   updated: string;
   featured_image: string;
+  /** 图库，仅详情接口返回；为空表示该项目没有图片 */
+  gallery?: ProjectGalleryImage[];
 }
 
 export interface ProjectFile {
@@ -393,6 +404,7 @@ export interface ProjectDependency {
   title: string;
   slug: string;
   dependencyType: "required" | "optional" | "incompatible" | "embedded" | string;
+  versionId?: string;
 }
 
 export interface ContentItem {

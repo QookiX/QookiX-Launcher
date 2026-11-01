@@ -78,8 +78,9 @@ async function handleConfirm() {
 }
 
 const instanceId = route.params.id as string;
+const _defaultTab = instances.get(instanceId)?.loader === "vanilla" ? "saves" : "mods";
 const tab = ref<string>(
-  (Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab) ?? "files"
+  (Array.isArray(route.query.tab) ? route.query.tab[0] : route.query.tab) ?? _defaultTab
 );
 
 const instance = computed(() => instances.get(instanceId));
@@ -130,6 +131,13 @@ const tabs = computed(() =>
     return !tabDef.folder || folders.value[tabDef.folder] || tabDef.key === tab.value;
   })
 );
+
+// 当前 tab 不可见时（如 vanilla 实例无 mods），自动切到第一个可见 tab
+watch(tabs, (list) => {
+  if (list.length && !list.some((td) => td.key === tab.value)) {
+    tab.value = list[0].key;
+  }
+});
 
 // 支持通过 URL query 切换 tab（崩溃弹窗「查看日志」跳转到日志页、「崩溃分析」跳转到崩溃分析页）
 watch(

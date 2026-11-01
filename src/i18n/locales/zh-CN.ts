@@ -13,6 +13,7 @@ import updaterCheck from "./_fragments/updaterCheck.zh";
 import splash from "./_fragments/splash.zh";
 import launchProgress from "./_fragments/launchProgress.zh";
 import installDialog from "./_fragments/installDialog.zh";
+import checklist from "./_fragments/checklist.zh";
 import cloudSync from "./_fragments/cloudSync.zh";
 import msLogin from "./_fragments/msLogin.zh";
 import yggLogin from "./_fragments/yggLogin.zh";
@@ -25,6 +26,7 @@ import instances from "./_fragments/instances.zh";
 import instanceDetail from "./_fragments/instanceDetail.zh";
 import createInstance from "./_fragments/createInstance.zh";
 import projectCard from "./_fragments/projectCard.zh";
+import projectDetail from "./_fragments/projectDetail.zh";
 import playtimeCard from "./_fragments/playtimeCard.zh";
 import instanceCard from "./_fragments/instanceCard.zh";
 import logViewer from "./_fragments/logViewer.zh";
@@ -76,6 +78,7 @@ export default {
   },
   page: {
     instanceDetail: "实例详情",
+    projectDetail: "内容详情",
     create: "创建实例",
     serverDetail: "服务器详情",
     seedMap: "种子地图",
@@ -162,6 +165,7 @@ export default {
   splash,
   launchProgress,
   installDialog,
+  checklist,
   cloudSync,
   msLogin,
   yggLogin,
@@ -174,6 +178,7 @@ export default {
   instanceDetail,
   createInstance,
   projectCard,
+  projectDetail,
   playtimeCard,
   instanceCard,
   logViewer,

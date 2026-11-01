@@ -1,0 +1,18 @@
+export default {
+  title: "Install Checklist",
+  installTo: "Will install to {name}",
+  main: "Main",
+  depTag: "Dep",
+  installed: "Installed",
+  depsLabel: "Dependencies",
+  noDeps: "No dependencies",
+  selectVersion: "Select version",
+  loading: "Loading versions…",
+  noVersion: "No available version",
+  confirm: "Confirm Install",
+  cancel: "Cancel",
+  installingWithDeps: "Installing main and {count} dependencies, {total} items total, see download center",
+  addedToQueue: "Added to download queue",
+  depInstallFailed: "Dependency {title} install failed: {error}",
+  installDone: "Install complete",
+};

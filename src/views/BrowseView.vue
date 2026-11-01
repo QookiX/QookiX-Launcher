@@ -7,6 +7,7 @@ import { api } from "../api";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useSettingsStore } from "../stores/settings";
 import InstallDialog from "../components/InstallDialog.vue";
+import InstallChecklist from "../components/InstallChecklist.vue";
 import ProjectCard from "../components/ProjectCard.vue";
 import SimplePagination from "../components/SimplePagination.vue";
 import {
@@ -29,7 +30,7 @@ import type { Instance, ProjectDependency, ProjectHit } from "../types";
 defineOptions({ name: "BrowseView" });
 
 const message = useMessage();
-const { t } = useI18n();
+const { t, locale } = useI18n();
 const settingsStore = useSettingsStore();
 const route = useRoute();
 const newsStore = useNewsStore();
@@ -114,6 +115,11 @@ const modrinthCategories: Record<string, string[]> = {
 const catOptions = ref<{ label: string; value: string }[]>([]);
 const installTarget = ref<ProjectHit | null>(null);
 const showInstall = ref(false);
+const showChecklist = ref(false);
+/** 当前选中的实例对象（供清单弹窗使用） */
+const selectedInstance = computed(() =>
+  instances.value.find((i) => i.id === selectedInstanceId.value) ?? null,
+);
 
 // 实例选择：非整合包类型下可选择实例，自动筛选游戏版本和加载器
 const instances = ref<Instance[]>([]);
@@ -408,7 +414,25 @@ watch(selectedInstanceId, () => {
     gameVersion.value = "";
     loader.value = "";
   }
+  refreshInstalled();
 });
+
+// 已安装 mod 的归一化 id 集合（按所选实例一次性拉取，供卡片批量判断）
+const installedIds = ref<Set<string>>(new Set());
+const normId = (s: string) => s.toLowerCase().replace(/[-_ ]/g, "");
+async function refreshInstalled() {
+  installedIds.value = new Set();
+  const id = selectedInstanceId.value;
+  if (!id || type.value === "modpack") return;
+  try {
+    installedIds.value = new Set(await api.listInstalledModIds(id));
+  } catch { /* 忽略 */ }
+}
+function isProjectInstalled(p: ProjectHit) {
+  if (!installedIds.value.size) return false;
+  return installedIds.value.has(normId(p.slug)) || installedIds.value.has(normId(p.title));
+}
+watch(results, () => refreshInstalled());
 
 watch([sort, pageSize], () => {
   page.value = 0;
@@ -481,7 +505,13 @@ async function translateCard(p: ProjectHit) {
 
 function openInstall(p: ProjectHit) {
   installTarget.value = p;
-  showInstall.value = true;
+  // 已选非 vanilla 实例 → 直接弹安装清单；否则走原安装弹窗
+  const inst = selectedInstance.value;
+  if (inst && inst.loader !== "vanilla") {
+    showChecklist.value = true;
+  } else {
+    showInstall.value = true;
+  }
 }
 
 async function openInstallDep(dep: ProjectDependency) {
@@ -619,6 +649,7 @@ onMounted(async () => {
           class="tb-select provider"
         />
         <button
+          v-if="locale.startsWith('zh')"
           class="filter-btn translate-toggle"
           :class="{ on: translateMode }"
           @click="toggleTranslateMode"
@@ -685,6 +716,8 @@ onMounted(async () => {
         :key="p.provider + p.id"
         :project="p"
         :view="view"
+        :installed="isProjectInstalled(p)"
+        :mc-version="gameVersion"
         :translate-mode="translateMode"
         :translating="translatingSlugs.includes(p.id)"
         :translated-desc="translatedDescs[p.id] ?? null"
@@ -772,6 +805,7 @@ onMounted(async () => {
     </n-drawer>
 
     <InstallDialog v-model:show="showInstall" :project="installTarget" :default-instance="selectedInstanceId" @install-dep="openInstallDep" />
+    <InstallChecklist v-model:show="showChecklist" :project="installTarget" :instance="selectedInstance" />
   </div>
 </template>
 

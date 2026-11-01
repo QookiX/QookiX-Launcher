@@ -1,0 +1,18 @@
+export default {
+  title: "安装清单",
+  installTo: "将安装到 {name}",
+  main: "本体",
+  depTag: "前置",
+  installed: "已安装",
+  depsLabel: "前置依赖",
+  noDeps: "没有前置依赖",
+  selectVersion: "选择版本",
+  loading: "正在加载版本…",
+  noVersion: "没有可用版本",
+  confirm: "确认安装",
+  cancel: "取消",
+  installingWithDeps: "正在安装本体与 {count} 个前置，共 {total} 项，进度见下载中心",
+  addedToQueue: "已添加到下载队列",
+  depInstallFailed: "前置 {title} 安装失败：{error}",
+  installDone: "安装完成",
+};

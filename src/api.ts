@@ -538,12 +538,14 @@ export const api = {
       sort: sort ?? "downloads",
       pageSize: pageSize ?? 20,
     }, { net: true }),
-  projectVersions: (provider: string, projectId: string, mcVersion: string, loader: string) =>
-    invoke<{ provider: string; versions: ProjectVersion[] }>("project_versions", {
+  projectVersions: (provider: string, projectId: string, mcVersion: string, loader: string, index: number, fetchAll: boolean) =>
+    invoke<{ provider: string; versions: ProjectVersion[]; hasMore: boolean }>("project_versions", {
       provider,
       projectId,
       mcVersion,
       loader,
+      index,
+      fetchAll,
     }, { net: true }),
   projectDependencies: (provider: string, projectId: string, versionId: string) =>
     invoke<ProjectDependency[]>(
@@ -911,6 +913,12 @@ export const api = {
       { instanceId, provider, projectId, versionId },
       { net: true }
     ),
+  /** 检测某 mod 是否已安装在实例的 mods 目录（按 slug/title 归一化匹配 mod_id） */
+  isModInstalled: (instanceId: string, slug: string, title: string) =>
+    invoke<boolean>("is_mod_installed", { instanceId, slug, title }),
+  /** 列出实例 mods 目录下所有已启用 jar 的归一化 mod_id（供前端批量判断已安装） */
+  listInstalledModIds: (instanceId: string) =>
+    invoke<string[]>("list_installed_mod_ids", { instanceId }),
   // crash analysis
   crashAnalysis: (instanceId: string) =>
     invoke<{ filename: string; modified: number; size: number; kind: string }[]>("list_crash_logs", { id: instanceId }),

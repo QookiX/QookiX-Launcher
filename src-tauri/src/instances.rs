@@ -988,23 +988,36 @@ async fn import_one(
     {
         let mut migrated = 0u64;
         // In symlink mode, only the version folder is linked — NOT the shared
-        // user-data dirs (saves/mods/resourcepacks/…).  Those are shared across
+        // user-data dirs (mods/resourcepacks/config/…).  Those are shared across
         // versions in the source .minecraft and linking them would cause content
-        // to "bleed" between instances.  Each instance gets its own independent
-        // empty dirs (created below).
-        if !link {
-            for d in IMPORT_DIRS {
-                let src = source.join(d);
-                if !src.is_dir() {
-                    continue;
-                }
-                let dst = dest.join(d);
-                if let Some(p) = dst.parent() {
-                    std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-                }
-                migrate_tree(&src, &dst, link, &mut symlink_fallback)?;
-                migrated += 1;
+        // to "bleed" between instances.
+        //
+        // `saves` is the deliberate exception: it is always *copied*, even in
+        // symlink mode.  A freshly imported instance with zero worlds looks
+        // broken to the user, and linking a live saves directory would let the
+        // game write straight into the original folder (region files,
+        // level.dat, session.lock).  Copying keeps the imported worlds visible
+        // and keeps the source untouched.
+        for d in IMPORT_DIRS {
+            let src = source.join(d);
+            if !src.is_dir() {
+                continue;
             }
+            let is_saves = *d == "saves";
+            if link && !is_saves {
+                continue;
+            }
+            let dst = dest.join(d);
+            if let Some(p) = dst.parent() {
+                std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+            }
+            migrate_tree(&src, &dst, link && !is_saves, &mut symlink_fallback)?;
+            migrated += 1;
+        }
+        // Shared config files (options.txt / servers.dat …) are only migrated
+        // in copy mode — linking them would let one instance rewrite another
+        // instance's settings in the source folder.
+        if !link {
             for f in IMPORT_FILES {
                 let src = source.join(f);
                 if src.is_file() {
@@ -1025,14 +1038,15 @@ async fn import_one(
     }
 
     // In symlink mode, warn if the source version had no version-isolation
-    // (no mods/saves inside versions/<ver>/).  The shared root-level mods/saves
-    // are intentionally not linked to avoid content bleed between instances.
+    // (no mods/saves inside versions/<ver>/).  The shared root-level mods are
+    // intentionally not linked to avoid content bleed between instances; saves
+    // are always copied, so they are excluded from this warning.
     if link && src_ver.is_dir() {
-        let has_isolation = IMPORT_DIRS.iter().any(|d| src_ver.join(d).is_dir());
+        let has_isolation = IMPORT_DIRS.iter().any(|d| *d != "saves" && src_ver.join(d).is_dir());
         if !has_isolation {
             let _ = app.emit("import://warning", serde_json::json!({
                 "name": raw_ver,
-                "message": "未开启版本隔离，mods / 存档 / 材质包等共享内容未导入",
+                "message": "未开启版本隔离：mods / 材质包 / 配置等共享内容未导入（存档已单独复制到实例）",
             }));
         }
     }
@@ -1047,9 +1061,79 @@ async fn import_one(
     reuse_runtime_files(&source.join("assets"), &state.assets_dir());
 
     // ---- install the game (client / libraries / assets / loader) ----
-    let mut plan = crate::install::install_game(app, state, &instance).await?;
+    let mut plan = crate::install::install_game(app.clone(), state, &instance).await?;
     plan.symlink_fallback = symlink_fallback;
+    // 最后核对一次存档：源里明显有世界、实例里却一个都没有时给出带绝对路径的
+    // 提示，而不是让用户进游戏后对着空的世界列表发呆。
+    warn_if_saves_missing(&app, &instance.name, source, &src_ver, &dest);
     Ok(plan)
+}
+
+/// `dir` 下是否至少有一个子目录（世界文件夹）。空的 `saves` 或只剩零散文件
+/// 都算没有存档。
+fn dir_has_worlds(dir: &std::path::Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    rd.flatten().any(|e| e.path().is_dir())
+}
+
+/// 导入结束后核对存档落位。这是「导入别的启动器的实例，游戏里找不到存档」
+/// 最常见的表现：源启动器把游戏目录/存档放到了别处，而导入只认 `.minecraft`
+/// 根（或所选版本文件夹）。此时源文件都还在，给用户一条可以照着做的提示。
+fn warn_if_saves_missing(
+    app: &tauri::AppHandle,
+    name: &str,
+    source: &std::path::Path,
+    src_ver: &std::path::Path,
+    dest: &std::path::Path,
+) {
+    let dest_saves = dest.join("saves");
+    if dir_has_worlds(&dest_saves) {
+        return;
+    }
+    let warn = |message: String| {
+        let _ = app.emit(
+            "import://warning",
+            serde_json::json!({ "name": name, "message": message }),
+        );
+    };
+
+    // 1) 直系候选：源根 saves / 所选那个版本目录里的 saves
+    if let Some(expected) = [source.join("saves"), src_ver.join("saves")]
+        .into_iter()
+        .find(|p| dir_has_worlds(p))
+    {
+        warn(format!(
+            "源目录里有存档但没落到本实例（{}），可把其中的世界文件夹手动复制到 {}",
+            expected.display(),
+            dest_saves.display()
+        ));
+        return;
+    }
+
+    // 2) 存档在别的版本目录里：源开启了版本隔离，但导入时勾选的不是那个版本。
+    //    这时用户的 mods / 存档都还留在 versions/<另一个版本>/ 下。
+    let versions_dir = source.join("versions");
+    let mut elsewhere: Vec<String> = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(&versions_dir) {
+        for e in rd.flatten() {
+            let saves = e.path().join("saves");
+            if dir_has_worlds(&saves) {
+                elsewhere.push(saves.display().to_string());
+            }
+        }
+    }
+    if elsewhere.is_empty() {
+        // 源里本来就没有存档，不提示，避免每次导入都误报
+        return;
+    }
+    elsewhere.truncate(3);
+    warn(format!(
+        "未在所选版本下找到存档，但以下位置有存档：{}。可重新导入对应版本，或把这些世界文件夹手动复制到 {}",
+        elsewhere.join("、"),
+        dest_saves.display()
+    ));
 }
 
 /// Copy files from src to dst, skipping files that already exist with the same size.
@@ -1141,7 +1225,11 @@ fn migrate_version_dir(
         }
         let target = dst.join(&name);
         if p.is_dir() {
-            migrate_tree(&p, &target, link, fallback)?;
+            // 版本目录里自带的 saves（版本隔离的存档）即使在外层是链接模式也
+            // 强制真实复制：游戏运行时会持续写入 region / level.dat /
+            // session.lock，链接过去等于直接改原始目录。
+            let dir_link = link && name != "saves";
+            migrate_tree(&p, &target, dir_link, fallback)?;
         } else if p.is_file() {
             crate::util::copy_or_link(&p, &target, link, fallback)?;
         }
