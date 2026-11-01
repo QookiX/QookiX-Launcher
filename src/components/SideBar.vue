@@ -5,20 +5,18 @@ import AppIcon from "./AppIcon.vue";
 import { useOnboarding } from "../composables/useOnboarding";
 import { useInstancesStore } from "../stores/instances";
 import { useSettingsStore } from "../stores/settings";
-import { useTasksStore } from "../stores/tasks";
 import { useAccountsStore } from "../stores/accounts";
 import { usePinsStore } from "../stores/pins";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
 import {
   IconChevronDown,
-  IconClock,
   IconClose,
   IconCompass,
+  IconClock,
   IconGrid,
   IconHome,
   IconSkin,
-  IconStop,
   IconTool,
   IconUsers,
 } from "./icons";
@@ -27,7 +25,6 @@ import { loaderBadge } from "../utils/format";
 const route = useRoute();
 const instances = useInstancesStore();
 const settingsStore = useSettingsStore();
-const tasks = useTasksStore();
 const accounts = useAccountsStore();
 const pins = usePinsStore();
 const message = useMessage();
@@ -158,15 +155,6 @@ function isActive(n: { to: string }) {
 function unpin(id: string) {
   pins.remove(id);
 }
-
-async function stopAll() {
-  try {
-    await instances.stop();
-    message.success(t("sidebar.stopAllDone"));
-  } catch (e) {
-    message.error(String(e));
-  }
-}
 </script>
 
 <template>
@@ -207,13 +195,6 @@ async function stopAll() {
         </router-link>
       </div>
     </template>
-
-    <button v-if="tasks.gameRunning" class="stop-all-btn" @click="stopAll">
-      <span class="nav-icon-cell">
-        <IconStop />
-      </span>
-      <span class="nav-tip">{{ t("sidebar.stopAll") }}</span>
-    </button>
   </aside>
 
   <!-- —— 启动按钮（贴窗口右缘） ——
@@ -504,49 +485,7 @@ async function stopAll() {
     transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) 0.03s,
     opacity 0.18s ease 0.05s;
 }
-.stop-all-btn {
-  position: relative;
-  display: inline-grid;
-  grid-template-columns: 48px 0fr 0px;
-  align-items: center;
-  height: 48px;
-  padding: 0;
-  border: 1px solid var(--danger-40);
-  border-radius: 10px;
-  background: var(--danger-12);
-  color: var(--danger-text);
-  font-size: 16px;
-  white-space: nowrap;
-  cursor: pointer;
-  transition:
-    grid-template-columns 0.38s cubic-bezier(0.34, 1.56, 0.64, 1),
-    background 0.14s;
-  flex-shrink: 0;
-}
-.stop-all-btn:hover {
-  background: var(--danger-26);
-  grid-template-columns: 48px 1fr 12px;
-}
-.stop-all-btn .nav-tip {
-  grid-column: 2;
-  min-width: 0;
-  font-size: 13px;
-  font-weight: 600;
-  opacity: 0;
-  transform: translateX(-12px);
-  transition:
-    transform 0.3s cubic-bezier(0.55, 0, 0.55, 0.2),
-    opacity 0.22s ease;
-}
-.stop-all-btn:hover .nav-tip {
-  opacity: 1;
-  transform: translateX(0);
-  transition:
-    transform 0.36s cubic-bezier(0.34, 1.56, 0.64, 1) 0.03s,
-    opacity 0.18s ease 0.05s;
-}
-
-/* —— 启动按钮（贴窗口右缘）：一个整体按钮，内部分割 ——
+/* —— 启动区（贴窗口右缘）：一个整体按钮，内部分割 ——
    布局：[⌄ | 🖼  启动游戏]
               图标  ────────
                    实例名

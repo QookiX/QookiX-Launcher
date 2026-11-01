@@ -46,7 +46,7 @@ use state::AppState;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{
-    menu::{MenuBuilder, MenuItemBuilder},
+    menu::{Menu, MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager,
 };
@@ -60,6 +60,116 @@ fn show_main_window(app: &tauri::AppHandle) {
         let _ = win.show();
         let _ = win.set_focus();
     }
+}
+
+// ── 托盘菜单：最近游玩 ────────────────────────────────────────────────
+
+/// 托盘「最近游玩」最多列出几个实例（超出部分请到主界面看）
+const TRAY_RECENT_LIMIT: usize = 5;
+
+/// 菜单文本清洗：折叠换行/多余空格、把 Windows 下会被当成快捷键前缀的
+/// `&` 换成全角、超长实例名截断——否则名字里一个 `&` 就能吃掉后续字符。
+fn tray_label(text: &str, max_chars: usize) -> String {
+    let flattened: String = text
+        .chars()
+        .map(|c| match c {
+            '\n' | '\r' | '\t' => ' ',
+            '&' => '＆',
+            c => c,
+        })
+        .collect();
+    let cleaned = flattened.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cleaned = if cleaned.is_empty() {
+        "未命名实例".to_string()
+    } else {
+        cleaned
+    };
+    if cleaned.chars().count() <= max_chars {
+        return cleaned;
+    }
+    let mut cut: String = cleaned.chars().take(max_chars.saturating_sub(1)).collect();
+    cut.push('…');
+    cut
+}
+
+/// 最近游玩的实例：只算真正跑过的（有 last_played）且已安装的，按时间倒序。
+fn recent_instances(app: &tauri::AppHandle, limit: usize) -> Vec<crate::models::Instance> {
+    let state = app.state::<AppState>();
+    let mut list: Vec<_> = crate::instances::load_instances(&state)
+        .into_iter()
+        .filter(|i| i.installed && i.last_played.is_some())
+        .collect();
+    list.sort_by(|a, b| b.last_played.unwrap_or(0).cmp(&a.last_played.unwrap_or(0)));
+    list.truncate(limit);
+    list
+}
+
+/// 构建托盘菜单：显示主窗口 / 最近游玩前 N 个实例 / 退出。
+/// 实例列表为空时只保留前后两项，不显示空标题。
+fn build_tray_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let recent = recent_instances(app, TRAY_RECENT_LIMIT);
+    let mut builder = MenuBuilder::new(app)
+        .item(&MenuItemBuilder::with_id("show", "显示主窗口").build(app)?);
+
+    if !recent.is_empty() {
+        builder = builder.separator().item(
+            &MenuItemBuilder::with_id("recent_header", "最近游玩")
+                .enabled(false)
+                .build(app)?,
+        );
+        for (idx, inst) in recent.iter().enumerate() {
+            let label = format!("{}. {}", idx + 1, tray_label(&inst.name, 32));
+            // id 形如 recent:<instanceId>，点击时按 id 直接启动对应实例
+            let item = MenuItemBuilder::with_id(format!("recent:{}", inst.id), label).build(app)?;
+            builder = builder.item(&item);
+        }
+    }
+
+    builder
+        .separator()
+        .item(&MenuItemBuilder::with_id("quit", "退出 QookiX Launcher").build(app)?)
+        .build()
+}
+
+/// 重建并替换托盘菜单。实例的游玩顺序、名称或存在性变化后调用
+/// （游戏启动成功、实例改名/删除时）。失败只记日志，不影响主流程。
+pub(crate) fn refresh_tray_menu(app: &tauri::AppHandle) {
+    let Some(tray) = app.tray_by_id("main") else {
+        return;
+    };
+    match build_tray_menu(app) {
+        Ok(menu) => {
+            if let Err(e) = tray.set_menu(Some(menu)) {
+                eprintln!("[tray] 更新菜单失败: {e}");
+            }
+        }
+        Err(e) => eprintln!("[tray] 构建菜单失败: {e}"),
+    }
+}
+
+/// 托盘里点了某个「最近游玩」实例：先把窗口叫回前台（启动进度卡、失败
+/// 提示都在窗口里），再走与主界面完全相同的启动流程。
+fn launch_instance_from_tray(app: &tauri::AppHandle, instance_id: &str) {
+    show_main_window(app);
+    let app = app.clone();
+    let instance_id = instance_id.to_string();
+    tauri::async_runtime::spawn(async move {
+        let state = app.state::<AppState>();
+        let result =
+            crate::commands::launch_instance(app.clone(), state, instance_id.clone(), None, None)
+                .await;
+        match result {
+            // 启动成功后 last_played 已更新，刷新菜单让顺序保持正确
+            Ok(_) => refresh_tray_menu(&app),
+            Err(e) => {
+                eprintln!("[tray] 启动实例 {instance_id} 失败: {e}");
+                let _ = app.emit(
+                    "tray://launch-failed",
+                    serde_json::json!({ "instanceId": instance_id, "message": e }),
+                );
+            }
+        }
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -498,22 +608,24 @@ pub fn run() {
             // background" the window is only hidden, so without a tray icon the
             // user has no way to bring it back. Left click opens the menu,
             // double click restores the window directly.
-            let show_item = MenuItemBuilder::with_id("show", "显示主窗口").build(app.handle())?;
-            let quit_item = MenuItemBuilder::with_id("quit", "退出 QookiX Launcher").build(app.handle())?;
-            let menu = MenuBuilder::new(app.handle())
-                .item(&show_item)
-                .separator()
-                .item(&quit_item)
-                .build()?;
+            // 菜单内容随「最近游玩」变化，统一由 build_tray_menu/refresh_tray_menu 生成。
+            let menu = build_tray_menu(app.handle())?;
 
             let _ = TrayIconBuilder::with_id("main")
                 .icon(tauri::include_image!("icons/32x32.png"))
                 .tooltip("QookiX Launcher")
                 .menu(&menu)
-                .on_menu_event(|app, event| match event.id().as_ref() {
-                    "show" => show_main_window(app),
-                    "quit" => app.exit(0),
-                    _ => {}
+                .on_menu_event(|app, event| {
+                    let id = event.id().as_ref();
+                    match id {
+                        "show" => show_main_window(app),
+                        "quit" => app.exit(0),
+                        other => {
+                            if let Some(instance_id) = other.strip_prefix("recent:") {
+                                launch_instance_from_tray(app, instance_id);
+                            }
+                        }
+                    }
                 })
                 .on_tray_icon_event(|tray, event| {
                     // Left click is reserved for the menu; double click restores.

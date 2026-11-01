@@ -249,6 +249,14 @@ jobs:
           generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, '-') }}
 
+      # GitHub 会把附件名里的空格换成 "."（`QookiX Launcher_x.exe` → `QookiX.Launcher_x.exe`），
+      # 正文里的下载表格必须按真实 asset 名重建一遍，否则点开就是 404。
+      - name: Verify & repair download links in release body
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          node scripts/fix-release-body.mjs "${GITHUB_REF_NAME}"
+
       # 用 Release 实际 asset 的 URL 重建 latest.json，避免 Tauri 改名导致更新 404
       - name: Rebuild latest.json from published assets
         env:

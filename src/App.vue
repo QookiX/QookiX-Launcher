@@ -199,6 +199,8 @@ async function boot() {
 
 // 全局监听：分享包导入后游戏本体自动安装失败（后端无法直接弹 toast）
 let unlistenShareErr: (() => void) | null = null;
+// 全局监听：从系统托盘「最近游玩」直接启动实例失败（没有前端点击上下文）
+let unlistenTrayErr: (() => void) | null = null;
 onMounted(async () => {
   void boot();
   // 对照探针：验证「前端 → log_debug → 落盘」这条日志通道本身可用
@@ -213,10 +215,22 @@ onMounted(async () => {
   } catch {
     /* 监听不可用不影响主流程 */
   }
+  try {
+    unlistenTrayErr = await listen<{ instanceId: string; message: string }>(
+      "tray://launch-failed",
+      (ev) => {
+        notifyError(`启动失败：${ev.payload.message}`);
+      }
+    );
+  } catch {
+    /* 监听不可用不影响主流程 */
+  }
 });
 onBeforeUnmount(() => {
   unlistenShareErr?.();
   unlistenShareErr = null;
+  unlistenTrayErr?.();
+  unlistenTrayErr = null;
 });
 </script>
 

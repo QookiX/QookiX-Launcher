@@ -50,13 +50,23 @@ pub fn create_instance(
 }
 
 #[tauri::command]
-pub fn update_instance_settings(state: State<AppState>, patch: Value) -> Result<Instance, String> {
-    crate::instances::update_instance(&state, patch)
+pub fn update_instance_settings(
+    app: tauri::AppHandle,
+    state: State<AppState>,
+    patch: Value,
+) -> Result<Instance, String> {
+    let inst = crate::instances::update_instance(&state, patch)?;
+    // 改名等改动会影响托盘菜单里的文字，立即同步
+    crate::refresh_tray_menu(&app);
+    Ok(inst)
 }
 
 #[tauri::command]
-pub fn delete_instance(state: State<AppState>, id: String) -> Result<(), String> {
-    crate::instances::delete_instance(&state, &id)
+pub fn delete_instance(app: tauri::AppHandle, state: State<AppState>, id: String) -> Result<(), String> {
+    let r = crate::instances::delete_instance(&state, &id);
+    // 删掉的实例不应再出现在托盘菜单里
+    crate::refresh_tray_menu(&app);
+    r
 }
 
 #[tauri::command]
@@ -179,6 +189,8 @@ async fn launch_instance_inner(
     };
     let result = launch::launch_game(app.clone(), &state, &instance, resolved, world, server).await?;
     crate::instances::touch_last_played(&state, &instance_id);
+    // 托盘菜单的「最近游玩」按 last_played 排序，启动成功后立即刷新
+    crate::refresh_tray_menu(app);
     Ok(result)
 }
 

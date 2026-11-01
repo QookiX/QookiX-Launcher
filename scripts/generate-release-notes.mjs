@@ -31,8 +31,14 @@ const files = fs
   .filter((f) => !f.endsWith('.sig') && f !== 'latest.json')
   .sort()
 
+// GitHub 上传 Release 附件时会把文件名里的空白字符换成 "."：
+//   `QookiX Launcher_0.19.0_x64-setup.exe` → `QookiX.Launcher_0.19.0_x64-setup.exe`
+// 正文里的链接必须用改名后的名字，用 `%20` 拼出来的地址一定 404。
+// 这里按同样规则改名，发布后的 `fix-release-body.mjs` 还会拿真实 asset 名再核一遍。
+const assetName = (name) => name.replace(/\s+/g, '.')
+
 const assetUrl = (name) =>
-  `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(name)}`
+  `https://github.com/${repo}/releases/download/${tag}/${encodeURIComponent(assetName(name))}`
 
 // Classify artifacts by platform. Order matters; first match wins.
 const windows = []
@@ -57,7 +63,7 @@ const table = (rows) => {
   if (rows.length === 0) return null
   const lines = ['| 类型 | 文件 | 下载 |', '| --- | --- | --- |']
   for (const [label, name] of rows) {
-    lines.push(`| ${label} | \`${name}\` | [下载](${assetUrl(name)}) |`)
+    lines.push(`| ${label} | \`${assetName(name)}\` | [下载](${assetUrl(name)}) |`)
   }
   return lines.join('\n')
 }
