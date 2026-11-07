@@ -43,11 +43,13 @@ import UpdateNotes from "../components/UpdateNotes.vue";
 import DiagnosticsDialog from "../components/DiagnosticsDialog.vue";
 import CloudSyncDialog from "../components/CloudSyncDialog.vue";
 import LanSyncPanel from "../components/LanSyncPanel.vue";
+import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
 import ColorPicker from "../components/ColorPicker.vue";
 import { IconCloud } from "../components/icons";
 import { error as devError } from "../utils/logger";
 import { useI18n } from "vue-i18n";
 import { SUPPORTED_LOCALES } from "../i18n";
+import { shimuErrorMessage, useShimuStore } from "../stores/shimu";
 // 版本号唯一来源：package.json（发布时由 npm run version 同步）
 import { version as appVersion } from "../../package.json";
 import { titlebarThemeToggle } from "../composables/useDevFlags";
@@ -55,6 +57,7 @@ import { titlebarThemeToggle } from "../composables/useDevFlags";
 const settings = useSettingsStore();
 const accounts = useAccountsStore();
 const instances = useInstancesStore();
+const shimuStore = useShimuStore();
 const message = useMessage();
 const dialog = useDialog();
 const onboarding = useOnboarding();
@@ -84,6 +87,83 @@ const cloudOpen = ref(false);
 /** GitHub 账户（云存档与时光机共用同一套授权） */
 const cloudAccount = ref("");
 const cloudRepo = ref("");
+/**
+ * 第三方账号（目前只有拾木空间）：账号本身由 stores/shimu 维护，
+ * 这里只做展示 + 唤起授权弹窗，登录 / 退出后 store 会自己刷新登录态。
+ */
+const shimuLoginRef = ref<InstanceType<typeof ShimuLoginDialog> | null>(null);
+const shimuRefreshing = ref(false);
+const shimuAvatar = computed(() => shimuStore.avatarUrl);
+/** 有令牌但已过期：登录态算「未登录」，界面要单独提示重新授权 */
+const shimuExpired = computed(() => shimuStore.status.expired && !shimuStore.loggedIn);
+const shimuBadge = computed<"on" | "off" | "expired">(() =>
+  shimuStore.loggedIn ? "on" : shimuExpired.value ? "expired" : "off"
+);
+const shimuBadgeLabel = computed(() =>
+  shimuBadge.value === "on"
+    ? t("settings.accounts.statusOn")
+    : shimuBadge.value === "expired"
+      ? t("settings.accounts.statusExpired")
+      : t("settings.accounts.statusOff")
+);
+const shimuMetaText = computed(() => {
+  if (!shimuStore.loggedIn) return t("settings.accounts.guestHint");
+  const parts: string[] = [];
+  if (shimuStore.nickname) parts.push(shimuStore.nickname);
+  const u = shimuStore.user;
+  if (typeof u?.score === "number") parts.push(t("shimu.score", { n: u.score }));
+  if (typeof u?.balance === "number") parts.push(t("shimu.balance", { n: u.balance.toFixed(2) }));
+  if (shimuStore.memberLabel) parts.push(shimuStore.memberLabel);
+  return parts.join(" · ");
+});
+
+function openShimuLogin() {
+  shimuLoginRef.value?.open();
+}
+
+/** 刷新：重读配置与登录态，已登录时顺手拉一次余额 / 积分 */
+async function refreshShimu() {
+  shimuRefreshing.value = true;
+  try {
+    await shimuStore.init();
+    if (shimuStore.loggedIn) {
+      try {
+        await api.shimuUserInfo();
+        await shimuStore.refreshStatus();
+      } catch {
+        /* 资料刷新失败不影响登录态，保持原有显示 */
+      }
+    }
+    message.success(t("settings.accounts.refreshDone"));
+  } catch (e) {
+    message.error(shimuErrorMessage(e));
+  } finally {
+    shimuRefreshing.value = false;
+  }
+}
+
+function openShimuSite() {
+  const host = shimuStore.config?.host ?? "https://www.mcimg.com";
+  openUrl(host).catch((e: unknown) => message.error(String(e)));
+}
+
+function logoutShimu() {
+  dialog.warning({
+    title: t("settings.accounts.logoutTitle"),
+    content: t("settings.accounts.logoutContent"),
+    positiveText: t("common.ok"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: async () => {
+      try {
+        await shimuStore.logout();
+        message.success(t("settings.accounts.logoutDone"));
+      } catch (e) {
+        message.error(shimuErrorMessage(e));
+      }
+    },
+  });
+}
+
 const updateVersion = ref<string | null>(null);
 /** 发起检查时的当前版本：用于算出「当前 → 最新」之间要展示哪些版本 */
 const updateCurrentVersion = ref<string | null>(null);
@@ -473,6 +553,10 @@ function refreshCurrentPaneIndicators() {
 watch(tab, () => {
   nextTick(refreshCurrentPaneIndicators);
 });
+// 进「账号」页重新读一次登录态：可能在发现页/弹窗里刚授权或退出过
+watch(tab, (v) => {
+  if (v === "accounts") void shimuStore.init();
+});
 
 const tabs = computed(() => {
   const list = [
@@ -481,6 +565,7 @@ const tabs = computed(() => {
     { key: "java", label: t("settings.tab.java"), icon: IconCpu },
     { key: "download", label: t("settings.tab.download"), icon: IconDownload },
     { key: "content", label: t("settings.tab.content"), icon: IconGlobe },
+    { key: "accounts", label: t("settings.tab.accounts"), icon: IconUsers },
     { key: "storage", label: t("settings.tab.storage"), icon: IconHardDrive },
     { key: "about", label: t("settings.tab.about"), icon: IconFile },
   ];
@@ -535,6 +620,7 @@ const settingItemsDef: { id: string; cardId: string; tab: string; labelKey: stri
   { id: "c-proxy", cardId: "content-proxy", tab: "content", labelKey: "settings.content.proxy", cardTitleKey: "settings.content.proxy" },
   { id: "c-translate", cardId: "content-translate", tab: "content", labelKey: "settings.content.translate", cardTitleKey: "settings.content.translate" },
   { id: "c-autobody", cardId: "content-translate", tab: "content", labelKey: "settings.content.autoBody", cardTitleKey: "settings.content.translate" },
+  { id: "ac-third", cardId: "accounts-thirdparty", tab: "accounts", labelKey: "settings.accounts.thirdParty", cardTitleKey: "settings.accounts.thirdParty" },
   { id: "s-cloud", cardId: "storage-cloud", tab: "storage", labelKey: "settings.storage.cloudSave", cardTitleKey: "settings.storage.cloudSave" },
   { id: "s-stats", cardId: "storage-stats", tab: "storage", labelKey: "settings.storage.stats", cardTitleKey: "settings.storage.stats" },
   { id: "ab-overview", cardId: "about-showcase", tab: "about", labelKey: "settings.about.overview", cardTitleKey: "settings.about.overview" },
@@ -1284,7 +1370,7 @@ onUnmounted(() => {
       <div v-show="tab === 'java'" class="settings-pane">
         <div class="grid">
           <div class="card glass" id="java-runtime">
-            <h3><IconCpu /> {{ t("settings.java.runtime") }}</h3>
+            <h3>{{ t("settings.java.runtime") }}</h3>
             <div class="java-toolbar">
               <button class="mini-btn" :disabled="detecting" @click="detect">
                 <IconSearch /> {{ detecting ? t("settings.java.detecting") : t("settings.java.detect") }}
@@ -1399,7 +1485,7 @@ onUnmounted(() => {
             <p class="hint">{{ t("settings.download.chunkThreadsHint") }}</p>
           </div>
           <div class="card glass" id="download-mirror">
-            <h3><IconGlobe /> {{ t("settings.download.mirror") }}</h3>
+            <h3>{{ t("settings.download.mirror") }}</h3>
             <div class="mirror-list">
               <button
                 v-for="m in mirrors"
@@ -1640,12 +1726,57 @@ onUnmounted(() => {
         </div>
       </div>
 
+      <!-- 账号 -->
+      <div v-show="tab === 'accounts'" class="settings-pane">
+        <div class="grid storage-grid">
+          <div class="card glass storage-card" id="accounts-thirdparty">
+            <div class="storage-header">
+              <h3>{{ t("settings.accounts.thirdParty") }}</h3>
+              <div class="storage-actions">
+                <button class="mini-btn" :disabled="shimuRefreshing" @click="refreshShimu">
+                  <IconRefresh class="btn-icon" />
+                  {{ shimuRefreshing ? t("settings.accounts.refreshing") : t("settings.accounts.refresh") }}
+                </button>
+              </div>
+            </div>
+
+            <!-- 拾木空间：唯一已接入的第三方账号（投影下载 / 付费内容） -->
+            <div class="acct-row">
+              <img v-if="shimuAvatar" class="acct-avatar" :src="shimuAvatar" alt="" />
+              <div v-else class="acct-avatar acct-avatar-ph">
+                {{ shimuStore.loggedIn ? (shimuStore.nickname.slice(0, 1) || "拾") : "拾" }}
+              </div>
+              <div class="acct-info">
+                <div class="acct-name">
+                  <span>{{ t("shimu.title") }}</span>
+                  <span class="acct-badge" :class="shimuBadge">{{ shimuBadgeLabel }}</span>
+                </div>
+                <div class="acct-meta">{{ shimuMetaText }}</div>
+              </div>
+              <div class="acct-actions">
+                <button class="mini-btn" @click="openShimuSite">
+                  <IconExternal class="btn-icon" />{{ t("shimu.openSite") }}
+                </button>
+                <template v-if="shimuStore.loggedIn">
+                  <button class="mini-btn" @click="openShimuLogin">{{ t("shimu.reauth") }}</button>
+                  <button class="mini-btn danger" @click="logoutShimu">{{ t("shimu.logout") }}</button>
+                </template>
+                <button v-else class="mini-btn primary" @click="openShimuLogin">
+                  {{ t("shimu.login") }}
+                </button>
+              </div>
+            </div>
+            <p v-if="shimuExpired" class="acct-warn">{{ t("settings.accounts.expiredHint") }}</p>
+          </div>
+        </div>
+      </div>
+
       <!-- 存储 -->
       <div v-show="tab === 'storage'" class="settings-pane">
         <div class="grid storage-grid">
           <div class="card glass storage-card" id="storage-cloud">
             <div class="storage-header">
-              <h3><IconCloud /> {{ t("settings.storage.cloudSave") }}</h3>
+              <h3>{{ t("settings.storage.cloudSave") }}</h3>
               <div class="storage-actions">
                 <span class="hint-inline">{{ t("settings.storage.cloudHint") }}</span>
                 <button class="mini-btn" @click="cloudOpen = true">
@@ -2058,6 +2189,9 @@ onUnmounted(() => {
       @restored="instances.load(true)"
     />
 
+    <!-- 第三方账号授权弹窗（拾木空间 OAuth）：账号页与发现页投影共用同一套流程 -->
+    <ShimuLoginDialog ref="shimuLoginRef" />
+
     <n-modal v-model:show="migrateModal" preset="card" :title="t('settings.migrate.modalTitle')" class="migrate-modal" :style="{ width: '480px', maxWidth: '90vw' }">
       <div v-if="migratePhase === 'select'" class="migrate-body">
         <p class="migrate-label">{{ t("settings.migrate.newDir") }}</p>
@@ -2411,15 +2545,13 @@ onUnmounted(() => {
 .card {
   padding: 18px;
 }
+/* 卡片标题统一纯文字：不再放图标，避免有的有有的没有 */
 .card h3 {
   display: flex;
   align-items: center;
   gap: 8px;
   margin: 0 0 14px;
   font-size: 14px;
-}
-.card h3 svg {
-  color: var(--accent);
 }
 .java-row {
   display: flex;
@@ -3569,6 +3701,81 @@ textarea.text-input {
 }
 .gh-spacer {
   flex: 1;
+}
+
+/* 账号页：第三方账号行（头像 + 名称/状态 + 右侧操作） */
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--w-04);
+  flex-wrap: wrap;
+}
+.acct-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  object-fit: cover;
+  flex: none;
+  background: var(--w-06);
+}
+.acct-avatar-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 15px;
+  color: var(--text-3);
+}
+.acct-info {
+  flex: 1;
+  min-width: 150px;
+}
+.acct-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.acct-badge {
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--w-04);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-3);
+}
+.acct-badge.on {
+  color: var(--accent);
+  border-color: var(--accent-35);
+  background: var(--accent-08);
+}
+.acct-badge.expired {
+  color: var(--danger);
+  border-color: var(--danger-35);
+  background: var(--danger-08);
+}
+.acct-meta {
+  margin-top: 3px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.acct-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.acct-warn {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: var(--accent);
 }
 .mini-btn.danger {
   color: var(--danger);

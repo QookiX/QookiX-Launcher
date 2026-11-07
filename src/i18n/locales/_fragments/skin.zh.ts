@@ -19,7 +19,6 @@ export default {
     refreshed: "已刷新皮肤",
     applied: "已应用",
     preview: "预览",
-    dragToRotate: "拖动旋转",
     currentSkin: "当前皮肤",
     notSelected: "未选择",
     refreshSkinBypassCache: "刷新皮肤（绕过缓存）",
@@ -45,6 +44,14 @@ export default {
     confirmUploadHint:
       "上传会覆盖该账号在 Minecraft 中的现有外观，立即对所有登录该账号的设备生效，本地无法撤销。若当前选择的是「无披风」，账号现有披风会被隐藏。",
     confirmUploadOk: "确认上传",
+    confirmStationTitle: "上传并应用到拾木空间账号",
+    confirmStationBody:
+      "将把当前预览的皮肤（{model}）上传到拾木空间账号「{name}」，覆盖该角色在站点上现有的皮肤。",
+    confirmStationHint:
+      "上传后立即在拾木空间生效，进入游戏即可看到新皮肤；站点上的旧皮肤会被替换，本地无法撤销。",
+    shimuLoginRequired: "上传皮肤需要先登录拾木空间账号",
+    shimuUploaded: "皮肤已上传到拾木空间",
+    capeHintStation: "皮肤站披风由站点管理，这里只做预览",
     tabSaved: "已保存皮肤",
     skinCount: "共 {n} 个",
     fetchByPlayer: "按玩家名获取",

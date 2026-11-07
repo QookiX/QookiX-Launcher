@@ -96,12 +96,14 @@ body,
   --success-12: rgba(78, 201, 160, 0.12);
   --info-14: rgba(90, 162, 240, 0.14);
   --info-15: rgba(90, 162, 240, 0.15);
+  --info-22: rgba(90, 162, 240, 0.22);
   /* 语义纯色：与 theme.ts 的 errorColor/successColor/warningColor 对齐，
      供 latency 等级、stop-all 按钮等需要纯色文字/描边处使用。
      --danger-text 比 --danger 浅一档，用于深色面板上的次要危险文字。 */
   --danger: #e5534b;
   --danger-text: #f0907f;
   --success: #4ec9a0;
+  --info: #5aa2f0;
   --warn: #e0a030;
   --pad-panel: 20px 24px;
   --gap-panel: 16px;
@@ -181,10 +183,12 @@ body,
   --danger-45: rgba(214, 61, 53, 0.45);
   --danger-50: rgba(214, 61, 53, 0.5);
   --success-12: rgba(45, 155, 111, 0.12);
+  --info-22: rgba(59, 130, 196, 0.2);
   /* 浅色主题语义纯色：比深色档更深，保证白底可读 */
   --danger: #d63d35;
   --danger-text: #c9332c;
   --success: #2d9b6f;
+  --info: #3b82c4;
   --warn: #c87420;
 }
 
@@ -564,4 +568,68 @@ a:focus-visible,
 }
 :root.light .driver-popover-footer-btn:last-child:hover {
   background-color: var(--accent-hover);
+}
+
+/* ---------------------------------------------------------------------------
+   骨架屏原子（发现页内容分类 / 投影列表共用）
+   只放颜色变量、shimmer 动画与条块尺寸；每处卡片怎么排由各自组件决定，
+   这样两边的加载态看起来是同一套东西。
+   --------------------------------------------------------------------------- */
+.skel-card {
+  --skel-c: rgba(255, 255, 255, 0.07);
+  --skel-hi: rgba(255, 255, 255, 0.14);
+}
+:root.light .skel-card {
+  --skel-c: rgba(0, 0, 0, 0.06);
+  --skel-hi: rgba(0, 0, 0, 0.1);
+}
+.skel-icon,
+.skel-cover,
+.skel-line,
+.skel-tag,
+.skel-btn {
+  background: linear-gradient(90deg, var(--skel-c), var(--skel-hi), var(--skel-c));
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.3s ease-in-out infinite;
+}
+.skel-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+.skel-line {
+  height: 11px;
+  border-radius: 6px;
+}
+.skel-line.w-30 { width: 30%; }
+.skel-line.w-32 { width: 32%; }
+.skel-line.w-40 { width: 40%; }
+.skel-line.w-45 { width: 45%; }
+.skel-line.w-60 { width: 60%; }
+.skel-line.w-70 { width: 70%; }
+.skel-line.w-80 { width: 80%; }
+.skel-line.w-92 { width: 92%; }
+.skel-tag {
+  width: 52px;
+  height: 18px;
+  border-radius: 9px;
+}
+.skel-btn {
+  width: 84px;
+  height: 28px;
+  border-radius: 8px;
+}
+@keyframes skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-icon,
+  .skel-cover,
+  .skel-line,
+  .skel-tag,
+  .skel-btn {
+    animation: none;
+  }
 }

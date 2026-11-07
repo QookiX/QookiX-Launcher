@@ -20,9 +20,6 @@ import { useInstancesStore } from "../stores/instances";
 import { useTasksStore } from "../stores/tasks";
 import {
   IconCamera,
-  IconChevronLeft,
-  IconChevronRight,
-  IconClose,
   IconFolder,
   IconGithub,
   IconPlay,
@@ -31,6 +28,7 @@ import {
   IconTrash,
   IconUploadCloud,
 } from "../components/icons";
+import TimeMachineLightbox from "../components/TimeMachineLightbox.vue";
 import { fmtDuration, fmtSize } from "../utils/format";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import type { PlaySession, TimelineShot, TimelineSnapshot } from "../types";
@@ -600,8 +598,18 @@ const lbOpen = computed(() => lbIndex.value >= 0);
 const lbItem = computed<TimelineShot | null>(() =>
   lbIndex.value >= 0 ? filteredShots.value[lbIndex.value] : null
 );
-const lbUrl = computed(() => (lbItem.value ? thumbs.value[lbItem.value.id] ?? "" : ""));
-const lbTotal = computed(() => filteredShots.value.length);
+const lbImages = computed(() => filteredShots.value.map((s) => thumbs.value[s.id] ?? ""));
+
+/** 灯箱切图：换 id 后由 watch(lbId) 拉日志，缺缩略图时补生成 */
+function onLbIndex(i: number) {
+  const next = filteredShots.value[i];
+  if (!next) return;
+  lbId.value = next.id;
+  if (!thumbs.value[next.id]) void ensureThumb(next);
+}
+function onLbOpenChange(open: boolean) {
+  if (!open) lbId.value = null;
+}
 
 /** 大图右侧「那一刻」的日志：本地条目自带，云端条目按需下载 shots.json 附件 */
 const lbLog = ref("");
@@ -625,23 +633,8 @@ watch(lbId, async (id) => {
   }
 });
 
-async function stepLb(d: number) {
-  const n = lbTotal.value;
-  if (!n) return;
-  const cur = lbIndex.value < 0 ? 0 : lbIndex.value;
-  const next = filteredShots.value[(cur + d + n) % n];
-  if (!next) return;
-  lbId.value = next.id;
-  if (!thumbs.value[next.id]) await ensureThumb(next);
-}
-
 function onKey(e: KeyboardEvent) {
-  if (lbOpen.value) {
-    if (e.key === "Escape") lbId.value = null;
-    else if (e.key === "ArrowRight") void stepLb(1);
-    else if (e.key === "ArrowLeft") void stepLb(-1);
-    return;
-  }
+  // 灯箱的 Esc / ← → 由 TimeMachineLightbox 自己处理，这里只管控制台弹窗
   if (ctlOpen.value && e.key === "Escape") ctlOpen.value = false;
 }
 
@@ -1469,62 +1462,50 @@ onBeforeUnmount(() => {
     </template>
   </NModal>
 
-  <!-- 沉浸式看图：大图 + 那一刻的日志 + ← → 翻页 -->
-  <Teleport to="body">
-    <transition name="lb">
-      <div v-if="lbOpen" class="lb">
-        <button class="lb-x" @click="lbId = null"><IconClose /></button>
-        <div class="lb-stage">
-          <button class="lb-nav prev" :title="t('timemachine.lbPrev')" @click="stepLb(-1)">
-            <IconChevronLeft />
-          </button>
-          <img v-if="lbUrl" :key="lbId ?? ''" :src="lbUrl" class="lb-img" alt="" />
-          <div v-else class="lb-loading">···</div>
-          <button class="lb-nav next" :title="t('timemachine.lbNext')" @click="stepLb(1)">
-            <IconChevronRight />
-          </button>
+  <!-- 沉浸式看图：统一组件，侧栏放那一刻的信息与日志 -->
+  <TimeMachineLightbox
+    :open="lbOpen"
+    :images="lbImages"
+    :index="lbIndex < 0 ? 0 : lbIndex"
+    @update:open="onLbOpenChange"
+    @update:index="onLbIndex"
+  >
+    <template #aside>
+      <template v-if="lbItem">
+        <div class="lbs-row">
+          <span class="lbs-label">{{ t("timemachine.bsInstance") }}</span>
+          <span>{{ instanceName(lbItem.instanceId) }}</span>
         </div>
-        <aside v-if="lbItem" class="lb-side">
-          <div class="lbs-row">
-            <span class="lbs-label">{{ t("timemachine.bsInstance") }}</span>
-            <span>{{ instanceName(lbItem.instanceId) }}</span>
-          </div>
-          <div class="lbs-row">
-            <span class="lbs-label">{{ t("timemachine.bsTrigger") }}</span>
-            <span class="lbs-badge" :class="triggerClass(lbItem.trigger)">
-              {{ triggerLabel(lbItem.trigger) }}
-            </span>
-          </div>
-          <div class="lbs-row">
-            <span class="lbs-label">{{ t("timemachine.bsCloud") }}</span>
-            <span>{{ lbItem.uploaded ? t("timemachine.bsUploaded") : t("timemachine.localOnly") }}</span>
-          </div>
-          <div class="lbs-row">
-            <span class="lbs-label">{{ t("timemachine.bsMoment") }}</span>
-            <span>{{ fmtTime(lbItem.createdAt) }}</span>
-          </div>
-          <div class="lbs-title">{{ t("timemachine.theMoment") }}</div>
-          <pre v-if="lbLog" class="lbs-log">{{ lbLog }}</pre>
-          <p v-else-if="lbLogLoading" class="lbs-nolog">···</p>
-          <p v-else class="lbs-nolog">{{ t("timemachine.noLog") }}</p>
-        </aside>
-        <div class="lb-foot">
-          <button
-            v-if="lbItem?.localPath"
-            class="lb-locate"
-            :title="t('timemachine.revealInFileManager')"
-            @click="revealShotLocation"
-          >
-            <IconFolder /> {{ t("timemachine.revealInFileManager") }}
-          </button>
-          <div class="lb-foot-meta">
-            <span>{{ t("timemachine.lbCounter", { i: lbIndex + 1, n: lbTotal }) }}</span>
-            <span>{{ t("timemachine.lbHint") }}</span>
-          </div>
+        <div class="lbs-row">
+          <span class="lbs-label">{{ t("timemachine.bsTrigger") }}</span>
+          <span class="lbs-badge" :class="triggerClass(lbItem.trigger)">
+            {{ triggerLabel(lbItem.trigger) }}
+          </span>
         </div>
-      </div>
-    </transition>
-  </Teleport>
+        <div class="lbs-row">
+          <span class="lbs-label">{{ t("timemachine.bsCloud") }}</span>
+          <span>{{ lbItem.uploaded ? t("timemachine.bsUploaded") : t("timemachine.localOnly") }}</span>
+        </div>
+        <div class="lbs-row">
+          <span class="lbs-label">{{ t("timemachine.bsMoment") }}</span>
+          <span>{{ fmtTime(lbItem.createdAt) }}</span>
+        </div>
+        <div class="lbs-title">{{ t("timemachine.theMoment") }}</div>
+        <pre v-if="lbLog" class="lbs-log">{{ lbLog }}</pre>
+        <p v-else-if="lbLogLoading" class="lbs-nolog">···</p>
+        <p v-else class="lbs-nolog">{{ t("timemachine.noLog") }}</p>
+        <button
+          v-if="lbItem.localPath"
+          class="lb-locate"
+          :title="t('timemachine.revealInFileManager')"
+          @click="revealShotLocation"
+        >
+          <IconFolder /> {{ t("timemachine.revealInFileManager") }}
+        </button>
+        <p class="lb-hint">{{ t("timemachine.lbHint") }}</p>
+      </template>
+    </template>
+  </TimeMachineLightbox>
 
   <!-- 添加自定义规则 -->
   <NModal v-model:show="adding" preset="card" style="width: 520px" :title="t('timemachine.addRule')">
@@ -2316,109 +2297,7 @@ onBeforeUnmount(() => {
   color: var(--text-3);
 }
 
-/* ---------------- 沉浸式看图 ---------------- */
-.lb {
-  position: fixed;
-  inset: 0;
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 18px;
-  padding: 42px 24px 56px;
-  background: rgba(8, 9, 12, 0.9);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-}
-.lb-enter-active,
-.lb-leave-active {
-  transition: opacity 0.26s ease;
-}
-.lb-enter-from,
-.lb-leave-to {
-  opacity: 0;
-}
-.lb-stage {
-  position: relative;
-  flex: 1 1 auto;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.lb-img {
-  max-width: 100%;
-  max-height: calc(100vh - 150px);
-  border-radius: 12px;
-  box-shadow: 0 24px 64px var(--k-50);
-  animation: lbIn 0.36s cubic-bezier(0.22, 1, 0.36, 1);
-}
-@keyframes lbIn {
-  from {
-    opacity: 0;
-    transform: scale(0.965);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-.lb-loading {
-  font-size: 20px;
-  color: rgba(255, 255, 255, 0.4);
-}
-.lb-nav,
-.lb-x {
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  transition: background 0.2s ease;
-}
-.lb-nav:hover,
-.lb-x:hover {
-  background: rgba(255, 255, 255, 0.18);
-}
-.lb-nav {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 44px;
-  height: 44px;
-  border-radius: 50%;
-  font-size: 18px;
-}
-.lb-nav.prev {
-  left: -6px;
-}
-.lb-nav.next {
-  right: -6px;
-}
-.lb-x {
-  position: absolute;
-  right: 20px;
-  top: 16px;
-  width: 34px;
-  height: 34px;
-  border-radius: 10px;
-}
-.lb-side {
-  width: 320px;
-  flex-shrink: 0;
-  max-height: calc(100vh - 150px);
-  overflow: auto;
-  padding: 14px 16px;
-  border-radius: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  background: rgba(255, 255, 255, 0.06);
-  display: flex;
-  flex-direction: column;
-  gap: 9px;
-  font-size: 12px;
-  color: #e8e9ee;
-}
+/* ---------------- 沉浸式看图（外壳由 TimeMachineLightbox 提供，这里只剩侧栏内容样式） ---------------- */
 .lbs-row {
   display: flex;
   align-items: center;
@@ -2475,24 +2354,14 @@ onBeforeUnmount(() => {
   font-size: 11.5px;
   color: #9a9daa;
 }
-.lb-foot {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 44px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 24px;
-  font-size: 11.5px;
-  color: #9a9daa;
-}
 .lb-locate {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
-  padding: 5px 12px;
+  width: 100%;
+  margin-top: 2px;
+  padding: 6px 12px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.06);
@@ -2507,10 +2376,11 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.12);
   color: #fff;
 }
-.lb-foot-meta {
-  display: flex;
-  align-items: center;
-  gap: 16px;
+.lb-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: #8b8e9c;
 }
 
 /* ---------------- 添加规则弹窗 ---------------- */

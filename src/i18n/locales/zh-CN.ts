@@ -63,6 +63,11 @@ export default {
     ok: "确定",
     on: "开",
     off: "关",
+    prev: "上一张",
+    next: "下一张",
+    zoomIn: "放大",
+    zoomOut: "缩小",
+    resetZoom: "恢复原始大小",
   },
   nav: {
     home: "首页",

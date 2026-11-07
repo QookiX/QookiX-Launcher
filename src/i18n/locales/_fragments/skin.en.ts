@@ -21,7 +21,6 @@ export default {
     refreshed: "Skin refreshed",
     applied: "Applied",
     preview: "Preview",
-    dragToRotate: "Drag to rotate",
     currentSkin: "Current skin",
     notSelected: "Not selected",
     refreshSkinBypassCache: "Refresh skin (bypass cache)",
@@ -47,6 +46,14 @@ export default {
     confirmUploadHint:
       "This overwrites the account's current look in Minecraft, takes effect immediately on every device signed in with it, and cannot be undone from here. If the selection is \"No cape\", the account's current cape will be hidden.",
     confirmUploadOk: "Upload now",
+    confirmStationTitle: "Upload and apply to the Shimu Space account",
+    confirmStationBody:
+      "The skin you are previewing ({model}) will be uploaded to the Shimu Space account \"{name}\", replacing the skin this character currently wears on the site.",
+    confirmStationHint:
+      "It takes effect on Shimu Space right away and in-game the next time you join. The old skin on the site is replaced and cannot be restored from here.",
+    shimuLoginRequired: "Sign in to your Shimu Space account first to upload a skin",
+    shimuUploaded: "Skin uploaded to Shimu Space",
+    capeHintStation: "Station capes are managed on the site; this is preview only",
     tabSaved: "Saved skins",
     skinCount: "{n} total",
     fetchByPlayer: "Fetch by player",

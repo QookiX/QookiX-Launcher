@@ -6,7 +6,6 @@ import { useI18n } from "vue-i18n";
 import { useRoute, useRouter } from "vue-router";
 import { NPopover, NModal, NSelect, NButton, useMessage } from "naive-ui";
 import { IconFolder, IconClock } from "../components/icons";
-import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
 import { useShimuStore } from "../stores/shimu";
 import { useInstancesStore } from "../stores/instances";
 import { api } from "../api";
@@ -26,10 +25,9 @@ import { createSchematicWorkerPool, type SchematicWorkerPool } from "../composab
 const { t } = useI18n();
 const message = useMessage();
 
-// 拾木空间（投影帖子来源）：账号弹窗 + 独立的投影库页面
+// 拾木空间（投影帖子来源）：配置由「下载投影」跳转后的投影库使用
 const shimu = useShimuStore();
 const instancesStore = useInstancesStore();
-const shimuLoginRef = ref<InstanceType<typeof ShimuLoginDialog> | null>(null);
 const route = useRoute();
 const router = useRouter();
 
@@ -67,9 +65,12 @@ async function confirmAddToGame() {
   }
 }
 
-/** 打开拾木空间投影库（独立页面；浏览不需要登录，默认只筛「投影相关」板块） */
+/**
+ * 「下载投影」：跳到发现页的「投影」分类挑帖子下载。
+ * 那边下载完会带 `?open=<本地路径>` 跳回本页直接预览。
+ */
 function openShimuLibrary() {
-  void router.push("/toolbox/shimu");
+  void router.push({ path: "/browse", query: { type: "shimu" } });
 }
 
 /**
@@ -401,18 +402,16 @@ onUnmounted(() => {
         </div>
       </NPopover>
 
-      <!-- 拾木空间：账号 + 站内投影库（帖子多为投影作品，板块筛选在库内） -->
+      <!-- 拾木空间账号入口已隐藏（登录/账号状态在发现页的「投影」分类里展示），
+           这里只留一个「下载投影」入口 -->
       <span class="param-sep" />
       <button
-        class="mini-btn"
-        :class="{ primary: shimu.loggedIn }"
-        @click="shimuLoginRef?.open()"
-        :title="t('shimu.accountTitle')"
+        class="mini-btn primary"
+        :title="t('shimu.downloadSchematicHint')"
+        @click="openShimuLibrary"
+        :disabled="loading"
       >
-        {{ shimu.loggedIn ? shimu.nickname || t("shimu.title") : t("shimu.login") }}
-      </button>
-      <button class="mini-btn primary" @click="openShimuLibrary" :disabled="loading">
-        {{ t("shimu.libraryTitle") }}
+        {{ t("shimu.downloadSchematic") }}
       </button>
     </div>
 
@@ -533,9 +532,6 @@ onUnmounted(() => {
         </div>
       </div>
     </NModal>
-
-    <!-- 拾木空间账号（投影库是独立页面 /toolbox/shimu） -->
-    <ShimuLoginDialog ref="shimuLoginRef" />
 
     <!-- 添加到游戏：选择实例 -->
     <NModal

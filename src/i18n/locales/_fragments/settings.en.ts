@@ -5,6 +5,7 @@ export default {
     java: "Java",
     download: "Download",
     content: "Content Services",
+    accounts: "Third-party accounts",
     storage: "Storage",
     about: "About",
     dev: "Developer",
@@ -153,6 +154,22 @@ export default {
     direct: "Direct",
     custom: "Custom",
   },
+  // Third-party accounts: external platform authorizations (not launch accounts)
+  accounts: {
+    thirdParty: "Third-party accounts",
+    refresh: "Refresh",
+    refreshing: "Refreshing…",
+    refreshDone: "Account status refreshed",
+    statusOn: "Authorized",
+    statusOff: "Not authorized",
+    statusExpired: "Expired",
+    expiredHint: "Authorization expired (the token cannot be renewed automatically). Please re-authorize.",
+    guestHint: "You can browse schematic posts without signing in.",
+    logoutTitle: "Sign out of Shimu Space",
+    logoutContent: "After signing out you cannot download attachments or buy paid content. Browsing is unaffected. Continue?",
+    logoutDone: "Signed out of Shimu Space",
+  },
+
   storage: {
     cloudSave: "Cloud saves",
     cloudHint: "Stored in your private GitHub repo, restorable across devices",

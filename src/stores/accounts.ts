@@ -13,9 +13,82 @@ interface YggOauthResult {
   links: { homepage: string; register: string };
 }
 
+/**
+ * 上次的账号列表快照（localStorage）。
+ *
+ * 账号列表要等一次后端 IPC 才回来，但标题栏账号芯片、首页都会立刻渲染：
+ * 列表为空 → `current` 为 null → 首帧是「未登录 + 默认人像」，等数据回来再换成头像，
+ * 看起来就是「头像先被摘掉再加载」。把上次的列表与选中项落盘后，首帧即可用
+ * 真实账号 + 本地头像缓存渲染，随后再被后端返回的最新数据覆盖。
+ */
+const SNAPSHOT_KEY = "qookix:accounts-snapshot";
+/** 只保留渲染需要的字段：令牌之类的一律不落 localStorage */
+function slimAccount(a: Account): Account {
+  if (a.type === "yggdrasil") {
+    return {
+      type: "yggdrasil",
+      uuid: a.uuid,
+      username: a.username,
+      created: a.created,
+      server: a.server,
+      server_name: a.server_name,
+    };
+  }
+  if (a.type === "microsoft") {
+    return {
+      type: "microsoft",
+      uuid: a.uuid,
+      username: a.username,
+      created: a.created,
+      msa_expires_at: a.msa_expires_at,
+    };
+  }
+  return { type: "offline", uuid: a.uuid, username: a.username, created: a.created };
+}
+
+function isAccount(v: unknown): v is Account {
+  if (!v || typeof v !== "object") return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.uuid === "string" &&
+    typeof o.username === "string" &&
+    (o.type === "offline" || o.type === "microsoft" || o.type === "yggdrasil")
+  );
+}
+
+function readSnapshot(): { selected: string | null; accounts: Account[] } {
+  try {
+    const raw = localStorage.getItem(SNAPSHOT_KEY);
+    if (!raw) return { selected: null, accounts: [] };
+    const parsed = JSON.parse(raw) as { selected?: unknown; accounts?: unknown };
+    const accounts = Array.isArray(parsed.accounts) ? parsed.accounts.filter(isAccount) : [];
+    const selected = typeof parsed.selected === "string" && parsed.selected ? parsed.selected : null;
+    return { selected, accounts };
+  } catch {
+    return { selected: null, accounts: [] };
+  }
+}
+
+const initialSnapshot = readSnapshot();
+/** 快照里的选中账号：设置还没读回来之前，`current` 用它兜底 */
+let snapshotSelected: string | null = initialSnapshot.selected;
+
+function writeSnapshot(list: Account[], selected?: string | null) {
+  if (selected !== undefined) snapshotSelected = selected;
+  try {
+    localStorage.setItem(
+      SNAPSHOT_KEY,
+      JSON.stringify({ selected: snapshotSelected, accounts: list.map(slimAccount) }),
+    );
+  } catch {
+    /* 配额满时退化为纯内存，不影响功能 */
+  }
+}
+
 export const useAccountsStore = defineStore("accounts", {
   state: () => ({
-    accounts: [] as Account[],
+    // 先用上次的快照渲染首帧，避免头像/账号名闪一下空态
+    accounts: initialSnapshot.accounts,
     msFlow: null as { userCode: string; verificationUri: string; expiresIn: number } | null,
     msPolling: false,
     msError: "",
@@ -39,7 +112,8 @@ export const useAccountsStore = defineStore("accounts", {
     /** The currently playing account: settings.selected_account, else first */
     current: (s): Account | null => {
       const settings = useSettingsStore();
-      const sel = settings.settings?.selected_account;
+      // 设置还没读回来时用快照里的选中项，免得首帧先显示成「第一个账号」
+      const sel = settings.settings?.selected_account ?? snapshotSelected;
       if (sel) {
         const found = s.accounts.find((a) => a.uuid === sel);
         if (found) return found;
@@ -53,6 +127,7 @@ export const useAccountsStore = defineStore("accounts", {
       try {
         this.accounts = await api.listAccounts();
         this.lastLoadedAt = Date.now();
+        writeSnapshot(this.accounts);
       } catch {
         /* 后台刷新失败保留旧数据 */
       }
@@ -72,11 +147,14 @@ export const useAccountsStore = defineStore("accounts", {
       }
       this.accounts = await api.listAccounts();
       this.lastLoadedAt = Date.now();
+      writeSnapshot(this.accounts);
     },
     /** Select the current playing account (persisted globally). */
     async select(uuid: string) {
       const settings = useSettingsStore();
       await settings.patch({ selected_account: uuid });
+      // 快照同步选中项：下次启动首帧就能直接渲染这个账号，不会先显示成列表第一个
+      writeSnapshot(this.accounts, uuid);
     },
     async addOffline(username: string, uuid?: string) {
       const acc = await api.loginOffline(username, uuid);
@@ -146,6 +224,8 @@ export const useAccountsStore = defineStore("accounts", {
       const settings = useSettingsStore();
       if (settings.settings?.selected_account === uuid) {
         await settings.patch({ selected_account: null });
+        // 快照里的选中项也一并清掉，否则下次启动会拿一个已删除的 uuid 去兜底
+        writeSnapshot(this.accounts, null);
       }
       await this.load();
     },

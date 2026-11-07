@@ -270,8 +270,8 @@ watch(
   align-self: flex-start;
 }
 .acct-type.microsoft {
-  background: var(--info-15);
-  color: var(--text-2);
+  background: var(--info-22);
+  color: var(--info);
 }
 .acct-type.yggdrasil {
   background: var(--success-12);

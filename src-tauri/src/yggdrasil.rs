@@ -90,13 +90,19 @@ pub async fn yggdrasil_textures(
     state: tauri::State<'_, AppState>,
     server: String,
     profile_id: String,
+    // 跳过 CDN 缓存（站点前面挂着 EdgeOne 之类的缓存，换肤后立刻重拉可能拿到旧图）
+    cache_bust: Option<bool>,
 ) -> Result<Option<Value>, String> {
     let root = normalize_root(&server);
     let pid = profile_id.trim().to_string();
     if root.is_empty() || pid.is_empty() {
         return Ok(None);
     }
-    let url = format!("{root}/sessionserver/session/minecraft/profile/{pid}");
+    let mut url = format!("{root}/sessionserver/session/minecraft/profile/{pid}");
+    if cache_bust.unwrap_or(false) {
+        // 时间戳放在 query 上：既绕开按 URL 缓存的 CDN，站点自身也会忽略这个参数
+        url.push_str(&format!("?t={}", now_secs()));
+    }
     let resp = state
         .client
         .get(&url)
@@ -105,6 +111,12 @@ pub async fn yggdrasil_textures(
         .map_err(|e| format!("访问皮肤站 sessionserver 失败: {e}"))?;
     if resp.status() == reqwest::StatusCode::NOT_FOUND {
         return Ok(None); // 该角色没有纹理数据
+    }
+    // authlib-injector 约定：profile 不存在时返回 204 且响应体为空。
+    // 不单独处理的话下面的 `resp.json()` 会因空 body 报错，让「没皮肤」和
+    // 「站不可达」混成同一条错误，前端只能一律显示默认头像。
+    if resp.status() == reqwest::StatusCode::NO_CONTENT {
+        return Ok(None);
     }
     if !resp.status().is_success() {
         return Err(format!("拉取纹理失败（HTTP {}）", resp.status().as_u16()));

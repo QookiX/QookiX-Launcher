@@ -441,6 +441,7 @@ pub fn run() {
             shimu::shimu_status,
             shimu::shimu_user_info,
             shimu::shimu_logout,
+            shimu::shimu_upload_skin,
             shimu::shimu_list_posts,
             shimu::shimu_categories,
             shimu::shimu_post_detail,

@@ -219,6 +219,29 @@ pub struct PlayerSkinResult {
     pub cape_data_url: Option<String>,
 }
 
+/// 按文件头判定图片 MIME（`image/png` 之外的兜底）。
+///
+/// 以前这里的返回一律写成 `data:image/png;base64,...`：头像兜底源（minotar / crafatar）
+/// 有时直接回 JPEG，MIME 与内容不符时部分 WebView 会解码失败，表现就是「头像空白」。
+fn image_mime(bytes: &[u8], hinted: &str) -> String {
+    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return "image/png".into();
+    }
+    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return "image/jpeg".into();
+    }
+    if bytes.starts_with(b"GIF8") {
+        return "image/gif".into();
+    }
+    if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        return "image/webp".into();
+    }
+    if hinted.starts_with("image/") {
+        return hinted.to_string();
+    }
+    "image/png".into()
+}
+
 #[tauri::command]
 pub async fn fetch_image_data_url(state: State<'_, AppState>, url: String) -> Result<String, String> {
     let resp = state
@@ -230,13 +253,20 @@ pub async fn fetch_image_data_url(state: State<'_, AppState>, url: String) -> Re
     if !resp.status().is_success() {
         return Err(format!("HTTP {}", resp.status()));
     }
+    let hinted = resp
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
+        .unwrap_or_default();
     let bytes = resp
         .bytes()
         .await
         .map_err(|e| format!("读取失败: {e}"))?;
     use base64::{engine::general_purpose::STANDARD, Engine};
+    let mime = image_mime(&bytes, &hinted);
     let b64 = STANDARD.encode(&bytes);
-    Ok(format!("data:image/png;base64,{}", b64))
+    Ok(format!("data:{mime};base64,{b64}"))
 }
 
 #[tauri::command]

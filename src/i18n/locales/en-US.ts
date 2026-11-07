@@ -63,6 +63,11 @@ export default {
     ok: "OK",
     on: "On",
     off: "Off",
+    prev: "Previous",
+    next: "Next",
+    zoomIn: "Zoom in",
+    zoomOut: "Zoom out",
+    resetZoom: "Reset zoom",
   },
   nav: {
     home: "Home",

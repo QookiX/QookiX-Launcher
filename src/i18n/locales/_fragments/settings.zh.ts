@@ -5,6 +5,7 @@ export default {
     java: "Java",
     download: "下载",
     content: "内容服务",
+    accounts: "第三方账号",
     storage: "存储",
     about: "关于",
     dev: "开发者",
@@ -149,6 +150,22 @@ export default {
     direct: "直连",
     custom: "自定义",
   },
+  // 第三方账号：只放「授权一次、特定功能可用」的外部平台账号，不是启动账号
+  accounts: {
+    thirdParty: "第三方账号",
+    refresh: "刷新状态",
+    refreshing: "刷新中…",
+    refreshDone: "账号状态已刷新",
+    statusOn: "已授权",
+    statusOff: "未授权",
+    statusExpired: "已过期",
+    expiredHint: "授权已过期（令牌无法自动续期），需要重新授权。",
+    guestHint: "未登录也能浏览投影帖。",
+    logoutTitle: "退出拾木空间",
+    logoutContent: "退出后无法下载附件或购买付费内容，浏览帖子和正文不受影响。确定继续吗？",
+    logoutDone: "已退出拾木空间账号",
+  },
+
   storage: {
     cloudSave: "云存档",
     cloudHint: "存放在你的 GitHub 私有仓库，可跨设备恢复",

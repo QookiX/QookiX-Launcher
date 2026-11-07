@@ -20,6 +20,7 @@
 //! secret 泄露的最坏后果是他人可代换 token，故优先用环境变量注入。
 
 use crate::state::AppState;
+use base64::Engine as _;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -475,6 +476,69 @@ pub fn shimu_logout(app_state: tauri::State<'_, AppState>) -> Result<(), String>
 }
 
 // ---------------------------------------------------------------------------
+// 命令：皮肤 / 披风上传（站点接口 `/api/user/skin`）
+// ---------------------------------------------------------------------------
+
+/// 解析前端传来的 PNG：`data:image/png;base64,...` 或裸 base64，并校验文件头。
+fn decode_png(input: &str) -> Result<Vec<u8>, String> {
+    let raw = input.trim();
+    let b64 = match raw.strip_prefix("data:") {
+        Some(rest) => rest.split_once(',').map(|(_, d)| d).unwrap_or(""),
+        None => raw,
+    };
+    if b64.is_empty() {
+        return Err("皮肤数据为空".into());
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(b64.trim())
+        .map_err(|e| format!("皮肤数据解码失败: {e}"))?;
+    if !bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
+        return Err("皮肤必须是 PNG 文件".into());
+    }
+    Ok(bytes)
+}
+
+/// 上传一张 PNG 皮肤到拾木空间，替换当前登录用户正在穿戴的皮肤。
+///
+/// 站点接口：`POST /shimu/api/user/skin`，`multipart/form-data`，文件字段名
+/// `skinfile`，鉴权用 OAuth 的 Bearer token（与其它开放 API 同一个 token）。
+/// 站点**不接收** model 参数：经典/纤细由服务端按贴图自行判定，所以这里只传文件。
+///
+/// `skin` 接受 `data:image/png;base64,...` 或裸 base64（皮肤页的预览统一是 data URL）。
+#[tauri::command]
+pub async fn shimu_upload_skin(
+    app_state: tauri::State<'_, AppState>,
+    skin: String,
+) -> Result<Value, String> {
+    let bytes = decode_png(&skin)?;
+    let token = current_token(&app_state)?;
+    let url = api_url("/api/user/skin", &[])?;
+    let part = reqwest::multipart::Part::bytes(bytes)
+        .file_name("skin.png")
+        .mime_str("image/png")
+        .map_err(|e| e.to_string())?;
+    // Content-Type（含 boundary）由 reqwest 自己生成，不能手动设置
+    let form = reqwest::multipart::Form::new().part("skinfile", part);
+    let resp = app_state
+        .client
+        .post(url)
+        .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+        .multipart(form)
+        .send()
+        .await
+        .map_err(|e| format!("上传皮肤失败: {e}"))?;
+    let v = read_json(&app_state, resp).await?;
+    // 站点把新皮肤地址放在 `data.skin`（顶层 `skin` 也兼容一下）
+    let path = v
+        .pointer("/data/skin")
+        .or_else(|| v.get("skin"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    Ok(json!({ "skin": path }))
+}
+
+// ---------------------------------------------------------------------------
 // 命令：开放 API
 // ---------------------------------------------------------------------------
 
@@ -498,6 +562,8 @@ pub struct ShimuPostQuery {
     pub is_top: Option<String>,
     /// hot | new | featured
     pub sort: Option<String>,
+    /// 1 = 只返回带投影文件的帖子；0 = 只返回不带投影文件的；不传 = 不限制
+    pub has_projection: Option<i32>,
     pub page_num: Option<u32>,
     pub page_size: Option<u32>,
 }
@@ -527,6 +593,7 @@ impl ShimuPostQuery {
         num("versionId", self.version_id);
         num("tagId", self.tag_id);
         num("userId", self.user_id);
+        num("hasProjection", self.has_projection.map(i64::from));
         for (k, v) in [
             ("title", &self.title),
             ("keyword", &self.keyword),

@@ -11,7 +11,7 @@
  * 「投影相关」= 这几个板块一起查（后端分板块取一页再合并），
  * 也可以点具体板块只看一个。
  */
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from "vue";
+import { computed, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { NButton, NInput, NSelect, NModal, useMessage } from "naive-ui";
 import DOMPurify from "dompurify";
@@ -19,10 +19,39 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { useI18n } from "vue-i18n";
 import SimplePagination from "../components/SimplePagination.vue";
 import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
+import ShimuPostCard from "../components/ShimuPostCard.vue";
+import ImageViewer from "../components/ImageViewer.vue";
 import { api } from "../api";
 import { shimuAbsoluteUrl, shimuErrorMessage, useShimuStore } from "../stores/shimu";
 import { useInstancesStore } from "../stores/instances";
 import type { ShimuCategory, ShimuPost, ShimuPostQuery } from "../types";
+
+/**
+ * `embedded` = 被「发现」页当作一个分类内嵌：此时搜索 / 排序 / 每页数量 / 视图 /
+ * 目标实例全部由发现页的工具栏控制，本组件只负责列表、详情与安装。
+ */
+const props = withDefaults(
+  defineProps<{
+    embedded?: boolean;
+    view?: "grid" | "list" | "compact";
+    /** 发现页选的投影来源（`all` = 所有已接入来源合并） */
+    source?: "all" | "shimu";
+    keyword?: string;
+    sort?: "new" | "hot" | "featured";
+    pageSize?: number;
+    /** 安装目标实例（发现页工具栏里选的那个） */
+    targetInstanceId?: string | null;
+  }>(),
+  {
+    embedded: false,
+    view: "grid",
+    source: "all",
+    keyword: "",
+    sort: "hot",
+    pageSize: 12,
+    targetInstanceId: null,
+  }
+);
 
 const { t } = useI18n();
 const message = useMessage();
@@ -33,21 +62,46 @@ const instancesStore = useInstancesStore();
 const PAGE_SIZE = 12;
 
 const loginRef = ref<InstanceType<typeof ShimuLoginDialog> | null>(null);
+/** 登录态读完了吗：读完之前不显示未登录提示，避免闪 */
+const statusReady = ref(false);
 
-const keyword = ref("");
-const sort = ref<"new" | "hot" | "featured">("hot");
+const keyword = ref(props.keyword);
+const sort = ref<"new" | "hot" | "featured">(props.sort);
+const pageSize = ref(props.pageSize);
 const page = ref(1);
 const rows = ref<ShimuPost[]>([]);
 const total = ref(0);
 const loading = ref(false);
 
+// 发现页工具栏变化 → 同步到本组件并重新查询
+watch(
+  () => [props.keyword, props.sort, props.pageSize] as const,
+  ([kw, st, ps]) => {
+    if (!props.embedded) return;
+    let dirty = false;
+    if (keyword.value !== kw) { keyword.value = kw; dirty = true; }
+    if (sort.value !== st) { sort.value = st; dirty = true; }
+    if (pageSize.value !== (ps || PAGE_SIZE)) { pageSize.value = ps || PAGE_SIZE; dirty = true; }
+    if (dirty) requery();
+  }
+);
+
+// 发现页切换「来源」→ 回到第一页重查
+watch(
+  () => props.source,
+  () => {
+    if (props.embedded) requery();
+  }
+);
+
 /**
- * 板块筛选。`related` = 投影相关（多个板块合并），`all` = 不限板块，
- * 其余为分类 ID 字符串。
+ * 板块范围：站点自己的「投影」板块只有几十帖，投影作品实际大量发在「建筑」
+ * 「红石」「生电」板块（这个站本身就是建筑投影社区）。所以查询固定聚合这几个
+ * 板块，界面上不再摆板块筛选 —— 只留一个「投影」入口，不出现「投影相关 / 投影」
+ * 两个语义重叠的按钮。
  */
-const board = ref<string>("related");
 const categories = ref<ShimuCategory[]>([]);
-/** 「投影相关」包含的板块名（站点分类名，匹配时忽略空格） */
+/** 一起纳入「投影」范围的板块名（站点分类名，匹配时忽略空格） */
 const RELATED_BOARD_NAMES = ["投影", "红石", "生电", "建筑"];
 /** 分类接口拿不到时的兜底 ID（拾木空间固定值） */
 const RELATED_BOARD_IDS = [1, 3, 4, 5];
@@ -59,20 +113,24 @@ const relatedIds = computed(() => {
   return ids.length ? ids : RELATED_BOARD_IDS;
 });
 
-const boardChips = computed(() => {
-  const chips = [
-    { key: "related", label: t("shimu.boardRelated") },
-    { key: "all", label: t("shimu.boardAll") },
-  ];
-  for (const c of categories.value) {
-    chips.push({ key: String(c.categoryId), label: c.name });
-  }
-  return chips;
-});
-
 const detail = ref<ShimuPost | null>(null);
 const detailLoading = ref(false);
 const downloading = ref("");
+
+/** 内嵌模式下卡片按发现页工具栏选的三视图渲染；独立页面保持网格 */
+const cardView = computed(() => (props.embedded ? props.view : "grid"));
+
+const emit = defineEmits<{ "detail-open": [boolean] }>();
+// 内嵌时进详情要把发现页工具栏收起来，否则上下两套控件打架
+watch(detail, (d) => {
+  if (props.embedded) emit("detail-open", !!d);
+});
+
+/** 卡片逐个进场（与发现页内容卡片同一节奏） */
+function cardDelay(i: number): string {
+  const step = Math.min(0.045, 0.6 / Math.max(1, rows.value.length));
+  return `${(0.06 + i * step).toFixed(3)}s`;
+}
 
 /** 投影下载完成后弹出的实例选择器：把投影复制到所选实例的 schematics 目录 */
 const instancePicker = ref<{ sourcePath: string; filename: string } | null>(null);
@@ -86,32 +144,17 @@ const instancePickerVisible = computed({
   set: (v) => { if (!v) instancePicker.value = null; },
 });
 
-/** 图片放大查看（图集与正文图片共用；多图时可左右切换） */
-const viewer = ref<{ list: string[]; index: number } | null>(null);
-const viewerSrc = computed(() => {
-  const v = viewer.value;
-  return v ? (v.list[v.index] ?? "") : "";
-});
+/** 图片放大查看（图集与正文图片共用；走标准查看器，缩放 / 拖拽 / 左右切换） */
+const lightboxOpen = ref(false);
+const lightboxIndex = ref(0);
+const lightboxImages = ref<string[]>([]);
 
 function openViewer(list: string[], index = 0) {
   const items = list.filter(Boolean);
   if (!items.length) return;
-  viewer.value = { list: items, index: Math.min(Math.max(index, 0), items.length - 1) };
-}
-function closeViewer() {
-  viewer.value = null;
-}
-function stepViewer(delta: number) {
-  const v = viewer.value;
-  if (!v || v.list.length < 2) return;
-  v.index = (v.index + delta + v.list.length) % v.list.length;
-}
-
-function onViewerKey(e: KeyboardEvent) {
-  if (!viewer.value) return;
-  if (e.key === "Escape") closeViewer();
-  else if (e.key === "ArrowLeft") stepViewer(-1);
-  else if (e.key === "ArrowRight") stepViewer(1);
+  lightboxImages.value = items;
+  lightboxIndex.value = Math.min(Math.max(index, 0), items.length - 1);
+  lightboxOpen.value = true;
 }
 
 /** 加载失败的图片地址：站点图挂了就退回占位块，别显示碎图 */
@@ -149,7 +192,7 @@ const sortOptions = computed(() => [
   { label: t("shimu.sortFeatured"), value: "featured" },
 ]);
 
-const pageCount = computed(() => Math.max(1, Math.ceil(total.value / PAGE_SIZE)));
+const pageCount = computed(() => Math.max(1, Math.ceil(total.value / (pageSize.value || PAGE_SIZE))));
 
 /**
  * 站点的「评论后查看」隐藏块标记（裸文本，形如 `[hidecontent type="reply" …]`）。
@@ -213,14 +256,53 @@ const paidContent = computed(() => detail.value?.isPaid === "1" && detail.value?
 // 付费内容帖未购买时服务端直接返回空正文（且 purchased 字段在匿名访问下也会是 true），
 // 所以以「正文为空」作为锁定信号更可靠。
 const contentLocked = computed(() => paidContent.value && !(detail.value?.content ?? "").trim());
+/** 付费帖未购买时，服务端连附件地址都不下发（附件列表为空）—— 别误报成「需要评论」 */
+const paidFileLocked = computed(
+  () => detail.value?.isPaid === "1" && !attachments.value.length
+);
 /** 回复可见帖未评论时，服务端只下发 [hidecontent] 裸标记 + .hide-before 提示，不含真正内容。
  *  靠检测原始 content 里的隐藏标记判断，不能靠 bodyHtml 是否为空（帖子可能有公开引言 + 隐藏块）。 */
 const needComment = computed(() => {
   if (detailLoading.value || contentLocked.value) return false;
-  const c = detail.value?.content ?? "";
-  const hasHide = /\[hidecontent/i.test(c) || c.includes("tinymce-hide") || c.includes("hide-before");
-  return hasHide && detail.value?.commented !== true;
+  return replyLocked(detail.value);
 });
+
+/**
+ * 附件拿不到的真正原因：付费内容 / 评论后可见 / 确实没传投影。
+ * 详情页与「卡片直接安装」共用同一套判断，避免给出「没有投影文件」这种误导性提示。
+ */
+function replyLocked(p: ShimuPost | null | undefined): boolean {
+  const c = p?.content ?? "";
+  const hasHide = /\[hidecontent/i.test(c) || c.includes("tinymce-hide") || c.includes("hide-before");
+  return hasHide && p?.commented !== true;
+}
+
+function attachLockReason(p: ShimuPost): "paid" | "reply" | null {
+  const isPaidContent = p.isPaid === "1" && p.payTarget === "0";
+  if (isPaidContent && !(p.content ?? "").trim()) return "paid";
+  if (replyLocked(p)) return "reply";
+  return null;
+}
+
+/**
+ * 正文里是否存在投影附件卡。
+ *
+ * 付费帖未购买时，服务端只下发 `data-name`（甚至 data-url 为空串），
+ * `extractAttachments` 会因为拿不到下载地址把整张卡跳过 —— 于是「明明有投影文件」
+ * 却被报成没有附件。判断提示文案时得以这张卡为准。
+ */
+const SCHEMATIC_CARD_RE = /data-name\s*=\s*"[^"]*\.(?:litematic|schem|schematic|mcstructure)\b/i;
+
+function hasSchematicCard(p: ShimuPost): boolean {
+  return SCHEMATIC_CARD_RE.test(p.content ?? "");
+}
+
+/** 付费金额：`1 积分` / `¥3`（没有金额时给空串） */
+function priceLabel(p: ShimuPost): string {
+  const amount = p.payAmount ?? 0;
+  if (amount <= 0) return "";
+  return p.payType === "1" ? t("shimu.points", { n: amount }) : `¥${amount}`;
+}
 
 /** 标签：接口的 tagNames 常为 null，退一步显示分类名 */
 function tagsOf(p?: ShimuPost | null): string {
@@ -239,12 +321,6 @@ const accountMeta = computed(() => {
   return parts.join(" · ");
 });
 
-/** 封面：优先 `cover`，否则取 `images` 的第一张 */
-function coverOf(p: ShimuPost): string {
-  const raw = p.cover?.trim() || p.images?.split(",")[0]?.trim() || "";
-  return raw ? shimuAbsoluteUrl(raw, store.config?.host) : "";
-}
-
 /** 详情页的图集（images 逗号分隔） */
 const gallery = computed(() => {
   const raw = detail.value?.images ?? "";
@@ -259,21 +335,14 @@ const gallery = computed(() => {
 });
 
 onMounted(() => {
-  void store.init();
+  // 登录态读到之前不显示「未登录」提示，避免刚进页面闪一下
+  void store.init().finally(() => { statusReady.value = true; });
   void loadCategories();
   void search();
-  window.addEventListener("keydown", onViewerKey);
+  // 内嵌时工具栏已经选了实例，这里补一次实例列表好显示实例名
+  if (props.embedded) void instancesStore.load();
 });
 
-onUnmounted(() => {
-  window.removeEventListener("keydown", onViewerKey);
-});
-
-// 打开图片时锁定页面滚动（遮罩内部也不需要滚动）
-watch(viewer, (v) => {
-  const el = document.getElementById("app-content");
-  if (el) el.style.overflow = v ? "hidden" : "";
-});
 
 // 登录 / 退出后刷新：purchased、liked 与正文解锁状态都会变
 watch(
@@ -287,7 +356,10 @@ watch(
 watch(page, () => void search());
 
 // 排序改成立刻生效（不用再点「刷新」）
-watch(sort, () => requery());
+// 独立页面里排序下拉改成立刻生效；内嵌时排序由发现页工具栏驱动（见上面的 props watch）
+watch(sort, () => {
+  if (!props.embedded) requery();
+});
 
 function handleError(e: unknown) {
   message.error(shimuErrorMessage(e));
@@ -297,14 +369,18 @@ function handleError(e: unknown) {
 async function search() {
   loading.value = true;
   try {
+    // 来源：目前接进来的只有拾木空间，`all`（全部来源）与 `shimu` 取数完全相同；
+    // 以后接入第二个投影站时，这里按 props.source 分流（或并行请求后合并分页）。
     const query: ShimuPostQuery = {
       keyword: keyword.value.trim() || undefined,
       sort: sort.value,
+      // 只取带投影文件的帖子（站点侧过滤，每页能凑满，不用客户端再筛）
+      hasProjection: 1,
       pageNum: page.value,
-      pageSize: PAGE_SIZE,
+      pageSize: pageSize.value || PAGE_SIZE,
     };
-    if (board.value === "related") query.categoryIds = relatedIds.value;
-    else if (board.value !== "all") query.categoryId = Number(board.value);
+    // 固定按「投影」范围查询：投影 + 建筑 + 红石 + 生电 合并取一页
+    query.categoryIds = relatedIds.value;
     const res = await api.shimuListPosts(query);
     rows.value = res.rows ?? [];
     total.value = res.total ?? 0;
@@ -317,7 +393,7 @@ async function search() {
   }
 }
 
-/** 拉取站点板块列表（失败时降级为「投影相关」兜底 ID + 全部） */
+/** 拉取站点板块列表（失败时 relatedIds 走兜底 ID） */
 async function loadCategories() {
   try {
     const list = await api.shimuCategories();
@@ -335,13 +411,6 @@ function submitSearch() {
 function requery() {
   if (page.value !== 1) page.value = 1;
   else void search();
-}
-
-/** 切换板块：回到第一页重新查询 */
-function selectBoard(key: string) {
-  if (board.value === key) return;
-  board.value = key;
-  requery();
 }
 
 function openPost(post: ShimuPost) {
@@ -526,6 +595,115 @@ async function confirmAddToInstance() {
   }
 }
 
+/* —— 卡片上的「安装」：一步装进工具栏里选中的实例 —— */
+const installingPost = ref<number | null>(null);
+/** 本次会话里已装进当前目标实例的帖子（换实例后清空） */
+const installedPosts = reactive(new Set<number>());
+
+const targetInstance = computed(() =>
+  props.targetInstanceId
+    ? instancesStore.instances.find((i) => i.id === props.targetInstanceId) ?? null
+    : null
+);
+const targetInstanceName = computed(() => targetInstance.value?.name ?? "");
+
+watch(
+  () => props.targetInstanceId,
+  () => installedPosts.clear()
+);
+
+/**
+ * 拉详情并取出该帖的投影附件。
+ *
+ * 列表接口不带附件，必须再取一次详情；拿不到下载地址时按真实原因给提示
+ * （付费未购买 / 需回复 / 只有附件卡没链接 / 根本没投影）。
+ */
+async function resolveSchematic(p: ShimuPost): Promise<Attachment | null> {
+  const raw = await api.shimuPostDetail(p.postId);
+  const data = ((raw.data ?? raw) as ShimuPost) ?? p;
+  const atts = extractAttachments(
+    data.content ?? "",
+    store.config?.host ?? "https://www.mcimg.com"
+  );
+  const file = atts.find((a) => a.kind === "schematic");
+  if (file) return file;
+  // 附件卡在正文里、但没拿到下载地址：多半是付费帖（未购买时服务端不下发 data-url），
+  // 这时不能说"没有投影文件"，要按真实原因给提示。
+  const card = hasSchematicCard(data);
+  const reason = attachLockReason(data);
+  const price = priceLabel(data);
+  if (reason === "paid") {
+    message.warning(t("shimu.installNeedPurchase"));
+  } else if (reason === "reply") {
+    message.warning(t("shimu.installNeedComment"));
+  } else if (data.isPaid === "1") {
+    // 付费帖（内容或附件）拿不到附件地址：未购买时服务端本来就不下发 data-url
+    message.warning(t("shimu.installNeedPurchaseFile", { price: price || t("shimu.paidFileShort") }));
+  } else if (card) {
+    message.warning(t("shimu.installLinkMissing"));
+  } else {
+    message.warning(t("shimu.noSchematic"));
+  }
+  return null;
+}
+
+/**
+ * 卡片直达安装：拉详情 → 取第一个投影附件 → 下载 → 复制到目标实例的 schematics。
+ * 没登录先拉登录框；没选实例就提示（选择器在发现页工具栏上）。
+ */
+async function installToInstance(p: ShimuPost) {
+  if (!store.loggedIn) {
+    message.warning(t("shimu.needLoginToDownload"));
+    loginRef.value?.open();
+    return;
+  }
+  const instId = props.targetInstanceId;
+  // 只有内嵌模式（发现页工具栏）才有实例选择；独立页面走「下载完再选实例」
+  if (props.embedded && !instId) {
+    message.warning(t("shimu.pickInstanceFirst"));
+    return;
+  }
+  installingPost.value = p.postId;
+  try {
+    const file = await resolveSchematic(p);
+    if (!file) return;
+    if (!instId) {
+      await download(file);
+      return;
+    }
+    const res = await api.shimuDownloadFile(file.url, file.name, file.fileId);
+    await api.copyFileToInstanceSchematics(res.path, instId, res.name);
+    installedPosts.add(p.postId);
+    message.success(t("shimu.installedToInstance", { name: targetInstanceName.value || instId }));
+  } catch (e) {
+    handleError(e);
+  } finally {
+    installingPost.value = null;
+  }
+}
+
+/* —— 卡片上的「预览」：下载投影后直接打开投影工坊，不用先选实例 —— */
+const previewingPost = ref<number | null>(null);
+
+async function previewFromCard(p: ShimuPost) {
+  if (!store.loggedIn) {
+    message.warning(t("shimu.needLoginToDownload"));
+    loginRef.value?.open();
+    return;
+  }
+  previewingPost.value = p.postId;
+  try {
+    const file = await resolveSchematic(p);
+    if (!file) return;
+    // download() 带 preview=true：下完直接跳到 /toolbox/schematic?open=<path>
+    await download(file, true);
+  } catch (e) {
+    handleError(e);
+  } finally {
+    previewingPost.value = null;
+  }
+}
+
 /**
  * 正文里的链接点击交给我们处理：
  * - 附件（站内下载链接 / 投影、图片、压缩包）→ 走启动器下载（才能带上 token）；
@@ -627,8 +805,8 @@ function paidDetailLabel(p: ShimuPost): string {
 
 <template>
   <div class="shimu-view" data-tauri-drag-region>
-    <!-- 参数栏 + 账号区 + 板块筛选（同一张卡，板块行只在列表态显示） -->
-    <div class="glass param-bar">
+    <!-- 参数栏 + 账号区（内嵌到发现页时由发现页工具栏接管，这里整块不渲染） -->
+    <div v-if="!embedded" class="glass param-bar">
       <div class="param-row">
         <n-input
           v-model:value="keyword"
@@ -665,20 +843,6 @@ function paidDetailLabel(p: ShimuPost): string {
           <span class="guest-badge">{{ t("shimu.guestBadge") }}</span>
           <button class="mini-btn primary" @click="loginRef?.open()">{{ t("shimu.login") }}</button>
         </template>
-      </div>
-
-      <!-- 板块筛选：发帖人把投影帖发在哪个板块不固定，默认合并「投影相关」 -->
-      <div v-if="!detail" class="board-row">
-        <button
-          v-for="c in boardChips"
-          :key="c.key"
-          class="board-chip"
-          :class="{ active: board === c.key }"
-          :disabled="loading"
-          @click="selectBoard(c.key)"
-        >
-          {{ c.label }}
-        </button>
       </div>
     </div>
 
@@ -744,6 +908,10 @@ function paidDetailLabel(p: ShimuPost): string {
             {{ t("shimu.attachmentsLockedPay") }}
             <button class="locked-link" @click="openOnSite">{{ t("shimu.openPost") }} →</button>
           </p>
+          <p v-else-if="paidFileLocked" class="locked">
+            {{ t("shimu.attachmentsLockedPaidFile", { price: priceLabel(detail!) || t("shimu.paidFileShort") }) }}
+            <button class="locked-link" @click="openOnSite">{{ t("shimu.openPost") }} →</button>
+          </p>
           <p v-else class="locked">
             {{ t("shimu.attachmentsLockedReply") }}
             <button class="locked-link" @click="openOnSite">{{ t("shimu.openPost") }} →</button>
@@ -754,37 +922,46 @@ function paidDetailLabel(p: ShimuPost): string {
 
     <!-- 列表（滚动交给 App 的 .content，页面自己不造滚动容器） -->
     <template v-else>
-      <div v-if="loading && !rows.length" class="glass empty">{{ t("common.loading") }}</div>
-      <div v-else-if="!rows.length" class="glass empty">{{ t("shimu.emptyList") }}</div>
-      <div v-else class="grid">
-        <button v-for="p in rows" :key="p.postId" class="card glass clickable" @click="openPost(p)">
-          <div class="cover">
-            <img
-              v-if="coverOf(p) && !brokenImgs.has(coverOf(p))"
-              :src="coverOf(p)"
-              alt=""
-              loading="lazy"
-              @error="markBroken(coverOf(p))"
-            />
-            <!-- 没有封面图就直接把标题写在占位块上（比只放首字更好认） -->
-            <div v-else class="cover-ph">
-              <span>{{ p.title?.trim() || t("shimu.untitled") }}</span>
-            </div>
-            <span v-if="paidLabel(p)" class="paid-badge">{{ paidLabel(p) }}</span>
-          </div>
-          <div class="card-body">
-            <h3 class="card-title">{{ p.title }}</h3>
-            <div class="card-meta">
-              <span v-if="p.authorName" class="ellipsis">{{ p.authorName }}</span>
-              <span v-if="p.createTime" class="nowrap">{{ p.createTime }}</span>
-            </div>
-            <div class="card-meta">
-              <span class="nowrap">👁 {{ p.viewCount ?? 0 }}</span>
-              <span class="nowrap">♥ {{ p.likeCount ?? 0 }}</span>
-              <span v-if="tagsOf(p)" class="ellipsis">{{ tagsOf(p) }}</span>
-            </div>
-          </div>
+      <!-- 第三方账号未授权：浏览不受影响，但下载 / 购买要授权，这里给一条直达登录的提示 -->
+      <div v-if="embedded && statusReady && !store.loggedIn" class="login-notice">
+        <span class="ln-text">
+          {{ store.status.expired ? t("shimu.loginNoticeExpired") : t("shimu.loginNotice") }}
+        </span>
+        <button class="locked-link" @click="loginRef?.open()">
+          {{ store.status.expired ? t("shimu.reauth") : t("shimu.login") }} →
         </button>
+      </div>
+
+      <!-- 加载态用骨架卡，和发现页其它分类同一套 shimmer（形状跟着投影卡片走） -->
+      <div v-if="loading && !rows.length" class="grid" :class="`view-${cardView}`">
+        <div v-for="i in 8" :key="i" class="skel-card glass" :class="`view-${cardView}`">
+          <div class="skel-cover"></div>
+          <div class="skel-body">
+            <div class="skel-line w-80"></div>
+            <div class="skel-line w-45"></div>
+          </div>
+          <div class="skel-foot">
+            <div class="skel-line w-30"></div>
+            <div class="skel-btn"></div>
+          </div>
+        </div>
+      </div>
+      <div v-else-if="!rows.length" class="glass empty">{{ t("shimu.emptyList") }}</div>
+      <div v-else class="grid" :class="`view-${cardView}`">
+        <ShimuPostCard
+          v-for="(p, i) in rows"
+          :key="p.postId"
+          :post="p"
+          :view="cardView"
+          :installing="installingPost === p.postId"
+          :previewing="previewingPost === p.postId"
+          :installed="installedPosts.has(p.postId)"
+          :instance-name="targetInstanceName"
+          :style="{ animationDelay: cardDelay(i) }"
+          @open="openPost"
+          @install="installToInstance"
+          @preview="previewFromCard"
+        />
       </div>
 
       <div v-if="rows.length" class="pager">
@@ -822,24 +999,12 @@ function paidDetailLabel(p: ShimuPost): string {
       </div>
     </NModal>
 
-    <!-- 图片放大查看（teleport 到 body，避免被内容区的 overflow 裁剪） -->
-    <Teleport to="body">
-      <div v-if="viewer" class="img-viewer" @click.self="closeViewer">
-        <img class="img-viewer-img" :src="viewerSrc" alt="" @click.stop />
-        <div class="img-viewer-bar">
-          <span v-if="viewer.list.length > 1" class="iv-count">
-            {{ viewer.index + 1 }} / {{ viewer.list.length }}
-          </span>
-          <button v-if="viewer.list.length > 1" class="iv-btn" @click="stepViewer(-1)">
-            {{ t("shimu.viewerPrev") }}
-          </button>
-          <button v-if="viewer.list.length > 1" class="iv-btn" @click="stepViewer(1)">
-            {{ t("shimu.viewerNext") }}
-          </button>
-          <button class="iv-btn" @click="closeViewer">{{ t("shimu.viewerClose") }}</button>
-        </div>
-      </div>
-    </Teleport>
+    <!-- 图片放大查看：标准查看器（缩放 / 拖拽 / 左右切换） -->
+    <ImageViewer
+      v-model:open="lightboxOpen"
+      v-model:index="lightboxIndex"
+      :images="lightboxImages"
+    />
   </div>
 </template>
 
@@ -862,35 +1027,6 @@ function paidDetailLabel(p: ShimuPost): string {
 .flex-1 { flex: 1; }
 .count { font-size: 11px; color: var(--text-3); white-space: nowrap; }
 .muted { margin: 0; font-size: 12px; color: var(--text-3); }
-
-/* —— 板块筛选（与参数栏同一张卡，用细分隔线分开） —— */
-.board-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-.board-chip {
-  padding: 4px 10px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-3);
-  font-family: inherit;
-  font-size: 12px;
-  line-height: 1.6;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.board-chip:hover { background: var(--panel-hover); color: var(--text-1); }
-.board-chip.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: var(--accent-soft);
-}
-.board-chip:disabled { opacity: 0.5; cursor: default; }
 
 /* —— 账号区 —— */
 .account-avatar { width: 26px; height: 26px; border-radius: 8px; object-fit: cover; flex: none; }
@@ -939,9 +1075,28 @@ function paidDetailLabel(p: ShimuPost): string {
 /* —— 列表 —— */
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  /* 投影卡片以封面为主，列宽比内容分类的 220px 略宽，图才看得清 */
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: var(--gap-grid, 16px);
   align-content: start;
+}
+.grid.view-list,
+.grid.view-compact {
+  grid-template-columns: 1fr;
+}
+.grid.view-compact {
+  gap: 8px;
+}
+/* 卡片逐个进场（与发现页内容卡片同一节奏） */
+.grid :deep(.p-card) {
+  animation: shimu-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+@keyframes shimu-card-enter {
+  from { transform: translateY(28px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .grid :deep(.p-card) { animation: none; }
 }
 .empty {
   min-height: 260px;
@@ -951,74 +1106,71 @@ function paidDetailLabel(p: ShimuPost): string {
   font-size: 13px;
   color: var(--text-3);
 }
-/* 卡片样式交给 .glass（--panel/--border），这里只加结构；
-   不要覆写 background/border，否则浅色主题下会没有底色 */
-.card {
+/* —— 骨架屏布局：颜色变量 / shimmer / 条块尺寸来自 styles.css 公共原子 —— */
+.skel-card {
+  padding: 0;
+  gap: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  padding: 0;
-  border: none;
-  border-radius: 12px;
-  text-align: left;
-  cursor: pointer;
-  font-family: inherit;
 }
-.cover {
-  position: relative;
-  aspect-ratio: 16 / 10;
-  background: var(--bg-2);
-  overflow: hidden;
-}
-.cover img { width: 100%; height: 100%; object-fit: cover; display: block; }
-/* 无封面时的占位块：直接显示标题（最多 3 行、超出省略，竖向居中） */
-.cover-ph {
+.skel-cover {
   width: 100%;
-  height: 100%;
-  box-sizing: border-box;
+  aspect-ratio: 16 / 10;
+}
+.skel-body {
+  padding: 10px 12px 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skel-foot {
+  padding: 10px 12px 12px;
   display: flex;
   align-items: center;
-  justify-content: center;
-  padding: 12px 14px;
-  background: linear-gradient(135deg, #6b5b95, #352f44);
+  justify-content: space-between;
+  gap: 12px;
 }
-.cover-ph span {
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
-  overflow: hidden;
-  font-size: 13px;
-  font-weight: 600;
-  line-height: 1.5;
-  text-align: center;
-  overflow-wrap: anywhere;
-  color: rgba(255, 255, 255, 0.94);
+.skel-card.view-list,
+.skel-card.view-compact {
+  flex-direction: row;
+  align-items: center;
+  padding: 14px;
+  gap: 14px;
 }
-.paid-badge {
-  position: absolute;
-  top: 8px;
-  right: 8px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  font-size: 10px;
-  color: var(--accent);
-  background: color-mix(in srgb, var(--feat-solid) 78%, transparent);
-  border: 1px solid var(--accent-35);
-  backdrop-filter: blur(6px);
+.skel-card.view-list .skel-cover,
+.skel-card.view-compact .skel-cover {
+  width: 46px;
+  height: 46px;
+  aspect-ratio: auto;
+  border-radius: 10px;
+  flex: none;
 }
-.card-body { padding: 9px 11px 11px; display: flex; flex-direction: column; gap: 5px; }
-.card-title {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
-  color: var(--text-1);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+.skel-card.view-compact {
+  padding: 5px 12px;
+  gap: 10px;
 }
-.card-meta { display: flex; gap: 8px; font-size: 11px; color: var(--text-3); min-width: 0; }
+.skel-card.view-compact .skel-cover {
+  width: 30px;
+  height: 30px;
+  border-radius: 7px;
+}
+.skel-card.view-list .skel-body,
+.skel-card.view-compact .skel-body {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+}
+.skel-card.view-list .skel-foot,
+.skel-card.view-compact .skel-foot {
+  padding: 0;
+  flex: none;
+  gap: 8px;
+}
+.skel-card.view-compact .skel-btn {
+  width: 64px;
+  height: 24px;
+}
 .ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .nowrap { white-space: nowrap; }
 .pager { display: flex; justify-content: center; flex: none; }
@@ -1139,6 +1291,25 @@ function paidDetailLabel(p: ShimuPost): string {
   cursor: pointer;
 }
 .locked-link:hover { color: var(--accent-hover); }
+
+/* 未登录第三方账号的提示条：贴列表顶部，右侧给登录入口 */
+.login-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-1);
+}
+.ln-text {
+  flex: 1;
+  min-width: 160px;
+}
 .files { display: flex; flex-direction: column; gap: 8px; }
 .files-head { font-size: 12px; color: var(--text-3); }
 .file {
@@ -1161,52 +1332,6 @@ function paidDetailLabel(p: ShimuPost): string {
 .file .mini-btn { padding: 4px 10px; font-size: 11px; }
 
 /* —— 图片放大查看 —— */
-.img-viewer {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0, 0, 0, 0.82);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-.img-viewer-img {
-  max-width: 92vw;
-  max-height: 84vh;
-  object-fit: contain;
-  border-radius: 8px;
-  box-shadow: 0 18px 50px var(--k-50);
-  cursor: default;
-}
-.img-viewer-bar {
-  position: absolute;
-  bottom: 22px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(0, 0, 0, 0.45);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
-}
-.iv-btn {
-  padding: 4px 10px;
-  border-radius: 7px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-  color: #f2f3f7;
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-}
-.iv-btn:hover { background: rgba(255, 255, 255, 0.14); }
-.iv-count { font-size: 12px; color: rgba(255, 255, 255, 0.75); font-variant-numeric: tabular-nums; }
 .file-name {
   flex: 1;
   min-width: 0;

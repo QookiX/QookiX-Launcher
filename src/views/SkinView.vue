@@ -8,8 +8,10 @@ import { fmtSize as formatSize } from "../utils/format";
 import { useSkinRenderer, type AnimationKind } from "../composables/useSkinRenderer";
 import { loadOfflineSkin } from "../composables/useOfflineSkin";
 import { useAccountsStore } from "../stores/accounts";
+import { shimuErrorMessage, useShimuStore } from "../stores/shimu";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import SkinThumb from "../components/SkinThumb.vue";
+import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
 import { BUILTIN_SKINS } from "../assets/builtin-skins";
 import {
   IconRefresh,
@@ -64,13 +66,52 @@ const confirmUploadShow = ref(false);
 const skinVariant = ref<"classic" | "slim">("classic");
 const currentAccount = computed(() => accounts.current);
 const isCurrentMs = computed(() => currentAccount.value?.type === "microsoft");
+/**
+ * 拾木空间的皮肤站账号：站点开放了换肤接口（`POST /api/user/skin`），
+ * 可以在启动器里直接上传，其余皮肤站（LittleSkin 等）仍只能去网站换。
+ */
+const isShimuStation = computed(() => {
+  const acc = currentAccount.value;
+  if (!acc || acc.type !== "yggdrasil") return false;
+  // 只认真正的主机名（避免 evil-mcimg.com 之类被误判）
+  try {
+    const host = new URL(acc.server).hostname.toLowerCase();
+    return host === "mcimg.com" || host.endsWith(".mcimg.com");
+  } catch {
+    return false;
+  }
+});
+/** 皮肤站「应用」需要拾木空间 OAuth 登录态（和游戏账号的 yggdrasil token 是两套） */
+const shimuStore = useShimuStore();
+const shimuLoginRef = ref<InstanceType<typeof ShimuLoginDialog> | null>(null);
+/** 点了「应用」但没登录：登录成功后自动继续上传 */
+const pendingStationApply = ref(false);
+/** 拾木空间上传和正版上传一样会覆盖站点上的现有皮肤，共用一套二次确认 */
+const needsUploadConfirm = computed(() => isCurrentMs.value || isShimuStation.value);
 /** 正版账号的「应用」实际是把皮肤上传到 Mojang，按钮文案/图标都换成上传语义 */
 const applyBtnLabel = computed(() => {
-  if (isCurrentMs.value) return applying.value ? t("skin.uploading") : t("skin.uploadAndApply");
+  if (needsUploadConfirm.value) return applying.value ? t("skin.uploading") : t("skin.uploadAndApply");
   return applying.value ? t("skin.applying") : t("skin.apply");
 });
 const skinVariantLabel = computed(() =>
   skinVariant.value === "slim" ? t("skin.modelSlim") : t("skin.modelClassic"),
+);
+const confirmTitle = computed(() =>
+  isShimuStation.value ? t("skin.confirmStationTitle") : t("skin.confirmUploadTitle"),
+);
+const confirmBody = computed(() =>
+  isShimuStation.value
+    ? t("skin.confirmStationBody", {
+        name: currentAccount.value?.username ?? "",
+        model: skinVariantLabel.value,
+      })
+    : t("skin.confirmUploadBody", {
+        name: currentAccount.value?.username ?? "",
+        model: skinVariantLabel.value,
+      }),
+);
+const confirmHint = computed(() =>
+  isShimuStation.value ? t("skin.confirmStationHint") : t("skin.confirmUploadHint"),
 );
 
 const animSegRef = ref<HTMLElement | null>(null);
@@ -291,10 +332,12 @@ async function loadCurrentAccountSkin(force = false) {
     }
   }
   if (acc.type === "yggdrasil") {
-    // 皮肤站账号：皮肤由皮肤站管理，这里只读展示（换肤请去皮肤站网站）
+    // 皮肤站账号：皮肤由站点托管，这里拉到的是站点当前穿戴的那张。
+    // 拾木空间额外支持在启动器里换肤（见 applySkinToShimuStation），
+    // 其余站点仍只能去网站上传。
     resetCapeList();
     try {
-      const tex = await api.yggdrasilTextures(acc.server, acc.uuid);
+      const tex = await api.yggdrasilTextures(acc.server, acc.uuid, force);
       if (token !== skinLoadToken) return;
       if (tex?.skin) {
         const variant = await detectSkinModel(tex.skin);
@@ -380,15 +423,16 @@ function resetCapeList() {
 }
 
 /**
- * 「应用」按钮入口。正版账号会真的把皮肤 + 披风上传到 Mojang，覆盖该账号现有的
- * 外观且本地无法撤回，所以先弹二次确认；离线账号只是写本地资源包，直接应用。
+ * 「应用」按钮入口。正版账号会真的把皮肤 + 披风上传到 Mojang，拾木空间账号
+ * 会把皮肤传到站点（覆盖站点上现有皮肤），两者都无法在本地撤回，所以先弹二次确认；
+ * 离线账号只是写本地资源包，其他皮肤站只能去网站换，直接给出提示。
  */
 function requestApplySkin() {
   if (!currentSrc.value) {
     message.warning(t("skin.warnSelectSkin"));
     return;
   }
-  if (isCurrentMs.value) {
+  if (needsUploadConfirm.value) {
     confirmUploadShow.value = true;
     return;
   }
@@ -398,6 +442,45 @@ function requestApplySkin() {
 async function confirmUploadApply() {
   confirmUploadShow.value = false;
   await applySkin();
+}
+
+/**
+ * 拾木空间：把当前预览的皮肤上传到站点，替换该角色正在穿戴的皮肤。
+ *
+ * 走站点开放接口 `POST /api/user/skin`（multipart，字段名 `skinfile`），
+ * 鉴权用的是拾木空间 OAuth token —— 和游戏账号的 yggdrasil accessToken 是两套，
+ * 所以没登录时先拉起授权弹窗，登录成功后自动续上这次上传。
+ */
+async function applySkinToShimuStation() {
+  if (!shimuStore.loggedIn) {
+    pendingStationApply.value = true;
+    message.warning(t("skin.shimuLoginRequired"));
+    shimuLoginRef.value?.open();
+    return;
+  }
+  const src = currentSrc.value;
+  if (!src) return;
+  applying.value = true;
+  try {
+    await api.shimuUploadSkin(src);
+    lastAppliedSrc.value = src;
+    writeVariantOverride(skinVariant.value);
+    // 站点数据已变：重拉纹理刷新预览；芯片头像来自同一条纹理链路，一并失效重取
+    await loadCurrentAccountSkin(true);
+    accounts.bumpAvatar();
+    message.success(t("skin.shimuUploaded"));
+  } catch (e) {
+    message.error(shimuErrorMessage(e));
+  } finally {
+    applying.value = false;
+  }
+}
+
+/** 拾木空间登录弹窗回调：登录成功且刚才点过「应用」，就继续这次上传 */
+function onShimuLoggedIn() {
+  if (!pendingStationApply.value) return;
+  pendingStationApply.value = false;
+  if (currentSrc.value) void applySkin();
 }
 
 async function applySkin() {
@@ -410,7 +493,11 @@ async function applySkin() {
     return;
   }
   if (currentAccount.value!.type === "yggdrasil") {
-    message.info(t("skin.infoStationManaged"));
+    if (!isShimuStation.value) {
+      message.info(t("skin.infoStationManaged"));
+      return;
+    }
+    await applySkinToShimuStation();
     return;
   }
   if (!isCurrentMs.value) {
@@ -664,14 +751,13 @@ onMounted(async () => {
           <div class="preview-label" :class="{ applied: appliedToCurrent }">
             {{ appliedToCurrent ? t("skin.applied") : t("skin.preview") }}
           </div>
-          <div class="drag-hint">{{ t("skin.dragToRotate") }}</div>
         </div>
         <div class="preview-info">
           <div class="info-row">
             <span class="info-label">{{ t("skin.currentSkin") }}</span>
             <span class="info-value">{{ currentName || t("skin.notSelected") }}</span>
             <button
-              v-if="isCurrentMs && currentAccount"
+              v-if="needsUploadConfirm && currentAccount"
               class="info-refresh"
               :class="{ spinning: refreshingAccount }"
               :title="t('skin.refreshSkinBypassCache')"
@@ -721,7 +807,7 @@ onMounted(async () => {
             :disabled="!currentSrc || applying || !currentAccount"
             @click="requestApplySkin"
           >
-            <IconUploadCloud v-if="isCurrentMs" />
+            <IconUploadCloud v-if="needsUploadConfirm" />
             <IconCheck v-else />
             {{ applyBtnLabel }}
           </button>
@@ -832,18 +918,11 @@ onMounted(async () => {
       </div>
     </n-modal>
 
-    <!-- 正版账号「上传并应用」的二次确认：这一步会把皮肤真实传上 Mojang，且不可撤回 -->
-    <n-modal v-model:show="confirmUploadShow" preset="card" :title="t('skin.confirmUploadTitle')" style="max-width: 440px;">
+    <!-- 正版账号 / 拾木空间「上传并应用」的二次确认：这一步会真的覆盖账号现有外观，且不可撤回 -->
+    <n-modal v-model:show="confirmUploadShow" preset="card" :title="confirmTitle" style="max-width: 440px;">
       <div class="modal-body">
-        <p class="confirm-text">
-          {{
-            t("skin.confirmUploadBody", {
-              name: currentAccount?.username ?? "",
-              model: skinVariantLabel,
-            })
-          }}
-        </p>
-        <p class="confirm-hint">{{ t("skin.confirmUploadHint") }}</p>
+        <p class="confirm-text">{{ confirmBody }}</p>
+        <p class="confirm-hint">{{ confirmHint }}</p>
         <div class="modal-actions">
           <n-button @click="confirmUploadShow = false">{{ t("common.cancel") }}</n-button>
           <n-button type="primary" :loading="applying" @click="confirmUploadApply">
@@ -873,7 +952,15 @@ onMounted(async () => {
             </button>
           </div>
           <div class="cape-dialog-body">
-            <p class="cape-modal-hint">{{ isCurrentMs ? t('skin.capeHintMs') : t('skin.capeHintOffline') }}</p>
+            <p class="cape-modal-hint">
+              {{
+                isCurrentMs
+                  ? t("skin.capeHintMs")
+                  : isShimuStation
+                    ? t("skin.capeHintStation")
+                    : t("skin.capeHintOffline")
+              }}
+            </p>
             <div class="skin-grid">
               <div
                 v-for="c in capes"
@@ -911,6 +998,9 @@ onMounted(async () => {
         </div>
       </div>
     </n-modal>
+
+    <!-- 拾木空间授权：上传皮肤需要站点登录态，未登录时由「应用」按钮拉起 -->
+    <ShimuLoginDialog ref="shimuLoginRef" @logged-in="onShimuLoggedIn" />
   </div>
 </template>
 
@@ -972,19 +1062,6 @@ onMounted(async () => {
 }
 .skin-canvas:active {
   cursor: grabbing;
-}
-.drag-hint {
-  position: absolute;
-  bottom: 10px;
-  left: 50%;
-  transform: translateX(-50%);
-  font-size: 11px;
-  color: var(--text-3);
-  background: var(--k-30);
-  padding: 3px 10px;
-  border-radius: 8px;
-  pointer-events: none;
-  backdrop-filter: blur(4px);
 }
 .not-account-hint,
 .preview-label {

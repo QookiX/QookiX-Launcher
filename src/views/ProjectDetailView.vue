@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onBeforeUnmount, ref, watch, nextTick } from "vue";
+import { computed, onMounted, ref, watch, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { NSelect, useMessage } from "naive-ui";
@@ -15,11 +15,10 @@ import { useSettingsStore } from "../stores/settings";
 import { useInstancesStore } from "../stores/instances";
 import SimplePagination from "../components/SimplePagination.vue";
 import InstallDialog from "../components/InstallDialog.vue";
+import ImageViewer from "../components/ImageViewer.vue";
 import {
   IconDownload,
   IconChevronLeft,
-  IconChevronRight,
-  IconClose,
   IconExternal,
   IconGlobe,
 } from "../components/icons";
@@ -64,42 +63,16 @@ watch(tabKeys, () => {
   if (!tabKeys.value.includes(tab.value)) tab.value = "desc";
 });
 
-// ---- 图库大图查看器 ----
-const viewerIndex = ref(-1);
-const viewerOpen = computed(() => viewerIndex.value >= 0 && viewerIndex.value < gallery.value.length);
-const viewerImage = computed(() => (viewerOpen.value ? gallery.value[viewerIndex.value] : null));
+// ---- 图库大图查看器：标准图片查看（缩放 / 拖拽 / 左右切换）----
+const viewerIndex = ref(0);
+const viewerOpen = ref(false);
+const galleryUrls = computed(() => gallery.value.map((g) => g.url));
+const galleryTitles = computed(() => gallery.value.map((g) => g.title ?? ""));
 
 function openViewer(i: number) {
   viewerIndex.value = i;
+  viewerOpen.value = true;
 }
-function closeViewer() {
-  viewerIndex.value = -1;
-}
-/** 循环切换：到头/到尾自动绕回，避免按钮变灰 */
-function stepViewer(delta: number) {
-  const n = gallery.value.length;
-  if (!n || !viewerOpen.value) return;
-  viewerIndex.value = (viewerIndex.value + delta + n) % n;
-}
-function onViewerKey(e: KeyboardEvent) {
-  if (!viewerOpen.value) return;
-  if (e.key === "Escape") {
-    e.preventDefault();
-    closeViewer();
-  } else if (e.key === "ArrowLeft") {
-    e.preventDefault();
-    stepViewer(-1);
-  } else if (e.key === "ArrowRight") {
-    e.preventDefault();
-    stepViewer(1);
-  }
-}
-// 只在打开时挂监听，关掉就摘，避免常驻键盘事件
-watch(viewerOpen, (open) => {
-  if (open) window.addEventListener("keydown", onViewerKey);
-  else window.removeEventListener("keydown", onViewerKey);
-});
-onBeforeUnmount(() => window.removeEventListener("keydown", onViewerKey));
 
 const bodyHtml = ref("");
 const originalHtml = ref("");
@@ -587,35 +560,13 @@ watch([provider, projectId], loadProject);
       :default-version="installVersionId"
     />
 
-    <!-- 图库大图查看器：Esc 关闭，左右键切换 -->
-    <Teleport to="body">
-      <div v-if="viewerOpen && viewerImage" class="pd-viewer" @click.self="closeViewer">
-        <button class="pd-viewer-btn pd-viewer-close" :title="t('projectDetail.close')" @click="closeViewer">
-          <IconClose />
-        </button>
-        <button
-          v-if="gallery.length > 1"
-          class="pd-viewer-btn pd-viewer-prev"
-          @click="stepViewer(-1)"
-        >
-          <IconChevronLeft />
-        </button>
-        <button
-          v-if="gallery.length > 1"
-          class="pd-viewer-btn pd-viewer-next"
-          @click="stepViewer(1)"
-        >
-          <IconChevronRight />
-        </button>
-        <figure class="pd-viewer-fig">
-          <img :src="viewerImage.url" :alt="viewerImage.title || (project?.title ?? '')" />
-          <figcaption>
-            <span class="pd-viewer-count">{{ viewerIndex + 1 }} / {{ gallery.length }}</span>
-            <span v-if="viewerImage.title" class="pd-viewer-title">{{ viewerImage.title }}</span>
-          </figcaption>
-        </figure>
-      </div>
-    </Teleport>
+    <!-- 图库大图查看器：标准图片查看，Esc 关闭 / 左右键切换 -->
+    <ImageViewer
+      v-model:open="viewerOpen"
+      v-model:index="viewerIndex"
+      :images="galleryUrls"
+      :titles="galleryTitles"
+    />
   </div>
 </template>
 
@@ -995,17 +946,18 @@ watch([provider, projectId], loadProject);
 .pd-gcell {
   position: relative;
   padding: 0;
-  border: none;
+  /* 和其它卡片一致：常驻 1px 边框，悬浮时只换边框色 + 底色，不做位移 */
+  border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
   cursor: zoom-in;
   background: var(--panel);
   aspect-ratio: 16 / 9;
-  transition: transform 0.15s, box-shadow 0.15s;
+  transition: transform 0.1s ease, background 0.12s ease, border-color 0.12s ease;
 }
 .pd-gcell:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.28);
+  border-color: var(--accent-35);
+  background: var(--panel-hover);
 }
 .pd-gcell img {
   width: 100%;
@@ -1027,89 +979,5 @@ watch([provider, projectId], loadProject);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-/* ---- 大图查看器 ---- */
-.pd-viewer {
-  position: fixed;
-  inset: 0;
-  z-index: 2000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 56px 68px;
-  background: rgba(0, 0, 0, 0.82);
-  backdrop-filter: blur(3px);
-  animation: pdViewerIn 0.16s ease;
-}
-@keyframes pdViewerIn {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-.pd-viewer-fig {
-  margin: 0;
-  max-width: 100%;
-  max-height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-}
-.pd-viewer-fig img {
-  max-width: 100%;
-  max-height: calc(100vh - 140px);
-  object-fit: contain;
-  border-radius: 10px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-}
-.pd-viewer-fig figcaption {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  font-size: 12px;
-  color: rgba(255, 255, 255, 0.78);
-}
-.pd-viewer-count {
-  font-variant-numeric: tabular-nums;
-}
-.pd-viewer-title {
-  max-width: 60vw;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.pd-viewer-btn {
-  position: absolute;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  border: none;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.14);
-  color: #fff;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.pd-viewer-btn:hover {
-  background: rgba(255, 255, 255, 0.26);
-}
-.pd-viewer-close {
-  top: 16px;
-  right: 16px;
-}
-.pd-viewer-prev {
-  left: 14px;
-  top: 50%;
-  transform: translateY(-50%);
-}
-.pd-viewer-next {
-  right: 14px;
-  top: 50%;
-  transform: translateY(-50%);
 }
 </style>

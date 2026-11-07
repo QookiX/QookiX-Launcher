@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from "vue";
+import { computed, defineAsyncComponent, nextTick, onMounted, reactive, ref, watch } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { NButton, NDrawer, NDrawerContent, NSelect, useMessage, type SelectOption } from "naive-ui";
@@ -102,7 +102,56 @@ const types = computed(() => [
   { key: "resourcepack", label: t("browse.type.resourcepack") },
   { key: "shader", label: t("browse.type.shader") },
   { key: "datapack", label: t("browse.type.datapack") },
+  { key: "shimu", label: t("browse.type.schematic") },
 ]);
+
+// 「投影」tab 直接复用拾木空间投影库整页（自带搜索 / 板块 / 账号 / 详情），
+// 异步加载：不在发现页首屏就把投影库那套 DOM 解析逻辑一起打包进来。
+const ShimuLibraryView = defineAsyncComponent(() => import("./ShimuLibraryView.vue"));
+
+// —— 投影分类的工具栏状态（与内容搜索互不干扰） ——
+const shimuKeyword = ref("");
+/** 防抖后的关键词：投影库只在停止输入后才重新请求 */
+const shimuKeywordApplied = ref("");
+let shimuDebounce: ReturnType<typeof setTimeout> | null = null;
+watch(shimuKeyword, (v) => {
+  if (shimuDebounce) clearTimeout(shimuDebounce);
+  shimuDebounce = setTimeout(() => { shimuKeywordApplied.value = v; }, 450);
+});
+const shimuSort = ref<"new" | "hot" | "featured">("hot");
+const shimuSortOptions = computed(() => [
+  { label: t("shimu.sortHot"), value: "hot" },
+  { label: t("shimu.sortNew"), value: "new" },
+  { label: t("shimu.sortFeatured"), value: "featured" },
+]);
+
+/**
+ * 投影来源：与内容分类的「来源」同位置、同语义。
+ *
+ * `all` = 所有已接入来源合并；具体来源一律用**已接入的 key**，没接入的站点不摆出来
+ * 当死选项。目前只接了拾木空间，所以清单里就它一项 —— 以后接入新投影站时，
+ * 往 `schematicSourceOptions` 里加一项、在投影库里按 source 分流取数即可。
+ */
+type SchematicSourceKey = "all" | "shimu";
+const schematicSource = ref<SchematicSourceKey>("all");
+const schematicSourceOptions = computed(() => [
+  { label: t("browse.provider.all"), value: "all" satisfies SchematicSourceKey },
+  { label: t("shimu.title"), value: "shimu" satisfies SchematicSourceKey },
+]);
+/** 投影库进详情时收起工具栏，避免上下两套控件打架 */
+const shimuDetailOpen = ref(false);
+
+/** 搜索框：投影走站点关键词搜索，其余走内容搜索 */
+const searchText = computed({
+  get: () => (type.value === "shimu" ? shimuKeyword.value : query.value),
+  set: (v: string) => {
+    if (type.value === "shimu") shimuKeyword.value = v;
+    else query.value = v;
+  },
+});
+const searchPlaceholder = computed(() =>
+  type.value === "shimu" ? t("shimu.searchPlaceholder") : t("browse.search.placeholder")
+);
 
 const modrinthCategories: Record<string, string[]> = {
   mod: ["", "fabric", "forge", "quilt", "neoforge", "optimization", "library", "utility", "adventure", "magic", "tech", "decoration", "equipment", "food", "misc", "mobs", "storage", "worldgen"],
@@ -170,8 +219,8 @@ const displayVersionOptions = computed(() => {
 
 let searchSeq = 0;
 async function search() {
-  // 新闻 tab 不走内容搜索
-  if (type.value === "news") return;
+  // 新闻 / 投影 tab 不走内容搜索
+  if (type.value === "news" || type.value === "shimu") return;
   const seq = ++searchSeq;
   // 缓存：内存（5 分钟，会话内）+ localStorage 持久化（6 小时，跨会话）。
   // 应用重启后内存清空，但 localStorage 仍在，打开发现页命中持久化缓存不调 API。
@@ -327,8 +376,8 @@ interface TypeTab {
 }
 const typeTabs = reactive<Record<string, TypeTab>>({});
 function saveTypeTab() {
-  // 新闻 tab 无内容筛选状态，不保存
-  if (type.value === "news") return;
+  // 新闻 / 投影 tab 无内容筛选状态，不保存（投影库自己维护分页与筛选）
+  if (type.value === "news" || type.value === "shimu") return;
   typeTabs[type.value] = {
     category: category.value,
     page: page.value,
@@ -357,6 +406,7 @@ function switchType(key: string) {
   if (key === type.value) return;
   saveTypeTab();
   type.value = key;
+  shimuDetailOpen.value = false;
   // 切到新闻 tab 时拉取新闻（已有缓存则秒回）
   if (key === "news") void newsStore.load().catch((e) => message.error(String(e)));
 }
@@ -365,8 +415,8 @@ watch([provider, type], async (n, o) => {
   if (n[0] !== o?.[0]) {
     for (const k in typeTabs) delete typeTabs[k];
   }
-  // 新闻 tab 不触发内容搜索/分类重建
-  if (type.value === "news") return;
+  // 新闻 / 投影 tab 不触发内容搜索/分类重建
+  if (type.value === "news" || type.value === "shimu") return;
   if (restoreTypeTab(type.value)) return;
   category.value = "";
   if (!showLoaderFilter.value) loader.value = "";
@@ -446,9 +496,19 @@ function syncProviderFromRoute() {
   }
 }
 
+/** 支持从工具页等入口直接定位分类：/browse?type=shimu */
+function syncTypeFromRoute() {
+  const tp = route.query.type;
+  if (typeof tp !== "string" || !tp) return;
+  // 只认标签栏里真实存在的 key，避免乱写的 query 把页面切到空白
+  if (tp !== "news" && !types.value.some((x) => x.key === tp)) return;
+  if (type.value !== tp) switchType(tp);
+}
+
 // 支持从实例模组列表的"在内容中心搜索"跳转：带上 q 与 provider，直接定位平台
 watch(route, () => {
   if (route.name !== "browse") return;
+  syncTypeFromRoute();
   query.value = typeof route.query.q === "string" ? route.query.q : "";
   syncProviderFromRoute();
   search();
@@ -573,6 +633,8 @@ onMounted(async () => {
       .sort((a, b) => (b.last_played ?? 0) - (a.last_played ?? 0));
     if (sorted.length > 0) selectedInstanceId.value = sorted[0].id;
   }
+  // 先用 query 定分类，再建分类选项 / 拉列表：/browse?type=shimu 要直接落在投影上
+  syncTypeFromRoute();
   rebuildOptions();
   loadVersions();
   syncProviderFromRoute();
@@ -602,11 +664,11 @@ onMounted(async () => {
     </div>
 
     <template v-if="type !== 'news'">
-    <div class="toolbar glass">
+    <div v-if="!shimuDetailOpen" class="toolbar glass">
       <div class="toolbar-row">
         <div id="browse-search" class="search-box">
           <IconSearch />
-          <input v-model="query" :placeholder="t('browse.search.placeholder')" />
+          <input v-model="searchText" :placeholder="searchPlaceholder" />
         </div>
         <n-select
           v-if="showInstanceSelect"
@@ -622,6 +684,14 @@ onMounted(async () => {
       </div>
       <div class="toolbar-row">
         <n-select
+          v-if="type === 'shimu'"
+          v-model:value="shimuSort"
+          :options="shimuSortOptions"
+          size="small"
+          class="tb-select"
+        />
+        <n-select
+          v-else
           v-model:value="sort"
           :options="sortOptions"
           size="small"
@@ -639,17 +709,26 @@ onMounted(async () => {
           <button :class="{ active: view === 'list' }" :title="t('browse.view.list')" @click="view = 'list'"><IconList /></button>
           <button :class="{ active: view === 'compact' }" :title="t('browse.view.compact')" @click="view = 'compact'"><IconAlignJustify /></button>
         </div>
-        <button class="filter-btn" :class="{ on: hasFilter }" @click="showFilter = true">
+        <button v-if="type !== 'shimu'" class="filter-btn" :class="{ on: hasFilter }" @click="showFilter = true">
           <IconSliders /> {{ t("browse.filter.button") }}
         </button>
+        <!-- 来源选择器：内容分类走 Modrinth / CurseForge，投影分类走已接入的投影站 -->
         <n-select
+          v-if="type !== 'shimu'"
           v-model:value="provider"
           :options="providerOptions"
           size="small"
           class="tb-select provider"
         />
+        <n-select
+          v-else
+          v-model:value="schematicSource"
+          :options="schematicSourceOptions"
+          size="small"
+          class="tb-select provider"
+        />
         <button
-          v-if="locale.startsWith('zh')"
+          v-if="type !== 'shimu' && locale.startsWith('zh')"
           class="filter-btn translate-toggle"
           :class="{ on: translateMode }"
           @click="toggleTranslateMode"
@@ -658,6 +737,21 @@ onMounted(async () => {
         </button>
       </div>
     </div>
+
+    <!-- 投影：整块嵌入拾木空间投影库（列表 / 详情 / 下载都在这套组件里） -->
+    <ShimuLibraryView
+      v-if="type === 'shimu'"
+      embedded
+      :view="view"
+      :source="schematicSource"
+      :keyword="shimuKeywordApplied"
+      :sort="shimuSort"
+      :page-size="pageSize"
+      :target-instance-id="selectedInstanceId"
+      @detail-open="shimuDetailOpen = $event"
+    />
+
+    <template v-else>
 
     <div v-if="hasFilter" class="filter-tags glass">
       <span v-if="gameVersion" class="ftag">
@@ -735,6 +829,7 @@ onMounted(async () => {
         @update:page="onPage"
       />
     </div>
+    </template>
     </template>
 
     <div v-else class="news-content">
@@ -988,47 +1083,17 @@ onMounted(async () => {
   grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
   gap: 16px;
 }
-/* 骨架屏：搜索时用 shimmer 占位卡，替代纯文字"搜索中" */
+/* 骨架屏：只排布局，颜色变量 / shimmer / 条块尺寸走 styles.css 的公共原子（投影列表共用同一套） */
 .skel-card {
-  --skel-c: rgba(255, 255, 255, 0.07);
-  --skel-hi: rgba(255, 255, 255, 0.14);
   padding: 14px;
   display: flex;
   flex-direction: column;
   gap: 12px;
 }
-:root.light .skel-card {
-  --skel-c: rgba(0, 0, 0, 0.06);
-  --skel-hi: rgba(0, 0, 0, 0.10);
-}
-.skel-icon,
-.skel-line,
-.skel-tag,
-.skel-btn {
-  background: linear-gradient(90deg, var(--skel-c), var(--skel-hi), var(--skel-c));
-  background-size: 200% 100%;
-  animation: skel-shimmer 1.3s ease-in-out infinite;
-}
 .skel-main { display: flex; gap: 12px; }
-.skel-icon { width: 56px; height: 56px; border-radius: 12px; flex-shrink: 0; }
 .skel-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
-.skel-line { height: 11px; border-radius: 6px; }
-.skel-line.w-32 { width: 32%; }
-.skel-line.w-40 { width: 40%; }
-.skel-line.w-60 { width: 60%; }
-.skel-line.w-70 { width: 70%; }
-.skel-line.w-92 { width: 92%; }
 .skel-cats { display: flex; gap: 6px; margin-top: 2px; }
-.skel-tag { width: 52px; height: 18px; border-radius: 9px; }
 .skel-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.skel-btn { width: 84px; height: 28px; border-radius: 8px; }
-@keyframes skel-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .skel-icon, .skel-line, .skel-tag, .skel-btn { animation: none; }
-}
 /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
    未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
 .grid :deep(.p-card) {

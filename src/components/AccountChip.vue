@@ -278,8 +278,8 @@ function typeLabel(a: Account) {
   align-self: flex-start;
 }
 .acctp-type.microsoft {
-  background: var(--info-15);
-  color: var(--text-2);
+  background: var(--info-22);
+  color: var(--info);
 }
 .acctp-type.yggdrasil {
   background: var(--success-12);

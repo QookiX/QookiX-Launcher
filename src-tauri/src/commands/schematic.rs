@@ -350,9 +350,48 @@ fn parse_schematic(
             .map_err(|e| format!("Litematic 解析失败: {litematic_err}；Sponge 解析失败: {e}"));
     }
     let sponge_err = sponge_result.err().map(|e| e.to_string()).unwrap_or_default();
+    // 旧版 MCEdit / WorldEdit 的 .schematic / .schem：方块是数字 ID（Blocks 字节数组，
+    // 没有调色板），与 litematic / Sponge 完全不是一套，直接给一句能照做的提示。
+    if looks_like_legacy_schematic(&bytes) {
+        return Err(
+            "这是旧版 MCEdit / WorldEdit 投影（方块用数字 ID 存储），暂不支持预览。\
+             请在 WorldEdit 里用 //schem save 另存为 .schem，或用 Litematica 另存为 .litematic 后再打开。"
+                .to_string(),
+        );
+    }
     Err(format!(
-        "无法解析投影文件。Litematic 错误: {litematic_err}; Sponge 错误: {sponge_err}"
+        "无法解析投影文件（既不是 .litematic，也不是 Sponge .schem）。文件根字段: {}。Litematic 错误: {litematic_err}; Sponge 错误: {sponge_err}",
+        describe_root_keys(&bytes)
     ))
+}
+
+/// 旧版 `Blocks` 是字节数组（数字方块 ID）+ 有尺寸字段 → MCEdit/WorldEdit 老格式
+fn looks_like_legacy_schematic(bytes: &[u8]) -> bool {
+    match fastnbt::from_bytes::<fastnbt::Value>(bytes) {
+        Ok(fastnbt::Value::Compound(map)) => {
+            matches!(map.get("Blocks"), Some(fastnbt::Value::ByteArray(_)))
+                && map.contains_key("Width")
+                && map.contains_key("Length")
+        }
+        _ => false,
+    }
+}
+
+/// 解析失败时把 NBT 根字段列出来，方便一眼判断文件到底是什么格式
+/// （例如旧版 WorldEdit 的 `Blocks`/`Data`、结构方块的 `size`/`palette`）。
+fn describe_root_keys(bytes: &[u8]) -> String {
+    match fastnbt::from_bytes::<fastnbt::Value>(bytes) {
+        Ok(fastnbt::Value::Compound(map)) => {
+            let keys: Vec<String> = map.keys().take(12).cloned().collect();
+            if keys.is_empty() {
+                "（空）".to_string()
+            } else {
+                keys.join(", ")
+            }
+        }
+        Ok(_) => "根标签不是 Compound".to_string(),
+        Err(_) => "读取 NBT 失败（可能不是 NBT 文件，或压缩格式不受支持）".to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -481,10 +520,11 @@ fn parse_sponge(
         DataVersion: file.DataVersion,
     });
 
-    let format_version = body
-        .Version
-        .ok_or_else(|| "Sponge 投影缺少 Version 字段".to_string())?;
-    if !matches!(format_version, 2 | 3) {
+    // Version 只是格式标记：一部分导出工具（以及部分老 .schem）压根不写这个字段。
+    // 只要尺寸 / 调色板 / 方块数据齐全，v1~v3 的块数据都是同一种 varint 语义，
+    // 所以缺 Version 时按 v2 处理，交给后面的结构校验兜底。
+    let format_version = body.Version.unwrap_or(2);
+    if !matches!(format_version, 1 | 2 | 3) {
         return Err(format!("不支持的 Sponge 投影版本 {format_version}"));
     }
 
@@ -1168,6 +1208,52 @@ mod tests {
         assert_eq!(word(BASE + 2 * 256 + 4 * 16 + 2), 0);
         // 北面：(i=y, j=x)，世界 (2,3,-1) 没东西
         assert_eq!(word(BASE + 4 * 256 + 3 * 16 + 2), 0);
+    }
+
+    /// 部分导出工具（和一些老 .schem）不写 Version，字段齐全时按 v2 语义兜底解析
+    #[test]
+    fn sponge_without_version_falls_back_to_v2() {
+        let file = SpongeFile {
+            Schematic: None,
+            Version: None,
+            Width: Some(2),
+            Height: Some(1),
+            Length: Some(1),
+            Offset: None,
+            Blocks: None,
+            Palette: Some(BTreeMap::from([("minecraft:stone".to_string(), 0)])),
+            BlockData: Some(fastnbt::ByteArray::new(vec![0i8, 0i8])),
+            Data: None,
+            Metadata: None,
+            DataVersion: None,
+        };
+        let session = parse_sponge(file, "a.schem".into(), "a.schem".into(), None)
+            .expect("缺 Version 但结构完整时应能解析");
+        assert_eq!(session.manifest.format, "schem_v2");
+        assert_eq!(session.manifest.format_version, 2);
+    }
+
+    /// 版本号存在但不受支持时仍要明确拒绝，不能静默按 v2 糊过去
+    #[test]
+    fn sponge_rejects_unknown_version() {
+        let file = SpongeFile {
+            Schematic: None,
+            Version: Some(9),
+            Width: Some(1),
+            Height: Some(1),
+            Length: Some(1),
+            Offset: None,
+            Blocks: None,
+            Palette: Some(BTreeMap::from([("minecraft:stone".to_string(), 0)])),
+            BlockData: Some(fastnbt::ByteArray::new(vec![0i8])),
+            Data: None,
+            Metadata: None,
+            DataVersion: None,
+        };
+        let err = parse_sponge(file, "a.schem".into(), "a.schem".into(), None)
+            .err()
+            .expect("未知版本应当报错");
+        assert!(err.contains("不支持的 Sponge 投影版本 9"), "{err}");
     }
 }
 

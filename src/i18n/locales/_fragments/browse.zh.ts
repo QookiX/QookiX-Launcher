@@ -6,6 +6,7 @@ export default {
       resourcepack: "资源包",
       shader: "光影",
       datapack: "数据包",
+      schematic: "投影",
     },
     loader: {
       all: "全部加载器",

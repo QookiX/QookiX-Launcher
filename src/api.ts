@@ -806,10 +806,10 @@ export const api = {
     profileName: string;
   }) => invoke<Account>("yggdrasil_add_account", payload),
   /** 拉取皮肤站账号的皮肤/披风（data URL），无纹理时为 null */
-  yggdrasilTextures: (server: string, profileId: string) =>
+  yggdrasilTextures: (server: string, profileId: string, cacheBust = false) =>
     invoke<{ skin: string | null; cape: string | null } | null>(
       "yggdrasil_textures",
-      { server, profileId }
+      { server, profileId, cacheBust }
     ),
 
   // ---------------------------------------------------------------
@@ -858,6 +858,9 @@ export const api = {
   shimuStatus: () => invoke<ShimuStatus>("shimu_status"),
   shimuUserInfo: () => invoke<ShimuUser>("shimu_user_info", undefined, { net: true }),
   shimuLogout: () => invoke<void>("shimu_logout"),
+  /** 皮肤上传：把 PNG（data URL 或裸 base64）传到 `POST /api/user/skin`，替换穿戴中的皮肤 */
+  shimuUploadSkin: (skin: string) =>
+    invoke<{ skin: string }>("shimu_upload_skin", { skin }, { net: true }),
   /** 帖子列表（可传 categoryId 单板块，或 categoryIds 多板块合并） */
   shimuListPosts: (query: ShimuPostQuery) =>
     invoke<ShimuPage<ShimuPost>>("shimu_list_posts", { query }, { net: true }),

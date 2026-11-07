@@ -334,6 +334,8 @@ export interface ShimuPostQuery {
   isFeatured?: string;
   isTop?: string;
   sort?: "hot" | "new" | "featured";
+  /** 1 = 只返回带投影文件的帖子；0 = 只返回不带投影文件的；不传 = 不限制 */
+  hasProjection?: 0 | 1;
   pageNum?: number;
   pageSize?: number;
 }

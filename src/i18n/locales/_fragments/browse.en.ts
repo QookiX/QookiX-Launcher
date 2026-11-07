@@ -6,6 +6,7 @@ export default {
       resourcepack: "Resource Packs",
       shader: "Shaders",
       datapack: "Datapacks",
+      schematic: "Schematics",
     },
     loader: {
       all: "All loaders",
