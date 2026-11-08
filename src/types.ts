@@ -51,6 +51,10 @@ export interface Settings {
   mirror: string;
   /** 自定义镜像根地址（mirror === "custom" 时生效） */
   mirror_custom: string;
+  /** 内容 API 镜像 id："official"（默认）| "mcim" | "custom"，只影响发现页 / 内容详情的查询接口 */
+  content_mirror: string;
+  /** 自定义内容 API 镜像根地址（content_mirror === "custom" 时生效） */
+  content_mirror_custom: string;
   background_image: string | null;
   background_blur: number;
   background_dim: number;

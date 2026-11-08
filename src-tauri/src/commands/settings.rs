@@ -98,6 +98,39 @@ pub async fn test_mirror(state: State<'_, AppState>, base: String) -> Result<Val
     Ok(json!({ "ok": true, "ms": ms, "url": url }))
 }
 
+/// 可用的「内容 API 镜像」预设列表（发现页 / 内容详情用，与下载镜像相互独立）。
+#[tauri::command]
+pub fn list_content_mirrors() -> Value {
+    crate::mirror::content_presets()
+}
+
+/// 测试内容 API 镜像连通性并返回耗时（毫秒）。
+///
+/// `base` 为空串表示测试官方源；否则按「镜像根地址」拼出 Modrinth 搜索接口。
+/// 只发一个 limit=1 的搜索请求，不拉正文，测的是发现页真实会走的路径。
+#[tauri::command]
+pub async fn test_content_mirror(
+    state: State<'_, AppState>,
+    base: String,
+) -> Result<Value, String> {
+    let api = crate::mirror::content_api_from(&base, "modrinth");
+    let url = format!("{api}/search?query=test&limit=1");
+    let start = std::time::Instant::now();
+    let resp = state
+        .client
+        .get(&url)
+        .timeout(std::time::Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|e| format!("连接失败: {e}"))?;
+    let ms = start.elapsed().as_millis() as u64;
+    let status = resp.status();
+    if !status.is_success() {
+        return Err(format!("HTTP {status}"));
+    }
+    Ok(json!({ "ok": true, "ms": ms, "url": url }))
+}
+
 /// 测试下载代理配置是否可用。
 /// 用传入的 `proxy_mode`/`proxy` 临时构建客户端访问官方 manifest，
 /// 返回首字节耗时（毫秒）。`proxy` 仅在 `proxy_mode == "custom"` 时生效。

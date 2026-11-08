@@ -39,6 +39,14 @@ export default {
       searching: "Searching…",
       noResult: "No results found",
     },
+    fav: {
+      tab: "Saved",
+      searchPlaceholder: "Search your saved items…",
+      allTypes: "All types",
+      empty: "Nothing saved yet",
+      emptyHint: "Tap the star on any project card to keep it here",
+      noMatch: "No saved items match",
+    },
     view: {
       grid: "Grid",
       list: "List",

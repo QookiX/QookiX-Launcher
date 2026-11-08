@@ -211,3 +211,137 @@ pub fn asset_url(state: &AppState, hash: &str) -> String {
         format!("{base}/assets/{head}/{hash}")
     }
 }
+
+// ---------------------------------------------------------------------------
+// 内容 API 镜像（发现页 / 内容详情 / 版本列表）
+// ---------------------------------------------------------------------------
+//
+// 与上面的「下载镜像」是两套东西：下载镜像改写的是游戏本体/依赖库的文件地址，
+// 这里改写的是 Modrinth / CurseForge 的 **查询接口**（搜索、项目详情、版本列表、
+// 依赖解析）。国内直连 `api.modrinth.com` 经常几百毫秒起步甚至超时，发现页
+// 首屏就会一直转圈；换成镜像后这些请求改走国内节点。
+//
+// 镜像约定：根地址下同时提供 `/modrinth/v2` 与 `/curseforge/v1`
+// （与 MCIM 一类镜像保持一致）。也允许直接填平台专属地址（以 `/v2`、`/v1` 结尾），
+// 此时只影响对应平台。
+
+/// 官方 Modrinth API 根地址
+pub const MODRINTH_API: &str = "https://api.modrinth.com/v2";
+/// 官方 CurseForge API 根地址
+pub const CURSEFORGE_API: &str = "https://api.curseforge.com/v1";
+
+/// 内容 API 走官方源（默认）
+pub const CONTENT_OFFICIAL: &str = "official";
+/// 内容 API 走自定义镜像根地址
+pub const CONTENT_CUSTOM: &str = "custom";
+
+pub struct ContentPreset {
+    pub id: &'static str,
+    pub label: &'static str,
+    /// 镜像根地址；官方源为空串
+    pub base: &'static str,
+    pub desc: &'static str,
+}
+
+/// 内置内容 API 镜像预设（顺序即前端展示顺序）
+pub const CONTENT_PRESETS: &[ContentPreset] = &[
+    ContentPreset {
+        id: CONTENT_OFFICIAL,
+        label: "官方源",
+        base: "",
+        desc: "Modrinth / CurseForge 官方接口，海外网络推荐",
+    },
+    ContentPreset {
+        id: "mcim",
+        label: "MCIM 镜像",
+        base: "https://mod.mcimirror.top",
+        desc: "国内第三方镜像，加速发现页搜索与内容详情",
+    },
+];
+
+/// 由设置解析出内容镜像根地址（官方源返回空串）。
+pub fn content_resolve_from(id: &str, custom: &str) -> String {
+    if id == CONTENT_CUSTOM {
+        return custom.trim().trim_end_matches('/').to_string();
+    }
+    CONTENT_PRESETS
+        .iter()
+        .find(|p| p.id == id)
+        .map(|p| p.base.to_string())
+        .unwrap_or_default()
+}
+
+/// 由镜像根地址推导出某个平台的 API 根地址。
+///
+/// `platform` 只认 `"modrinth"` / `"curseforge"`（其余按 modrinth 处理）。
+/// 根地址为空 = 官方源；已带 `/v2`（或 `/v1`）时视为用户直接填了平台专属地址。
+pub fn content_api_from(root: &str, platform: &str) -> String {
+    let root = root.trim().trim_end_matches('/');
+    let (official, suffix, path) = if platform == "curseforge" {
+        (CURSEFORGE_API, "/v1", "/curseforge/v1")
+    } else {
+        (MODRINTH_API, "/v2", "/modrinth/v2")
+    };
+    if root.is_empty() {
+        return official.to_string();
+    }
+    if root.ends_with(suffix) {
+        root.to_string()
+    } else {
+        format!("{root}{path}")
+    }
+}
+
+/// 当前设置下某个平台的 API 根地址（每次请求都读设置，切换后立即生效）。
+pub fn content_api(state: &AppState, platform: &str) -> String {
+    let s = state.settings();
+    let root = content_resolve_from(&s.content_mirror, &s.content_mirror_custom);
+    drop(s);
+    content_api_from(&root, platform)
+}
+
+/// 内容镜像预设列表（供前端渲染）
+pub fn content_presets() -> Value {
+    Value::Array(
+        CONTENT_PRESETS
+            .iter()
+            .map(|p| json!({ "id": p.id, "label": p.label, "base": p.base, "desc": p.desc }))
+            .collect(),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn content_api_follows_mirror_root() {
+        // 官方源：两端各自回官方地址
+        assert_eq!(content_api_from("", "modrinth"), MODRINTH_API);
+        assert_eq!(content_api_from("", "curseforge"), CURSEFORGE_API);
+        // 镜像根：拼平台前缀
+        assert_eq!(
+            content_api_from("https://mod.mcimirror.top/", "modrinth"),
+            "https://mod.mcimirror.top/modrinth/v2"
+        );
+        assert_eq!(
+            content_api_from("https://mod.mcimirror.top", "curseforge"),
+            "https://mod.mcimirror.top/curseforge/v1"
+        );
+        // 直接填平台专属地址：不再重复拼前缀
+        assert_eq!(
+            content_api_from("https://proxy.example.com/v2", "modrinth"),
+            "https://proxy.example.com/v2"
+        );
+    }
+
+    #[test]
+    fn content_resolve_ignores_unknown_id() {
+        assert_eq!(content_resolve_from("official", "https://x"), "");
+        assert_eq!(content_resolve_from("nope", "https://x"), "");
+        assert_eq!(
+            content_resolve_from(CONTENT_CUSTOM, " https://x/ "),
+            "https://x"
+        );
+    }
+}

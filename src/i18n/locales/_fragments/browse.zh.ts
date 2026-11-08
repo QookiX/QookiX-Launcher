@@ -39,6 +39,14 @@ export default {
       searching: "搜索中…",
       noResult: "没有找到相关内容",
     },
+    fav: {
+      tab: "收藏夹",
+      searchPlaceholder: "在收藏夹里搜索…",
+      allTypes: "全部资源",
+      empty: "收藏夹还是空的",
+      emptyHint: "在任意项目卡片上点一下星标，就能把它收进这里",
+      noMatch: "没有符合条件的收藏",
+    },
     view: {
       grid: "网格",
       list: "列表",

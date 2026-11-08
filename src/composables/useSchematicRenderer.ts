@@ -15,6 +15,8 @@ export interface SchematicRenderer {
   clearChunks: () => void;
   fitCamera: (min: [number, number, number], max: [number, number, number]) => void;
   resetCamera: () => void;
+  /** 立刻回到正视角（不走过渡动画）。打开新投影时用：否则还挂在上一份的漫游位置上，看着像是空的 */
+  forceOrbit: () => void;
   setLayerSlice: (y: number | null) => void;
   setViewMode: (mode: ViewMode) => void;
   getViewMode: () => ViewMode;
@@ -203,14 +205,17 @@ export function createSchematicRenderer(canvas: HTMLCanvasElement): SchematicRen
     orbitControls.update();
   }
 
+  function forceOrbit() {
+    transitioning = false;
+    if (walkControls.isLocked) walkControls.unlock();
+    viewMode = "orbit";
+    activeCamera = orbitCamera;
+    orbitControls.enabled = true;
+  }
+
   function resetCamera() {
     if (!savedBounds || transitioning) return;
-    if (viewMode === "walk") {
-      if (walkControls.isLocked) walkControls.unlock();
-      viewMode = "orbit";
-      activeCamera = orbitCamera;
-      orbitControls.enabled = true;
-    }
+    forceOrbit();
     fitCamera(savedBounds.min, savedBounds.max);
     requestRender();
   }
@@ -435,7 +440,7 @@ export function createSchematicRenderer(canvas: HTMLCanvasElement): SchematicRen
   }
 
   return {
-    dispose, resize, setChunkFromMeshData, removeChunk, clearChunks, fitCamera, resetCamera, setLayerSlice,
+    dispose, resize, setChunkFromMeshData, removeChunk, clearChunks, fitCamera, resetCamera, forceOrbit, setLayerSlice,
     setViewMode, getViewMode: () => viewMode, getWalkSpeed: () => walkSpeed,
     isLocked: () => walkControls.isLocked, onLockChange: (cb) => { lockCallback = cb; }, onSpeedChange: (cb) => { speedCallback = cb; }, requestRender,
   };

@@ -44,17 +44,23 @@ pub fn backup_file_with(src: &Path, keep: usize) -> Result<String, String> {
 // ------------------------------------------------------------ 备份管理 ----
 
 /// 世界目录下所有可备份的目标（相对路径 → 绝对路径）：
-/// `level.dat` 与 `playerdata/<uuid>.dat`
+/// `level.dat` 与玩家数据目录下的 `<uuid>.dat`
+/// （26.x 起玩家目录叫 `players/`，老存档是 `playerdata/`，相对路径按实际目录名拼）
 fn targets(world_dir: &Path) -> Vec<(String, PathBuf)> {
     let mut out = vec![("level.dat".to_string(), world_dir.join("level.dat"))];
-    if let Ok(rd) = std::fs::read_dir(world_dir.join("playerdata")) {
+    let pdir = super::player::players_dir(world_dir);
+    let prefix = pdir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "playerdata".to_string());
+    if let Ok(rd) = std::fs::read_dir(&pdir) {
         for e in rd.flatten() {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) != Some("dat") {
                 continue;
             }
             if let Some(name) = p.file_name().map(|n| n.to_string_lossy().to_string()) {
-                out.push((format!("playerdata/{name}"), p));
+                out.push((format!("{prefix}/{name}"), p));
             }
         }
     }

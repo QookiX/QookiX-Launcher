@@ -27,7 +27,8 @@ fn apply_chinese_names(hits: &mut [Value]) {
 
 /// "全部来源"搜索：Modrinth 与 CurseForge 各自独立分页、各取当前页，
 /// 合并后按所选排序维度统一排序并截取一页。CurseForge 失败不影响整体
-/// 结果（仅第一页时上报 `cf_error` 供前端提示）。分类只作用于 Modrinth。
+/// 结果，失败信息随每页一起通过 `cf_error` 上报（前端据此提示）。
+/// 分类只作用于 Modrinth。
 async fn browse_all_sources(
     state: &AppState,
     query: &str,
@@ -82,9 +83,9 @@ async fn browse_all_sources(
             }
         }
         Err(e) => {
-            if page == 0 {
-                cf_error = Some(e);
-            }
+            // 以前只在 page == 0 上报，导致翻到第 2 页后同样失败却毫无提示，
+            // 看起来像"只有第一页有问题"。现在每页都上报，前端统一展示。
+            cf_error = Some(e);
         }
     }
     let total = mr_total.max(cf_total);

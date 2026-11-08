@@ -72,6 +72,20 @@ function pickInstance(id: string) {
   switching.value = false;
 }
 
+// 列表侧滑入场的排队序号：面板是自下而上展开的，越靠下的行越早被
+// clip 揭示出来，所以序号从列表末尾倒着数（底行 = 0）。
+function staggerIndex(idx: number, total: number) {
+  return total - 1 - idx;
+}
+
+// 排队间隔按行数均分纵向展开时长（0.28s）：整块面板在这段时间里自下而上
+// 撑满，行必须在同一段时间里依次露头，间隔写死就会「行少时太慢、行多时
+// 追不上揭示」——间隔恒为 0.28s/(n-1)，揭示到哪一行、那一行就开始滑。
+const rowStep = computed(() => {
+  const n = Math.max(instances.instances.length, 1);
+  return `${(0.28 / Math.max(n - 1, 1)).toFixed(4)}s`;
+});
+
 // 点击启动区以外任意位置时收起实例切换列表
 function onDocClick(e: MouseEvent) {
   if (!switching.value) return;
@@ -229,12 +243,13 @@ function unpin(id: string) {
 
     <!-- 实例切换弹出列表 -->
     <Transition name="inst-pop">
-      <div v-if="switching" class="inst-pop">
+      <div v-if="switching" class="inst-pop" :style="{ '--row-step': rowStep }">
         <button
-          v-for="inst in instances.instances"
+          v-for="(inst, idx) in instances.instances"
           :key="inst.id"
           class="inst-row"
           :class="{ active: selectedId === inst.id }"
+          :style="{ '--i': staggerIndex(idx, instances.instances.length) }"
           @click="pickInstance(inst.id)"
         >
           <span class="inst-row-icon"><AppIcon :name="inst.icon" /></span>
@@ -614,9 +629,13 @@ function unpin(id: string) {
   right: 0;
   width: 300px;
   max-height: 320px;
-  overflow-y: auto;
+  /* 纵向可滚 + 横向裁切：行的侧滑入场要从右缘「滑出来」，
+     不裁的话 translateX 那一段会把面板撑出横向滚动条 */
+  overflow: hidden auto;
   padding: 6px;
   border-radius: 14px;
+  /* 展开动画首行带宽 = 面板 6px 内边距 + 46px 行高（见下方 inst-unfold） */
+  --inst-reveal: 52px;
   background: color-mix(in srgb, var(--bg-1) 92%, #ffffff 8%);
   border: 1px solid var(--border);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
@@ -637,6 +656,16 @@ function unpin(id: string) {
   cursor: pointer;
   text-align: left;
   transition: background 0.12s, color 0.12s;
+  /* 排队侧滑入场：--i 由模板按「从下往上」的顺序下发，间隔 --row-step
+     由面板按行数算好（0.28s/(n-1)），保证「揭示到哪一行，那一行就开始滑」。
+     起跳 0.11s 是「提前量」：行的 opacity 在动画前 1/4 段几乎为 0，
+     若严格等格子开口才起跳，会先看到 ~60ms 的空格子。提前 0.09s 后，
+     每行被揭示时已经滑进来约 1/3，正好接上。
+     ⚠ 曲线不能用 (0.22,1,0.36,1) 那种极前倾的：位移会在 60ms 内走完，
+     看到的只是「闪一下出现」，排队感全无。用 Material 标准曲线让位移
+     均匀铺满 0.26s。 */
+  animation: inst-row-in 0.26s cubic-bezier(0.4, 0, 0.2, 1) both;
+  animation-delay: calc(0.11s + var(--i, 0) * var(--row-step, 0.065s));
 }
 .inst-row:hover {
   background: var(--w-06);
@@ -678,20 +707,110 @@ function unpin(id: string) {
   text-align: center;
   color: var(--text-3);
   font-size: 12px;
+  /* 空列表也走同一条入场曲线，起跳与首行一致 */
+  animation: inst-row-in 0.26s cubic-bezier(0.4, 0, 0.2, 1) 0.11s both;
 }
-/* 弹出动画：向上浮出 + 弹性 */
+/* —— 弹出动画：两段式展开（先「右→左」，再「下→上」） ——
+   用 clip-path inset 做揭示而不是 scaleX/scaleY，内容全程零变形。
+   1) 0%→42%（0.20s）：只露出底部一条首行高度（--inst-reveal），
+      左内缩 100%→0，表现为这条从右缘向左「拉」开；
+   2) 42%→100%（0.28s）：上内缩 (100% - 首行) → 0，整块自下而上撑满。
+   顺序严格串行：横向铺满的那一帧才开始纵向生长（clip-path 是同一属性，
+   两段共用一条插值曲线，靠关键帧分段实现先后）。
+   ⚠ 纵向段必须匀速（linear）：缓动曲线会让中段揭示突然变快，前 0.09s 就
+   撑到 97% 高，所有行在同一瞬间被揭示 → 列表看起来是齐齐滑进来的，
+   排队感没了。匀速后每行开口间隔 = 0.28s/(n-1)，与行的 --row-step 一致。
+   裁切矩形的上两角带 `round 14px`：横向阶段露出的那条带子顶边不是
+   一刀切的直角，而是与面板同半径的圆角；铺满后该圆角与面板自身
+   border-radius 完全重合，所以全开态没有任何视觉差异。 */
 .inst-pop-enter-active {
-  transition: opacity 0.2s ease, transform 0.26s cubic-bezier(0.34, 1.3, 0.5, 1);
+  animation: inst-unfold 0.48s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 .inst-pop-leave-active {
-  transition: opacity 0.14s ease, transform 0.18s ease-in;
+  animation: inst-fold 0.26s cubic-bezier(0.4, 0, 0.6, 1) both;
 }
-.inst-pop-enter-from {
-  opacity: 0;
-  transform: translateY(8px);
+@keyframes inst-unfold {
+  0% {
+    clip-path: inset(calc(100% - var(--inst-reveal)) 0 0 100% round 14px 14px 0 0);
+    opacity: 0;
+  }
+  14% {
+    /* 横向还没铺开时先淡入，避免只看到一条空带 */
+    opacity: 1;
+  }
+  42% {
+    /* 横向已铺满，纵向仍只占底部一条 */
+    clip-path: inset(calc(100% - var(--inst-reveal)) 0 0 0 round 14px 14px 0 0);
+    opacity: 1;
+    /* 纵向段必须匀速：任何缓动都会让中段揭示变快，行就追不上开口，
+       出现「面板先空一块、行再补进来」。匀速下每行开口间隔恒定 =
+       0.28s/(n-1)，正好等于 --row-step。 */
+    animation-timing-function: linear;
+  }
+  100% {
+    /* 铺满后 round 的 14px 与面板自身 border-radius 完全重合，无跳变；
+       底部两角交给面板自己的圆角（round 里为 0 才不会被重复裁一次） */
+    clip-path: inset(0 0 0 0 round 14px 14px 0 0);
+    opacity: 1;
+  }
 }
-.inst-pop-leave-to {
-  opacity: 0;
-  transform: translateY(4px);
+/* 单行入场：从右缘侧滑出来（父级横向裁切，超出部分看不见） */
+@keyframes inst-row-in {
+  from {
+    opacity: 0;
+    transform: translateX(22px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+/* 收起走反向顺序：先纵向压回一条，再向右收走。
+   ⚠ 关键：几何收完之前 opacity 必须一直是 1（在每个关键帧显式写上），
+   否则只在 0%/100% 声明 opacity 会被浏览器线性铺满整段动画——面板在
+   「向右收」的过程中已经半透明甚至全透明，看起来就是「到点直接消失」。 */
+@keyframes inst-fold {
+  0% {
+    clip-path: inset(0 0 0 0 round 14px 14px 0 0);
+    opacity: 1;
+  }
+  44% {
+    /* 纵向压回底部一条，宽度仍满 */
+    clip-path: inset(calc(100% - var(--inst-reveal)) 0 0 0 round 14px 14px 0 0);
+    opacity: 1;
+    animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  92% {
+    /* 横向收拢到右缘，此时可见宽度已是 0 */
+    clip-path: inset(calc(100% - var(--inst-reveal)) 0 0 100% round 14px 14px 0 0);
+    opacity: 1;
+  }
+  100% {
+    clip-path: inset(calc(100% - var(--inst-reveal)) 0 0 100% round 14px 14px 0 0);
+    opacity: 0;
+  }
+}
+/* 无障碍：系统要求减少动效时直接淡入淡出，不做展开位移
+   （keyframes 放在媒体查询外，避免构建期被错误改名的风险） */
+@keyframes inst-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .inst-pop-enter-active {
+    animation: inst-fade 0.16s ease both;
+  }
+  .inst-pop-leave-active {
+    animation: inst-fade 0.12s ease both reverse;
+  }
+  /* 行的排队侧滑也一并关掉，否则延迟期间行是透明的，会出现「先空后现」 */
+  .inst-pop .inst-row,
+  .inst-pop .inst-empty {
+    animation: none;
+  }
 }
 </style>

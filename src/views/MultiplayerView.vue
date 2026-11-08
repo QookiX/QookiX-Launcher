@@ -430,9 +430,33 @@ watch(
   { immediate: true },
 );
 
+// —— 本机局域网 IP ——
+// 服务器卡片要显示「别人该连哪个地址」，所以取本机首选局域网 IPv4
+// （后端复用局域网同步那套网卡打分：真实网卡优先、虚拟网卡降权、
+// Clash 之类的假 IP 直接拒绝）。取不到（离线 / 无网卡）就回退 localhost——
+// 服务器绑的是 0.0.0.0，两个地址在同一个界面上都可用。
+const lanIp = ref("");
+let lanIpAt = 0;
+async function refreshLanIp(force = false) {
+  const now = Date.now();
+  // 切窗口会频繁触发 focus，3 秒内不重复枚举网卡
+  if (!force && now - lanIpAt < 3000) return;
+  lanIpAt = now;
+  try {
+    lanIp.value = (await api.lanLocalIp()) ?? "";
+  } catch {
+    lanIp.value = "";
+  }
+}
+function serverAddress(port: number) {
+  return `${lanIp.value || "localhost"}:${port}`;
+}
+
 onMounted(async () => {
   servers.load();
   refreshTc();
+  void refreshLanIp(true);
+  window.addEventListener("focus", onWinFocus);
   try {
     const m = await api.getVersionManifest();
     versions.value = m.versions;
@@ -440,6 +464,12 @@ onMounted(async () => {
     message.error(String(e));
   }
 });
+
+// 换 Wi-Fi / 插拔网线后地址会变，回到窗口时顺手刷一次
+function onWinFocus() {
+  void refreshLanIp();
+}
+onUnmounted(() => window.removeEventListener("focus", onWinFocus));
 
 // 标题栏的“创建服务器”按钮仅在“服务器”标签页显示
 watch(tab, (v) => servers.setCanCreate(v === "servers"), { immediate: true });
@@ -488,8 +518,10 @@ onUnmounted(() => stopTcPoll());
                   :style="{ color: CORE_COLORS[s.core], borderColor: CORE_COLORS[s.core] }"
                 >{{ CORE_LABELS[s.core] }}</span>
                 <span class="mc">{{ s.mc_version }}</span>
-                <span class="lv">:{{ s.port }}</span>
               </div>
+              <!-- 连接地址独占一行：优先本机局域网 IP（朋友能直接连），取不到回退 localhost。
+                   和徽标/版本挤在一行时，窄卡片下会被挤压省略，单独成行后地址永远完整可见。 -->
+              <div class="addr text-ellipsis">{{ serverAddress(s.port) }}</div>
             </div>
           </div>
           <div class="card-motd">
@@ -1047,8 +1079,14 @@ onUnmounted(() => stopTcPoll());
   color: var(--text-2);
   font-weight: 600;
 }
-.lv {
+/* 连接地址：独占一行，不受徽标/版本挤压；数字等宽，换端口时宽度不抖 */
+.addr {
+  margin-top: 4px;
+  font-size: 12px;
+  line-height: 1.4;
   color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+  min-width: 0;
 }
 /* 服务器描述（MOTD）：MC 客户端风格的彩色文本区，支持 § / & 格式化码 */
 .card-motd {

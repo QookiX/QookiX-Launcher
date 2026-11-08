@@ -157,6 +157,16 @@ watch(tabs, (ts) => {
   }
 });
 
+// 切 tab 的内容入场：各 tab 是 v-if 整体替换，原来是瞬间换块，观感很"硬"。
+// 用两个同名关键帧交替（每次切 tab 翻转一次 class）强制重启动画——
+// 既不额外加一层 wrapper 影响布局，也不会连带重建各 tab 组件的内部状态。
+// 只做布局位移（padding-top），不动 opacity/transform：玻璃卡片对这两者
+// 都敏感，动画期间磨砂会失效。
+const tabSwap = ref(0);
+watch(tab, () => {
+  tabSwap.value = tabSwap.value ? 0 : 1;
+});
+
 // Sliding active-highlight indicator for the tab bar
 const tabsBox = ref<HTMLElement | null>(null);
 const { indicatorStyle: tabIndicatorStyle, refresh: refreshTabIndicator } = useSlidingIndicator(
@@ -571,7 +581,7 @@ watch(
       </div>
     </div>
 
-    <div class="tab-body">
+    <div class="tab-body" :class="tabSwap ? 'tab-swap-b' : 'tab-swap-a'">
       <!-- mods / resourcepacks / shaders -->
       <ContentTab
         v-if="CONTENT_TABS.includes(tab)"
@@ -903,10 +913,37 @@ watch(
   border-radius: 9px;
   background: var(--accent-soft);
   transition:
-    left 0.28s cubic-bezier(0.22, 1, 0.36, 1),
-    width 0.28s cubic-bezier(0.22, 1, 0.36, 1),
+    left 0.28s var(--ease-out),
+    width 0.28s var(--ease-out),
     opacity 0.18s;
   pointer-events: none;
+}
+/* 切 tab 的内容入场：只做布局位移（padding-top 8px → 0），内容从下方 8px
+   抬到位。两个同名关键帧交替触发，见 script 里的 tabSwap。
+   ⚠ 不能带 opacity / transform：两者都会让元素成为 backdrop root，
+   卡片磨砂在动画期间直接失效（与 SettingsView 子标签页动画同一约定，
+   那里已实测过）。padding 也不会像 position/top 那样改变包含块。 */
+.tab-swap-a {
+  animation: tab-swap-a 0.16s var(--ease-out) both;
+}
+.tab-swap-b {
+  animation: tab-swap-b 0.16s var(--ease-out) both;
+}
+@keyframes tab-swap-a {
+  from {
+    padding-top: 8px;
+  }
+  to {
+    padding-top: 0;
+  }
+}
+@keyframes tab-swap-b {
+  from {
+    padding-top: 8px;
+  }
+  to {
+    padding-top: 0;
+  }
 }
 .tab {
   display: flex;

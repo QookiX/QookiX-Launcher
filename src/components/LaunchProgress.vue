@@ -92,7 +92,9 @@ onBeforeUnmount(() => {
   height: 100%;
   background: linear-gradient(90deg, var(--accent, #e89a4b), var(--accent-deep, #d97f33));
   border-radius: 2px;
-  transition: width 0.3s ease;
+  /* 进度条是按事件跳变的，"ease" 会在每段开头突然加速；
+     换成统一的快起缓收曲线后，连续跳数看着像在匀速爬 */
+  transition: width 0.32s var(--ease-out);
 }
 .lp-fill.done {
   background: var(--success);
@@ -114,7 +116,7 @@ onBeforeUnmount(() => {
 /* 进场/退场也用 layout 位移（bottom），不用 transform，避免磨砂被合成层隔离 */
 .lp-slide-enter-active,
 .lp-slide-leave-active {
-  transition: opacity 0.25s ease, bottom 0.25s ease;
+  transition: opacity var(--dur-md) var(--ease-out), bottom 0.28s var(--ease-out);
 }
 .lp-slide-enter-from,
 .lp-slide-leave-to {

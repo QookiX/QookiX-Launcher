@@ -20,7 +20,11 @@ fn index_name_hint(pack_path: &Path) -> String {
         .unwrap_or_else(|| "整合包".into())
 }
 
-const API: &str = "https://api.modrinth.com/v2";
+/// 当前生效的 Modrinth API 根地址（跟随设置里的「内容 API 镜像」，官方源为默认）。
+/// 每次请求都重新解析，切镜像后立即生效。
+fn api(state: &AppState) -> String {
+    crate::mirror::content_api(state, "modrinth")
+}
 
 /// Browse / search projects on Modrinth.
 pub async fn search(
@@ -51,7 +55,8 @@ pub async fn search(
     // Modrinth expects `facets` to be a nested JSON array: [["project_type:mod"]]
     let facets_str = serde_json::to_string(&facets).map_err(|e| e.to_string())?;
     let url = format!(
-        "{API}/search?query={}&limit={}&offset={}&index={}&facets={}",
+        "{}/search?query={}&limit={}&offset={}&index={}&facets={}",
+        api(state),
         urlencode(query),
         limit,
         offset,
@@ -98,7 +103,7 @@ pub async fn versions(
     mc_version: &str,
     loader: &str,
 ) -> Result<Vec<Value>, String> {
-    let mut url = format!("{API}/project/{project_id}/version");
+    let mut url = format!("{}/project/{project_id}/version", api(state));
     let mut params: Vec<String> = Vec::new();
     if !mc_version.is_empty() {
         params.push(format!("game_versions={}", urlencode(&format!("[\"{mc_version}\"]"))));
@@ -148,7 +153,7 @@ pub async fn dependencies(state: &AppState, version_id: &str) -> Result<Vec<Valu
         std::collections::HashMap::new();
     if !pids.is_empty() {
         let ids_json = serde_json::to_string(&pids).unwrap_or_default();
-        let url = format!("{API}/projects");
+        let url = format!("{}/projects", api(state));
         if let Ok(resp) = state.client.get(&url).query(&[("ids", ids_json.as_str())]).send().await {
             if let Ok(arr) = resp.json::<Vec<Value>>().await {
                 for p in arr {
@@ -202,7 +207,7 @@ pub async fn version_by_hash(state: &AppState, sha1: &str) -> Result<Option<Valu
     if sha1.is_empty() {
         return Ok(None);
     }
-    let url = format!("{API}/version_file/{sha1}?algorithm=sha1");
+    let url = format!("{}/version_file/{sha1}?algorithm=sha1", api(state));
     let res = state.client.get(&url).send().await;
     match res {
         Ok(resp) if resp.status().is_success() => {
@@ -216,7 +221,7 @@ pub async fn version_by_hash(state: &AppState, sha1: &str) -> Result<Option<Valu
 }
 
 pub async fn version(state: &AppState, version_id: &str) -> Result<Value, String> {
-    crate::download::get_json(&state.client, &format!("{API}/version/{version_id}")).await
+    crate::download::get_json(&state.client, &format!("{}/version/{version_id}", api(state))).await
 }
 
 /// Primary downloadable file of a version (prefer `primary`, fallback first).
@@ -476,7 +481,7 @@ pub async fn auto_install_fabric_api(
 async fn project_icon(state: &AppState, project_id: &str) -> Option<String> {
     let resp = state
         .client
-        .get(format!("{API}/project/{project_id}"))
+        .get(format!("{}/project/{project_id}", api(state)))
         .send()
         .await
         .ok()?;
@@ -513,7 +518,7 @@ fn gallery_of(body: &Value) -> Vec<Value> {
 
 /// Fetch a single project's full info (used when opening a dependency).
 pub async fn project_info(state: &AppState, project_id: &str) -> Result<Value, String> {
-    let url = format!("{API}/project/{project_id}");
+    let url = format!("{}/project/{project_id}", api(state));
     let body: Value = crate::download::get_json(&state.client, &url).await?;
     let gallery = gallery_of(&body);
     Ok(json!({
@@ -537,7 +542,7 @@ pub async fn project_info(state: &AppState, project_id: &str) -> Result<Value, S
 
 /// Fetch project members (authors). Returns a list of usernames.
 pub async fn project_authors(state: &AppState, project_id: &str) -> Vec<String> {
-    let url = format!("{API}/project/{project_id}/members");
+    let url = format!("{}/project/{project_id}/members", api(state));
     let resp = match state.client.get(&url).send().await {
         Ok(r) => r,
         Err(_) => return Vec::new(),
@@ -568,7 +573,13 @@ pub async fn resolve_by_hashes(
         return out;
     }
     let body = json!({ "hashes": hashes, "algorithm": "sha1" });
-    let resp = match state.client.post(format!("{API}/version_files")).json(&body).send().await {
+    let resp = match state
+        .client
+        .post(format!("{}/version_files", api(state)))
+        .json(&body)
+        .send()
+        .await
+    {
         Ok(r) => r,
         Err(_) => return out,
     };

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
-import { IconBox, IconCheck, IconClock, IconCopy, IconDownload, IconHeart } from "./icons";
+import { IconBox, IconCheck, IconClock, IconCopy, IconDownload, IconHeart, IconStar, IconStarFilled } from "./icons";
 import { translateCategory } from "../utils/categories";
 import { fmtRelative as fmtDate, fmtCount as fmt } from "../utils/format";
 import type { ProjectHit } from "../types";
@@ -21,12 +21,17 @@ const props = withDefaults(
     installed?: boolean;
     /** 发现页选中的游戏版本，跳详情页时带上作为版本 tab 默认筛选 */
     mcVersion?: string;
+    /** 已在收藏夹里 */
+    favorite?: boolean;
+    /** 资源类型（模组 / 整合包 / …）；收藏夹这种混合列表才传，普通分类页不重复显示 */
+    typeLabel?: string;
   }>(),
-  { view: "grid", translateMode: false, translating: false, translatedDesc: null, installed: false, mcVersion: "" }
+  { view: "grid", translateMode: false, translating: false, translatedDesc: null, installed: false, mcVersion: "", favorite: false, typeLabel: "" }
 );
 const emit = defineEmits<{
   install: [p: ProjectHit];
   translate: [p: ProjectHit];
+  favorite: [p: ProjectHit];
 }>();
 
 const { t } = useI18n();
@@ -65,7 +70,10 @@ async function copyName() {
           <div v-else class="p-icon ph"><IconBox /></div>
         </div>
         <div class="p-body">
-          <div class="p-title text-ellipsis" :title="project.title">{{ project.title }}</div>
+          <div class="p-title-row">
+            <div class="p-title text-ellipsis" :title="project.title">{{ project.title }}</div>
+            <span v-if="typeLabel" class="type-chip">{{ typeLabel }}</span>
+          </div>
           <div class="p-author">
             {{ project.author }}
             <span v-if="fmtDate(project.updated)" class="p-updated"><IconClock /> {{ fmtDate(project.updated) }}</span>
@@ -86,6 +94,15 @@ async function copyName() {
           <span v-if="project.follows" class="fl"><IconHeart /> {{ fmt(project.follows) }}</span>
         </div>
         <div class="p-actions">
+          <button
+            class="copy-btn fav-btn"
+            :class="{ on: favorite }"
+            :title="favorite ? t('projectCard.unfavorite') : t('projectCard.favorite')"
+            @click.stop="emit('favorite', project)"
+          >
+            <IconStarFilled v-if="favorite" />
+            <IconStar v-else />
+          </button>
           <button
             class="copy-btn"
             :title="copied ? t('projectCard.copied') : t('projectCard.copyName')"
@@ -108,7 +125,10 @@ async function copyName() {
       </div>
       <div class="p-body">
         <div class="p-meta">
-          <div class="p-title text-ellipsis" :title="project.title">{{ project.title }}</div>
+          <div class="p-title-row">
+            <div class="p-title text-ellipsis" :title="project.title">{{ project.title }}</div>
+            <span v-if="typeLabel" class="type-chip">{{ typeLabel }}</span>
+          </div>
           <div class="p-author">{{ project.author }}</div>
         </div>
         <Transition v-if="view === 'list'" name="descfade" mode="out-in">
@@ -127,6 +147,15 @@ async function copyName() {
           <span v-if="fmtDate(project.updated)" class="up"><IconClock /> {{ fmtDate(project.updated) }}</span>
         </div>
         <div class="p-side-actions">
+          <button
+            class="copy-btn fav-btn"
+            :class="{ on: favorite }"
+            :title="favorite ? t('projectCard.unfavorite') : t('projectCard.favorite')"
+            @click.stop="emit('favorite', project)"
+          >
+            <IconStarFilled v-if="favorite" />
+            <IconStar v-else />
+          </button>
           <button
             class="copy-btn"
             :title="copied ? t('projectCard.copied') : t('projectCard.copyName')"
@@ -176,6 +205,16 @@ async function copyName() {
   color: var(--accent);
   border-color: var(--accent-05);
 }
+/* 收藏状态：实心星 + 主题色浅底，和旁边两颗中性按钮区分开 */
+.fav-btn.on {
+  color: var(--accent);
+  border-color: var(--accent-35);
+  background: var(--accent-soft);
+}
+.fav-btn.on:hover {
+  color: var(--accent-hover);
+  border-color: var(--accent-50);
+}
 .p-side-actions {
   display: flex;
   align-items: center;
@@ -216,6 +255,14 @@ async function copyName() {
 .p-card.view-compact .p-title {
   font-size: 12px;
   margin-bottom: 0;
+}
+.p-card.view-compact .p-title-row {
+  margin-bottom: 0;
+}
+/* 紧凑行一屏塞很多条，标签收小一号，不抢标题的位置 */
+.p-card.view-compact .type-chip {
+  font-size: 9px;
+  padding: 0 5px;
 }
 .p-card.view-compact .p-author {
   margin-bottom: 0;
@@ -274,10 +321,18 @@ async function copyName() {
   min-width: 0;
   flex: 1;
 }
+/* 标题行：标题自己可截断，资源类型标签固定跟在后面 —— 放页脚会被下载量/关注数挤掉 */
+.p-title-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  margin-bottom: 2px;
+}
 .p-title {
   font-weight: 700;
   font-size: 14px;
-  margin-bottom: 2px;
+  min-width: 0;
 }
 .p-author {
   font-size: 11px;
@@ -353,6 +408,17 @@ async function copyName() {
 .provider-badge.curseforge {
   background: rgba(241, 100, 54, 0.15);
   color: #f17a36;
+}
+/* 资源类型（模组 / 整合包 / …）：跟在标题后面，不参与页脚那排统计的宽度竞争 */
+.type-chip {
+  flex-shrink: 0;
+  font-size: 10px;
+  padding: 1px 7px;
+  border-radius: 6px;
+  font-weight: 600;
+  background: var(--accent-soft);
+  color: var(--accent);
+  white-space: nowrap;
 }
 .install-btn {
   display: inline-flex;

@@ -176,7 +176,7 @@ async fn launch_instance_inner(
             Account::Offline { .. } => "0".into(),
             // 皮肤站账号：启动前校验令牌，失效自动用 clientToken 换新
             Account::Yggdrasil { .. } => {
-                crate::yggdrasil::ensure_token(&state, account.uuid()).await?
+                crate::yggdrasil::ensure_token_for(&state, &account).await?
             }
         },
         user_type: if account.is_microsoft() || matches!(account, Account::Yggdrasil { .. }) {

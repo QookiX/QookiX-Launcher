@@ -353,25 +353,31 @@ watch(
 
 <template>
   <div>
-    <div class="world-sub">
-      <button class="seg" :class="{ active: worldSub === 'sp' }" @click="selectWorldSub('sp')">
-        <IconFolder /> {{ t("instanceSaves.singleplayer") }}
-      </button>
-      <button class="seg" :class="{ active: worldSub === 'mp' }" @click="selectWorldSub('mp')">
-        <IconGlobe /> {{ t("instanceSaves.multiplayer") }}
+    <div class="world-head">
+      <div class="world-sub">
+        <button class="seg" :class="{ active: worldSub === 'sp' }" @click="selectWorldSub('sp')">
+          <IconFolder /> {{ t("instanceSaves.singleplayer") }}
+        </button>
+        <button class="seg" :class="{ active: worldSub === 'mp' }" @click="selectWorldSub('mp')">
+          <IconGlobe /> {{ t("instanceSaves.multiplayer") }}
+        </button>
+      </div>
+      <button
+        v-if="worldSub === 'sp'"
+        class="mini-btn cloud"
+        :title="t('instanceSaves.cloudBrowseTitle')"
+        @click="openCloudBrowse"
+      >
+        <IconCloud /> {{ t("instanceSaves.cloudRestore") }}
       </button>
     </div>
 
     <!-- 单人游戏：本地世界存档 -->
     <template v-if="worldSub === 'sp'">
-      <div class="sp-toolbar">
-        <button class="mini-btn" :title="t('instanceSaves.cloudBrowseTitle')" @click="openCloudBrowse">
-          <IconCloud /> {{ t("instanceSaves.cloudRestore") }}
-        </button>
-      </div>
       <div v-if="loadingFiles" class="center">{{ t("instanceSaves.loading") }}</div>
       <div v-else-if="!fileItems.length" class="empty glass">
-        <p>{{ t("instanceSaves.noWorlds") }}</p>
+        <div class="empty-icon"><IconFolder /></div>
+        <p class="empty-title">{{ t("instanceSaves.noWorlds") }}</p>
         <p class="hint">{{ t("instanceSaves.noWorldsHint") }}</p>
         <p class="hint">{{ t("instanceSaves.noWorldsCloudHint") }}</p>
       </div>
@@ -426,7 +432,8 @@ watch(
     <template v-else>
       <div v-if="loadingServers" class="center">{{ t("instanceSaves.loading") }}</div>
       <div v-else-if="!servers.length" class="empty glass">
-        <p>{{ t("instanceSaves.noServers") }}</p>
+        <div class="empty-icon"><IconGlobe /></div>
+        <p class="empty-title">{{ t("instanceSaves.noServers") }}</p>
         <p class="hint">{{ t("instanceSaves.noServersHint") }}</p>
       </div>
       <div v-else class="content-list glass">
@@ -541,10 +548,15 @@ watch(
 </template>
 
 <style scoped>
+.world-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
 .world-sub {
   display: flex;
   gap: 8px;
-  margin-bottom: 14px;
 }
 .seg {
   display: inline-flex;
@@ -553,13 +565,16 @@ watch(
   padding: 7px 14px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: var(--w-06);
   color: var(--text-2);
   font-size: 13px;
+  font-weight: 600;
   cursor: pointer;
+  font-family: inherit;
   transition: all 0.15s;
 }
 .seg:hover {
+  background: var(--w-10);
   color: var(--text-1);
   border-color: var(--accent);
 }
@@ -715,6 +730,17 @@ watch(
   opacity: 0.5;
   cursor: default;
 }
+/* 云端恢复：世界 tab 头部唯一的跨面板动作，推到右侧并与播放按钮同色系 */
+.mini-btn.cloud {
+  margin-left: auto;
+  color: var(--accent);
+  border-color: var(--accent-04);
+  background: var(--accent-soft);
+}
+.mini-btn.cloud:hover {
+  background: var(--accent-10);
+  color: var(--accent);
+}
 .mini-btn.pin {
   padding: 7px 9px;
 }
@@ -732,24 +758,33 @@ watch(
   text-align: center;
   color: var(--text-3);
 }
-.sp-toolbar {
-  display: flex;
-  justify-content: flex-end;
-  margin-bottom: 10px;
-}
 .empty {
-  padding: 40px;
+  padding: 44px 24px;
   text-align: center;
   color: var(--text-3);
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 8px;
   align-items: center;
+}
+.empty p {
+  margin: 0;
+}
+.empty-icon {
+  font-size: 34px;
+  line-height: 1;
+  color: var(--text-3);
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.empty-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-2);
 }
 .hint {
   font-size: 12px;
   color: var(--text-3);
-  margin-top: 4px;
 }
 .bk-body {
   display: flex;

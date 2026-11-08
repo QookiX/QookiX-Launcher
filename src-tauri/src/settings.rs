@@ -280,6 +280,21 @@ pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Set
     if let Some(v) = patch.get("mirror_custom").and_then(|v| v.as_str()) {
         settings.mirror_custom = v.trim().to_string();
     }
+    // 内容 API 镜像：只接受内置预设 id 或 "custom"，其它值一律回落到官方源，
+    // 避免前端传来脏值后把发现页的请求地址拼成不可用的 URL。
+    if let Some(v) = patch.get("content_mirror").and_then(|v| v.as_str()) {
+        let id = v.trim();
+        let known = id == crate::mirror::CONTENT_CUSTOM
+            || crate::mirror::CONTENT_PRESETS.iter().any(|p| p.id == id);
+        settings.content_mirror = if known {
+            id.to_string()
+        } else {
+            crate::mirror::CONTENT_OFFICIAL.to_string()
+        };
+    }
+    if let Some(v) = patch.get("content_mirror_custom").and_then(|v| v.as_str()) {
+        settings.content_mirror_custom = v.trim().trim_end_matches('/').to_string();
+    }
     if let Some(v) = patch.get("background_image") {
         settings.background_image = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());
     }

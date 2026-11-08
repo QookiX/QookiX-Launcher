@@ -40,6 +40,9 @@ export default {
     schematicNotOpened: "请先打开一个投影文件",
     nbtTitle: "NBT 存档编辑器",
     nbtDesc: "查看并修改世界存档：游戏模式、难度、种子、时间、天气、出生点、世界边界等",
+    resourcePackTitle: "材质包预览",
+    resourcePackDesc:
+      "打开 .zip 材质包或文件夹，按分类浏览全部贴图，支持透明通道、像素放大与动画贴图播放。",
     moreTitle: "更多功能",
     moreDesc: "更多工具即将推出。",
   },

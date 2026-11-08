@@ -101,6 +101,14 @@ export default {
     centerHint: "所有安装与下载任务可在左侧「下载中心」实时查看进度、速度与剩余文件。",
   },
   content: {
+    mirror: "内容 API 镜像源",
+    mirrorOfficial: "直接使用官方接口",
+    mirrorCustom: "自定义镜像",
+    mirrorHintLead:
+      "加速发现页搜索、内容详情与版本列表的查询接口（Modrinth / CurseForge），",
+    mirrorHintBold: "切换后立即生效，无需重启",
+    mirrorHintTail:
+      "。默认使用官方源；镜像不可用时切回官方即可。自定义镜像需在根地址下同时提供 /modrinth/v2 与 /curseforge/v1，也可直接填平台专属地址。",
     curseforgeKey: "CurseForge API Key",
     curseforgePlaceholder: "在 console.curseforge.com 免费申请",
     curseforgeHint:

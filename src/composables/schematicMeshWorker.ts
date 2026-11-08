@@ -59,6 +59,23 @@ function isOccluding(state: BlockState | undefined): boolean {
   return fullCubeBlocks.has(state.name);
 }
 
+/**
+ * 某个方向的邻块能不能把这一面裁掉。
+ *
+ * 除了实心整方块，**同种半透方块之间也要裁**。水、玻璃、冰这类方块如果相邻时
+ * 不裁，一整片水就会把每一格的 6 个面全画出来；半透材质又是关掉深度写入的，
+ * 几十层内部面叠在一起混合，看着就是"一格一格、发虚的方格网"（用户报的
+ * "水方方块块的透明"就是这么来的）。
+ *
+ * 只对半透方块开这个口子：台阶/楼梯这类同名但 `half`、朝向不同的方块如果也按
+ * 名字裁，会把本该露出来的顶面裁掉，留下窟窿。
+ */
+function cullsFace(nb: BlockState | undefined, selfName: string): boolean {
+  if (!nb || isAir(nb.name)) return false;
+  if (isOccluding(nb)) return true;
+  return nb.name === selfName && isTranslucent(nb.name);
+}
+
 interface MeshBuffers {
   positions: number[];
   normals: number[];
@@ -196,9 +213,16 @@ async function initResources() {
 
   const rawUvs = layoutRes as Record<string, [number, number, number, number]>;
   log("[worker] resourceBase:", resourceBase, "| layout entries:", Object.keys(rawUvs).length, "| atlas:", atlasW, "x", atlasH);
+  // ⚠️ v 轴方向不要"顺手翻转"。deepslate 的 UV 约定是 v 向下增长（和模型 JSON 里
+  // `uv` 的 v 一致，图集从左上角算），它的 BlockModel 用 `16 - y` 把方块的 y 转成
+  // 纹理 v；贴图上传时也不做 flipY。这里必须照抄这个约定：
+  //   v0 = py/H（贴图顶边）, v1 = (py + ph)/H（贴图底边）
+  // 以前这里写成 `1 - py/H` 那一套（配合渲染端的 texture.flipY = true），两次
+  // "翻"叠加的结果是**整体上下颠倒**：花草、农作物的花瓣跑到下面去了。
+  // 完整方块因为侧面纹理大多接近上下对称，反而看不太出来。
   for (const [key, [px, py, pw, ph]] of Object.entries(rawUvs)) {
     const nk = identifier(key);
-    textureUvs[nk] = [px / atlasW, 1 - (py + ph) / atlasH, (px + pw) / atlasW, 1 - py / atlasH];
+    textureUvs[nk] = [px / atlasW, py / atlasH, (px + pw) / atlasW, (py + ph) / atlasH];
   }
   log("[worker] textureUvs entries:", Object.keys(textureUvs).length, "| sample:", Object.keys(textureUvs).slice(0, 3));
   missingTextureUv = textureUvs["minecraft:block/gray_concrete"] ?? [0, 0, 1 / 64, 1 / 64];
@@ -283,13 +307,14 @@ function buildChunkMesh(chunkPos: [number, number, number], blocks: Uint32Array,
         const state = palette[pi];
         if (!state || isAir(state.name)) continue;
 
+        const name = state.name;
         const cull: deepslate.Cull = {
-          west: isOccluding(x > 0 ? palette[blocks[y * 256 + z * 16 + (x - 1)]] : neighbour(0, y, z)),
-          east: isOccluding(x < 15 ? palette[blocks[y * 256 + z * 16 + (x + 1)]] : neighbour(1, y, z)),
-          down: isOccluding(y > 0 ? palette[blocks[(y - 1) * 256 + z * 16 + x]] : neighbour(2, z, x)),
-          up: isOccluding(y < 15 ? palette[blocks[(y + 1) * 256 + z * 16 + x]] : neighbour(3, z, x)),
-          north: isOccluding(z > 0 ? palette[blocks[y * 256 + (z - 1) * 16 + x]] : neighbour(4, y, x)),
-          south: isOccluding(z < 15 ? palette[blocks[y * 256 + (z + 1) * 16 + x]] : neighbour(5, y, x)),
+          west: cullsFace(x > 0 ? palette[blocks[y * 256 + z * 16 + (x - 1)]] : neighbour(0, y, z), name),
+          east: cullsFace(x < 15 ? palette[blocks[y * 256 + z * 16 + (x + 1)]] : neighbour(1, y, z), name),
+          down: cullsFace(y > 0 ? palette[blocks[(y - 1) * 256 + z * 16 + x]] : neighbour(2, z, x), name),
+          up: cullsFace(y < 15 ? palette[blocks[(y + 1) * 256 + z * 16 + x]] : neighbour(3, z, x), name),
+          north: cullsFace(z > 0 ? palette[blocks[y * 256 + (z - 1) * 16 + x]] : neighbour(4, y, x), name),
+          south: cullsFace(z < 15 ? palette[blocks[y * 256 + (z + 1) * 16 + x]] : neighbour(5, y, x), name),
         };
 
         const mesh = buildBlockMesh(state, cull);

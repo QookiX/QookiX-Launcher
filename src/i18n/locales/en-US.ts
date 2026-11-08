@@ -37,6 +37,7 @@ import downloads from "./_fragments/downloads.en";
 import skinEn from "./_fragments/skin.en";
 import newsEn from "./_fragments/news.en";
 import toolboxEn from "./_fragments/toolbox.en";
+import resourcePackEn from "./_fragments/resourcepack.en";
 import shimuEn from "./_fragments/shimu.en";
 import seedMapEn from "./_fragments/seedMap.en";
 import settingsEn from "./_fragments/settings.en";
@@ -88,6 +89,7 @@ export default {
     serverDetail: "Server details",
     seedMap: "Seed map",
     schematicPreview: "Schematic Workshop",
+    resourcePackPreview: "Resource Pack Preview",
     timemachine: "Time Machine",
     newInstance: "New instance",
   },
@@ -191,6 +193,7 @@ export default {
   ...skinEn,
   ...newsEn,
   ...toolboxEn,
+  resourcePack: resourcePackEn.resourcePack,
   ...shimuEn,
   ...seedMapEn,
   keybind,

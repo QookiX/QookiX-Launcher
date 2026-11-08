@@ -43,5 +43,8 @@ export default {
     moreDesc: "More tools coming soon.",
     nbtTitle: "NBT Editor",
     nbtDesc: "View and edit world saves: game mode, difficulty, seed, time, weather, spawn, border",
+    resourcePackTitle: "Resource Pack Preview",
+    resourcePackDesc:
+      "Open a .zip resource pack or folder and browse every texture by category, with alpha, pixel zoom and animated texture playback.",
   },
 };

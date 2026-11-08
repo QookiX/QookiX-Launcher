@@ -309,6 +309,7 @@ pub fn run() {
             commands::lan_sync::lan_sync_stop,
             commands::lan_sync::lan_sync_status,
             commands::lan_sync::lan_sync_pick_ip,
+            commands::lan_sync::lan_local_ip,
             // nbt 存档编辑
             commands::nbt_list_worlds,
             commands::nbt_open_world,
@@ -342,6 +343,8 @@ pub fn run() {
             commands::resolve_close_request,
             commands::list_mirrors,
             commands::test_mirror,
+            commands::list_content_mirrors,
+            commands::test_content_mirror,
             commands::test_proxy,
             commands::log_debug,
             commands::change_data_dir,
@@ -549,6 +552,12 @@ pub fn run() {
             commands::schematic_preview_close,
             commands::copy_file_to_instance_schematics,
             commands::schematic_extract_resources,
+            // toolbox (工具箱：材质包预览)
+            commands::resourcepack_open,
+            commands::resourcepack_texture,
+            commands::resourcepack_text,
+            commands::resourcepack_close,
+            commands::resourcepack_list_instance_packs,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;

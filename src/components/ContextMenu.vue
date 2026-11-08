@@ -12,10 +12,12 @@ const props = defineProps<{
 const emit = defineEmits<{ (e: "close"): void }>();
 
 const el = ref<HTMLElement | null>(null);
-const pos = ref({ left: 0, top: 0 });
+const pos = ref({ left: 0, top: 0, origin: "top left" });
 const GAP = 6;
 
-/** 先按鼠标位置放置，再夹回视口内，避免菜单被窗口边缘截断 */
+/** 先按鼠标位置放置，再夹回视口内，避免菜单被窗口边缘截断。
+ *  同时记录翻转方向 → transform-origin 跟着翻，
+ *  菜单就"从光标那一角长出来"，而不是从中心放大。 */
 function place() {
   const node = el.value;
   if (!node) return;
@@ -23,9 +25,17 @@ function place() {
   const h = node.offsetHeight;
   let left = props.x;
   let top = props.y;
-  if (left + w + GAP > window.innerWidth) left = Math.max(GAP, props.x - w);
-  if (top + h + GAP > window.innerHeight) top = Math.max(GAP, window.innerHeight - h - GAP);
-  pos.value = { left, top };
+  let originX = "left";
+  let originY = "top";
+  if (left + w + GAP > window.innerWidth) {
+    left = Math.max(GAP, props.x - w);
+    originX = "right";
+  }
+  if (top + h + GAP > window.innerHeight) {
+    top = Math.max(GAP, window.innerHeight - h - GAP);
+    originY = "bottom";
+  }
+  pos.value = { left, top, origin: `${originY} ${originX}` };
 }
 
 function onDocMouseDown(e: MouseEvent) {
@@ -80,30 +90,36 @@ onBeforeUnmount(unbind);
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="show"
-      ref="el"
-      class="ctx"
-      :style="{ left: pos.left + 'px', top: pos.top + 'px' }"
-      @contextmenu.prevent
-    >
-      <template v-for="it in items" :key="it.key">
-        <div v-if="it.sep" class="ctx-sep"></div>
-        <button
-          v-else
-          class="ctx-item"
-          :class="{ danger: it.danger }"
-          :disabled="it.disabled"
-          @click="pick(it)"
-        >
-          <span class="ctx-icon">
-            <component :is="it.icon" v-if="it.icon" />
-          </span>
-          <span class="ctx-label">{{ it.label }}</span>
-          <span v-if="it.shortcut" class="ctx-key">{{ it.shortcut }}</span>
-        </button>
-      </template>
-    </div>
+    <Transition name="ctx-fade">
+      <div
+        v-if="show"
+        ref="el"
+        class="ctx"
+        :style="{
+          left: pos.left + 'px',
+          top: pos.top + 'px',
+          transformOrigin: pos.origin,
+        }"
+        @contextmenu.prevent
+      >
+        <template v-for="it in items" :key="it.key">
+          <div v-if="it.sep" class="ctx-sep"></div>
+          <button
+            v-else
+            class="ctx-item"
+            :class="{ danger: it.danger }"
+            :disabled="it.disabled"
+            @click="pick(it)"
+          >
+            <span class="ctx-icon">
+              <component :is="it.icon" v-if="it.icon" />
+            </span>
+            <span class="ctx-label">{{ it.label }}</span>
+            <span v-if="it.shortcut" class="ctx-key">{{ it.shortcut }}</span>
+          </button>
+        </template>
+      </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -120,18 +136,31 @@ onBeforeUnmount(unbind);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.42);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-  animation: ctx-in 0.1s ease;
+  /* 出场：从光标那一角（transform-origin 由 place() 下发）微微展开，
+     0.15s 收住——比原来 0.1s 的匀速缩放更有"弹出来"的实感。
+     缩放幅度控制在 5%：菜单自带 backdrop-filter，缩放越大磨砂采样越容易看出来。 */
+  animation: ctx-in 0.15s var(--ease-out);
 }
 
 @keyframes ctx-in {
   from {
     opacity: 0;
-    transform: scale(0.97);
+    transform: scale(0.95);
   }
   to {
     opacity: 1;
     transform: scale(1);
   }
+}
+
+/* 收起：原来直接 v-if 拔掉，菜单是"啪"一下消失的。补一个极短淡出，
+   期间禁用命中测试，避免手快点到正在消失的菜单项。 */
+.ctx-fade-leave-active {
+  transition: opacity 0.1s var(--ease-in);
+  pointer-events: none;
+}
+.ctx-fade-leave-to {
+  opacity: 0;
 }
 
 .ctx-item {

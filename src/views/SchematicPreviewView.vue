@@ -131,6 +131,9 @@ const showMaterialsModal = ref(false);
 
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 let renderer: SchematicRenderer | null = null;
+/** 创建 renderer 时绑定的 canvas。模板里的 canvas 一旦重新挂载就是新元素，
+ *  旧 renderer 会继续往脱离文档的旧画布上画（界面一片空白），靠它来判断 */
+let rendererCanvas: HTMLCanvasElement | null = null;
 let resources: SchematicResources | null = null;
 let workerPool: SchematicWorkerPool | null = null;
 let resizeObserver: ResizeObserver | null = null;
@@ -206,7 +209,11 @@ async function openSchematic(source: { kind: string; path?: string; instanceId?:
   openSeq++;
   loading.value = true;
   error.value = null;
-  manifest.value = null;
+  // ⚠️ 不要在这里把 manifest 清成 null：画布是 `<div v-if="manifest">` 里的，
+  // 清空会让它整个被卸载，等新 manifest 回来时挂上来的是**另一个 canvas 元素**，
+  // 而 renderer 还捏着已经脱离文档的那个在画 —— 于是"已经打开着的模型"再点
+  // 最近打开，画面就一片空白（WebGL 内容画到没人看的旧画布上了）。
+  // 保留旧 manifest，画布原地复用，加载期间照旧显示进度条。
   loadProgress.value = 0;
   loadTotal.value = 0;
   // 首次打开要提取客户端资源（几秒的重活），必须给出反馈，
@@ -221,20 +228,35 @@ async function openSchematic(source: { kind: string; path?: string; instanceId?:
     loadLabel.value = t("toolbox.schematicMeshing");
 
     await nextTick();
-    if (!canvasRef.value) throw new Error("Canvas not ready");
+    const canvas = canvasRef.value;
+    if (!canvas) throw new Error("Canvas not ready");
+    // 兜底：万一 canvas 元素被换掉（模板结构变动 / 重新挂载），旧 renderer
+    // 画的是脱离文档的旧画布，必须整块重建，不然界面永远是空的
+    if (renderer && rendererCanvas !== canvas) {
+      renderer.dispose();
+      renderer = null;
+    }
     if (renderer) {
       renderer.clearChunks();
     } else {
-      renderer = createSchematicRenderer(canvasRef.value);
+      renderer = createSchematicRenderer(canvas);
+      rendererCanvas = canvas;
       renderer.onLockChange((locked) => {
         walkLocked.value = locked;
       });
       renderer.onSpeedChange((speed) => { walkSpeed.value = speed; });
     }
-    const wrapper = canvasRef.value.parentElement;
+    const wrapper = canvas.parentElement;
     if (wrapper && wrapper.clientWidth > 0 && wrapper.clientHeight > 0) {
       renderer.resize(wrapper.clientWidth, wrapper.clientHeight);
     }
+    // 换了个投影就把分层切片收回去：上一份的层数是按它自己的高度设的，
+    // 留到新模型上可能只显示最底下几层，看着也像"空的"
+    layerY.value = null;
+    renderer.setLayerSlice(null);
+    // 同理：上一份的漫游镜头位置对新模型没意义，直接回到正视角
+    renderer.forceOrbit();
+    viewMode.value = "orbit";
     renderer.fitCamera(m.min, m.max);
 
     if (!workerPool) {
@@ -363,6 +385,8 @@ watch(
 onUnmounted(() => {
   resizeObserver?.disconnect();
   renderer?.dispose();
+  renderer = null;
+  rendererCanvas = null;
   workerPool?.dispose();
   workerPool = null;
   if (manifest.value) {

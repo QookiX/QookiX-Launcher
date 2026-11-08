@@ -2,9 +2,11 @@
 import { computed } from "vue";
 import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { IconMapPin, IconBox, IconEdit } from "../components/icons";
+import { IconMapPin, IconBox, IconEdit, IconImage } from "../components/icons";
 import seedCover from "../assets/seed-cover.png";
 import schematicCover from "../assets/schematic-cover.png";
+import nbtCover from "../assets/nbt-cover.png";
+import resourcepackCover from "../assets/resourcepack-cover.png";
 
 const { t } = useI18n();
 const router = useRouter();
@@ -18,6 +20,7 @@ const tools = computed(() => [
     to: "/toolbox/seed",
     cover: "linear-gradient(135deg, #5aa2f0, #2f6bbd)",
     coverImg: seedCover,
+    coverPos: "center",
     beta: false,
   },
   {
@@ -28,6 +31,19 @@ const tools = computed(() => [
     to: "/toolbox/schematic",
     cover: "linear-gradient(135deg, #6b5b95, #352f44)",
     coverImg: schematicCover,
+    coverPos: "center",
+    beta: false,
+  },
+  {
+    key: "resourcepack",
+    title: t("toolbox.resourcePackTitle"),
+    desc: t("toolbox.resourcePackDesc"),
+    icon: IconImage,
+    to: "/toolbox/resourcepack",
+    cover: "linear-gradient(135deg, #d8a24a, #8c5a24)",
+    coverImg: resourcepackCover,
+    // 原图 420×260，卡片按宽度铺满后上下各裁一截；居中正好露出角色、石阶与水面
+    coverPos: "center",
     beta: false,
   },
   {
@@ -37,7 +53,10 @@ const tools = computed(() => [
     icon: IconEdit,
     to: "/toolbox/nbt",
     cover: "linear-gradient(135deg, #2f8f6b, #1d5c45)",
-    coverImg: null as string | null,
+    coverImg: nbtCover,
+    // 原图 420×260，卡片封面按宽度铺满后上下会裁掉一截；
+    // 默认 center 只露到海面和浅滩，把焦点压到下方才看得到森林与海岸线
+    coverPos: "50% 82%",
     beta: true,
   },
 ]);
@@ -64,7 +83,7 @@ function cardDelay(i: number): string {
         :style="{ animationDelay: cardDelay(i) }"
         @click="go(tool.to)"
       >
-        <div class="tool-cover" :style="tool.coverImg ? { backgroundImage: `url(${tool.coverImg})` } : { background: tool.cover }">
+        <div class="tool-cover" :style="tool.coverImg ? { backgroundImage: `url(${tool.coverImg})`, backgroundPosition: tool.coverPos } : { background: tool.cover }">
           <component :is="tool.icon" class="tool-cover-icon" />
           <span v-if="tool.beta" class="beta-tag">BETA</span>
         </div>

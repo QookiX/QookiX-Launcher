@@ -854,7 +854,7 @@ onBeforeUnmount(() => {
   height: 24px;
   border-radius: 6px;
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: var(--w-06);
   color: var(--text-1);
   cursor: pointer;
   font-size: 14px;
@@ -1047,7 +1047,7 @@ onBeforeUnmount(() => {
   padding: 6px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  background: var(--surface-2);
+  background: var(--w-04);
   color: var(--text-1);
   font-size: 13px;
   font-family: inherit;

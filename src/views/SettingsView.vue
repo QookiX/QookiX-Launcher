@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fmtMem, fmtSize, fmtTime } from "../utils/format";
+import { cacheClearPrefix } from "../utils/cache";
 import { NModal, NSelect, NSlider, NTooltip, NInput, useMessage, useDialog } from "naive-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -530,6 +531,57 @@ function onCustomMirrorInput() {
   }
 }
 
+// 内容 API 镜像（发现页 / 内容详情的 Modrinth、CurseForge 查询接口）
+const contentMirrors = ref<MirrorPreset[]>([]);
+/** 每个内容镜像最近一次测速结果（毫秒）；null 表示不可用 */
+const contentMirrorLatency = ref<Record<string, number | null>>({});
+const testingContentMirror = ref("");
+
+async function loadContentMirrors() {
+  try {
+    contentMirrors.value = await api.listContentMirrors();
+  } catch {
+    contentMirrors.value = [];
+  }
+}
+
+async function selectContentMirror(id: string) {
+  if (settings.settings?.content_mirror === id) return;
+  try {
+    await settings.patch({ content_mirror: id });
+    // 发现页结果按来源缓存（内存 5 分钟 + localStorage 6 小时），换源后旧结果
+    // 若继续命中，用户会以为镜像没生效；这里一并作废，回到发现页即重新请求。
+    cacheClearPrefix("browse:");
+    cacheClearPrefix("cf-cats:");
+  } catch (e) {
+    message.error(String(e));
+  }
+}
+
+async function testContentMirror(id: string, base: string) {
+  if (testingContentMirror.value) return;
+  testingContentMirror.value = id;
+  try {
+    const res = await api.testContentMirror(base);
+    contentMirrorLatency.value = { ...contentMirrorLatency.value, [id]: res.ms };
+  } catch (e) {
+    contentMirrorLatency.value = { ...contentMirrorLatency.value, [id]: null };
+    message.error(String(e));
+  } finally {
+    testingContentMirror.value = "";
+  }
+}
+
+function onCustomContentMirrorInput() {
+  if (!settings.settings) return;
+  if (settings.settings.content_mirror !== "custom") {
+    settings.settings.content_mirror = "custom";
+  }
+  // 自定义地址改了，旧来源的缓存结果同样不能再命中
+  cacheClearPrefix("browse:");
+  cacheClearPrefix("cf-cats:");
+}
+
 const javaCandidates = ref<JavaInfo[]>([]);
 const detecting = ref(false);
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
@@ -617,6 +669,7 @@ const settingItemsDef: { id: string; cardId: string; tab: string; labelKey: stri
   { id: "d-mirror", cardId: "download-mirror", tab: "download", labelKey: "settings.download.mirror", cardTitleKey: "settings.download.mirror" },
   { id: "d-center", cardId: "download-center", tab: "download", labelKey: "settings.download.center", cardTitleKey: "settings.download.center" },
   { id: "c-curseforge", cardId: "content-curseforge", tab: "content", labelKey: "settings.content.curseforgeKey", cardTitleKey: "settings.content.curseforgeKey" },
+  { id: "c-mirror", cardId: "content-mirror", tab: "content", labelKey: "settings.content.mirror", cardTitleKey: "settings.content.mirror" },
   { id: "c-proxy", cardId: "content-proxy", tab: "content", labelKey: "settings.content.proxy", cardTitleKey: "settings.content.proxy" },
   { id: "c-translate", cardId: "content-translate", tab: "content", labelKey: "settings.content.translate", cardTitleKey: "settings.content.translate" },
   { id: "c-autobody", cardId: "content-translate", tab: "content", labelKey: "settings.content.autoBody", cardTitleKey: "settings.content.translate" },
@@ -1051,6 +1104,7 @@ function confirmClear() {
 onMounted(() => {
   settings.load();
   loadMirrors();
+  loadContentMirrors();
   // cached scan: no full rescan if another view already fetched recently
   settings.loadJava().then((c) => (javaCandidates.value = c));
   startPolling();
@@ -1584,6 +1638,68 @@ onUnmounted(() => {
                 }}
               </b>
               {{ t("settings.content.curseforgeHint") }}
+            </p>
+          </div>
+          <div class="card glass" id="content-mirror">
+            <h3>{{ t("settings.content.mirror") }}</h3>
+            <div class="mirror-list">
+              <button
+                v-for="m in contentMirrors"
+                :key="m.id"
+                type="button"
+                class="mirror-item"
+                :class="{ active: settings.settings.content_mirror === m.id }"
+                @click="selectContentMirror(m.id)"
+              >
+                <span class="mirror-main">
+                  <span class="mirror-name">{{ m.label }}</span>
+                  <span class="mirror-base">{{ m.base || t("settings.content.mirrorOfficial") }}</span>
+                </span>
+                <span class="mirror-side">
+                  <span
+                    v-if="contentMirrorLatency[m.id] !== undefined"
+                    class="mirror-ms"
+                    :class="{ bad: contentMirrorLatency[m.id] === null }"
+                  >
+                    {{ contentMirrorLatency[m.id] === null ? t("settings.download.mirrorUnavailable") : `${contentMirrorLatency[m.id]} ms` }}
+                  </span>
+                  <span
+                    class="mirror-btn"
+                    :class="{ disabled: testingContentMirror === m.id }"
+                    @click.stop="testContentMirror(m.id, m.base)"
+                  >
+                    {{ testingContentMirror === m.id ? t("settings.download.testing") : t("settings.download.test") }}
+                  </span>
+                </span>
+              </button>
+              <div
+                class="mirror-custom"
+                :class="{ active: settings.settings.content_mirror === 'custom' }"
+                role="button"
+                tabindex="0"
+                @click="selectContentMirror('custom')"
+                @keydown.enter.prevent="selectContentMirror('custom')"
+                @keydown.space.prevent="selectContentMirror('custom')"
+              >
+                <span class="mirror-custom-head">{{ t("settings.content.mirrorCustom") }}</span>
+                <input
+                  v-model="settings.settings.content_mirror_custom"
+                  class="text-input mono"
+                  placeholder="https://your-mirror.example.com"
+                  @input="onCustomContentMirrorInput"
+                />
+                <span
+                  class="mirror-btn"
+                  :class="{ disabled: testingContentMirror === 'custom' || !settings.settings.content_mirror_custom }"
+                  @click="testContentMirror('custom', settings.settings.content_mirror_custom)"
+                >
+                  {{ testingContentMirror === 'custom' ? t("settings.download.testing") : t("settings.download.test") }}
+                </span>
+              </div>
+            </div>
+            <p class="hint">
+              {{ t("settings.content.mirrorHintLead") }}
+              <b>{{ t("settings.content.mirrorHintBold") }}</b>{{ t("settings.content.mirrorHintTail") }}
             </p>
           </div>
           <div class="card glass" id="content-proxy">

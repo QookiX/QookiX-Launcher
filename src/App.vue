@@ -302,10 +302,17 @@ onBeforeUnmount(() => {
   min-height: 0;
 }
 .content {
+  /* 内容区留白：抽成变量，页面里的吸顶条（如发现页 .browse-head）要按它
+     反向偏移才能贴到滚到最顶，改这里一处即可，不用再去各页面同步数字。 */
+  --content-pad-top: 22px;
+  --content-pad-x: 26px;
   flex: 1;
   overflow-y: auto;
+  /* 页面左右滑入的转场（slide-* 用 position:relative + left）会让页面横向溢出，
+     不裁掉的话 WebView2 会给这个滚动容器加一条横向滚动条 */
+  overflow-x: hidden;
   /* 底部留出常驻 Dock 的空间（60px 高 + 10px 悬浮间距），内容不被遮挡 */
-  padding: 22px 26px 80px;
+  padding: var(--content-pad-top) var(--content-pad-x) 80px;
 }
 </style>
 

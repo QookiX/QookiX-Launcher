@@ -1,5 +1,6 @@
 import { defineStore } from "pinia";
 import { api } from "../api";
+import { useAccountsStore } from "./accounts";
 import type { Instance, InstanceGroup } from "../types";
 
 export const useInstancesStore = defineStore("instances", {
@@ -138,6 +139,13 @@ export const useInstancesStore = defineStore("instances", {
       try {
         const res = await api.launchInstance(id, world, server);
         return res;
+      } catch (e) {
+        // 皮肤站令牌失效只能靠重新登录解决，顺手把账号抽屉拉起来，
+        // 免得用户看到「请重新登录该账号」却找不到入口
+        if (String(e).includes("请重新登录该账号")) {
+          useAccountsStore().showManager = true;
+        }
+        throw e;
       } finally {
         this.launchingId = null;
       }

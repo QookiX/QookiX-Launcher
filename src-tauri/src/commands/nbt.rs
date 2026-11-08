@@ -343,7 +343,7 @@ pub async fn nbt_set_chunk_node(
     nbt::tree::set_node_in(&mut data, &path, &value, &node_type)?;
     nbt::region::write_chunk(&dir, &dim, cx, cz, &data)?;
     // 地图缓存里那份地表数据已经过期了
-    nbt::map::invalidate(&dim, cx, cz);
+    nbt::map::invalidate(&dir, &dim, cx, cz);
     Ok(json!({ "backup": backup }))
 }
 
@@ -362,7 +362,7 @@ pub async fn nbt_delete_chunk_node(
     let mut data = nbt::region::read_chunk(&dir, &dim, cx, cz)?;
     nbt::tree::delete_node_in(&mut data, &path)?;
     nbt::region::write_chunk(&dir, &dim, cx, cz, &data)?;
-    nbt::map::invalidate(&dim, cx, cz);
+    nbt::map::invalidate(&dir, &dim, cx, cz);
     Ok(json!({ "backup": backup }))
 }
 

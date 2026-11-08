@@ -105,6 +105,14 @@ export default {
       "All install and download tasks can be viewed live in the \"Download Center\" on the left, with progress, speed and remaining files.",
   },
   content: {
+    mirror: "Content API mirror",
+    mirrorOfficial: "Use the official endpoints directly",
+    mirrorCustom: "Custom mirror",
+    mirrorHintLead:
+      "Speeds up the query endpoints behind Discover, project details and version lists (Modrinth / CurseForge). ",
+    mirrorHintBold: "Takes effect immediately—no restart needed",
+    mirrorHintTail:
+      ". Official endpoints are used by default; switch back if a mirror is unavailable. A custom mirror must serve both /modrinth/v2 and /curseforge/v1 under its root URL, or you can enter a platform-specific address.",
     curseforgeKey: "CurseForge API Key",
     curseforgePlaceholder: "Apply for free at console.curseforge.com",
     curseforgeHint:

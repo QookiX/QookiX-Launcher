@@ -6,6 +6,8 @@ export default {
   close: "Close",
   install: "Install",
   installed: "Installed",
+  favorite: "Save",
+  favorited: "Saved",
   back: "Back",
   loading: "Loading…",
   loadFailed: "Load failed",

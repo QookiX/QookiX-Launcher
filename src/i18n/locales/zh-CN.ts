@@ -37,6 +37,7 @@ import downloads from "./_fragments/downloads.zh";
 import skinZh from "./_fragments/skin.zh";
 import newsZh from "./_fragments/news.zh";
 import toolboxZh from "./_fragments/toolbox.zh";
+import resourcePackZh from "./_fragments/resourcepack.zh";
 import shimuZh from "./_fragments/shimu.zh";
 import seedMapZh from "./_fragments/seedMap.zh";
 import settingsZh from "./_fragments/settings.zh";
@@ -88,6 +89,7 @@ export default {
     serverDetail: "服务器详情",
     seedMap: "种子地图",
     schematicPreview: "投影工坊",
+    resourcePackPreview: "材质包预览",
     timemachine: "时光机",
     newInstance: "新建实例",
   },
@@ -191,6 +193,7 @@ export default {
   ...skinZh,
   ...newsZh,
   ...toolboxZh,
+  resourcePack: resourcePackZh.resourcePack,
   ...shimuZh,
   ...seedMapZh,
   keybind,

@@ -29,6 +29,8 @@ const { t } = useI18n();
 
 /** 单次渲染的最大像素边长，跟后端 MAX_SIDE 对应 */
 const MAX_SIDE = 512;
+/** 采样粒度上限，跟后端 clamp 一致：缩到最远（1 像素 64 格）时整屏仍要在 512 像素内 */
+const MAX_STEP = 256;
 const HEIGHT = 420;
 /** 打开时的默认缩放：一像素一格（视野小、解压的区块少，打开更快） */
 const DEFAULT_ZOOM = 1;
@@ -70,8 +72,6 @@ let seq = 0;
 /** 视野左上角的方块坐标 */
 const viewX0 = () => centerX.value - (cssW.value * zoom.value) / 2;
 const viewZ0 = () => centerZ.value - (HEIGHT * zoom.value) / 2;
-const toScreenX = (wx: number) => (wx - viewX0()) / zoom.value;
-const toScreenZ = (wz: number) => (wz - viewZ0()) / zoom.value;
 
 /** palette + data → 离屏 canvas（下标 0 透明，表示未生成） */
 function toOffscreen(im: MapImageData): HTMLCanvasElement {
@@ -105,8 +105,11 @@ function addTile(r: MapImageData) {
     canvas: toOffscreen(r),
   };
   const rest = tiles.value.filter(
-    (o) => !(o.x0 === tile.x0 && o.z0 === tile.z0 && o.x1 === tile.x1 && o.z1 === tile.z1)
+    (o) =>
+      o.step === tile.step &&
+      !(o.x0 === tile.x0 && o.z0 === tile.z0 && o.x1 === tile.x1 && o.z1 === tile.z1)
   );
+  // 只留同一粒度的瓦片：换粒度后旧图既不会被画出来，留着也是白占内存
   tiles.value = [...rest, tile].slice(-MAX_TILES);
 }
 
@@ -116,45 +119,63 @@ function draw() {
   if (!cv || !ctx) return;
   const dpr = window.devicePixelRatio || 1;
   const pxW = Math.round(cssW.value * dpr);
-  if (cv.width !== pxW || cv.height !== Math.round(HEIGHT * dpr)) {
+  const pxH = Math.round(HEIGHT * dpr);
+  if (cv.width !== pxW || cv.height !== pxH) {
     cv.width = pxW;
-    cv.height = Math.round(HEIGHT * dpr);
+    cv.height = pxH;
   }
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  // 全程按设备像素算、按整数画：之前用 CSS 坐标 + setTransform(dpr) 时，
+  // 视野原点一被拖动就带小数，地形像素和网格线各自落在不同的半像素上，
+  // 于是"格子对不齐"。现在地形格子边界和网格线共用同一套取整，必然重合。
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
   ctx.imageSmoothingEnabled = false;
   ctx.fillStyle = "#101319";
-  ctx.fillRect(0, 0, cssW.value, HEIGHT);
+  ctx.fillRect(0, 0, pxW, pxH);
 
-  // 粗的先画，细的盖上面；同粒度按先后顺序
-  const ordered = [...tiles.value].sort((a, b) => b.step - a.step || a.seq - b.seq);
-  for (const tile of ordered) {
-    const sx = toScreenX(tile.x0);
-    const sz = toScreenZ(tile.z0);
-    const sw = (tile.x1 - tile.x0) / zoom.value;
-    const sh = (tile.z1 - tile.z0) / zoom.value;
-    if (sx + sw <= 0 || sz + sh <= 0 || sx >= cssW.value || sz >= HEIGHT) continue;
-    ctx.drawImage(tile.canvas, sx, sz, sw, sh);
+  const { step } = viewRect();
+  /** 方块 → 设备像素 */
+  const scale = dpr / zoom.value;
+  const ox = -viewX0() * scale;
+  const oz = -viewZ0() * scale;
+
+  // 只画当前粒度的瓦片。混着不同分辨率一起画时，低清瓦片会从高清瓦片没盖到的
+  // 地方露出来，整张图就是"一块一块的平地 + 对不上的格子"。
+  let list = tiles.value.filter((t) => t.step === step);
+  if (!list.length) {
+    // 切换粒度后新图还没回来，先用旧图垫着，免得缩放时闪空
+    list = [...tiles.value];
+  }
+  list.sort((a, b) => a.seq - b.seq);
+  for (const tile of list) {
+    const x0 = Math.round(ox + tile.x0 * scale);
+    const z0 = Math.round(oz + tile.z0 * scale);
+    const x1 = Math.round(ox + tile.x1 * scale);
+    const z1 = Math.round(oz + tile.z1 * scale);
+    if (x1 <= 0 || z1 <= 0 || x0 >= pxW || z0 >= pxH) continue;
+    ctx.drawImage(tile.canvas, x0, z0, x1 - x0, z1 - z0);
   }
 
   // 区块网格：一格在屏幕上够大才画
-  const pxPerChunk = 16 / zoom.value;
-  if (pxPerChunk >= 9) {
+  const pxPerChunk = 16 * scale;
+  if (pxPerChunk >= 9 * dpr) {
+    const lw = Math.max(1, Math.round(dpr));
+    const half = lw % 2 ? 0.5 : 0; // 奇数线宽压在整像素缝隙上才不发虚
     ctx.strokeStyle = "rgba(255,255,255,0.09)";
-    ctx.lineWidth = 1;
+    ctx.lineWidth = lw;
     const c0x = Math.floor(viewX0() / 16);
     const c1x = Math.ceil((viewX0() + cssW.value * zoom.value) / 16);
     const c0z = Math.floor(viewZ0() / 16);
     const c1z = Math.ceil((viewZ0() + HEIGHT * zoom.value) / 16);
     ctx.beginPath();
     for (let cx = c0x; cx <= c1x; cx++) {
-      const x = Math.round(toScreenX(cx * 16)) + 0.5;
+      const x = Math.round(ox + cx * 16 * scale) + half;
       ctx.moveTo(x, 0);
-      ctx.lineTo(x, HEIGHT);
+      ctx.lineTo(x, pxH);
     }
     for (let cz = c0z; cz <= c1z; cz++) {
-      const z = Math.round(toScreenZ(cz * 16)) + 0.5;
+      const z = Math.round(oz + cz * 16 * scale) + half;
       ctx.moveTo(0, z);
-      ctx.lineTo(cssW.value, z);
+      ctx.lineTo(pxW, z);
     }
     ctx.stroke();
   }
@@ -162,15 +183,17 @@ function draw() {
   // 当前选中的区块
   const sel = props.selected;
   if (sel) {
-    const x = toScreenX(sel.cx * 16);
-    const z = toScreenZ(sel.cz * 16);
-    const w = pxPerChunk;
-    if (x + w > 0 && z + w > 0 && x < cssW.value && z < HEIGHT) {
+    const x = Math.round(ox + sel.cx * 16 * scale);
+    const z = Math.round(oz + sel.cz * 16 * scale);
+    const w = Math.round(ox + (sel.cx * 16 + 16) * scale) - x;
+    const h = Math.round(oz + (sel.cz * 16 + 16) * scale) - z;
+    if (x + w > 0 && z + h > 0 && x < pxW && z < pxH) {
       ctx.strokeStyle =
         getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() ||
         "#e89a4b";
-      ctx.lineWidth = 2;
-      ctx.strokeRect(x + 1, z + 1, w - 2, w - 2);
+      ctx.lineWidth = Math.max(2, Math.round(2 * dpr));
+      const pad = Math.round(ctx.lineWidth / 2);
+      ctx.strokeRect(x + pad, z + pad, w - pad * 2, h - pad * 2);
     }
   }
 }
@@ -180,7 +203,10 @@ function viewRect() {
   const vw = cssW.value * zoom.value;
   const vh = HEIGHT * zoom.value;
   // 留 2 像素余量：范围会对齐到 step，正好卡在 512 会被后端拒绝
-  const step = Math.max(1, Math.ceil(Math.max(vw, vh) / (MAX_SIDE - 2)));
+  const step = Math.min(
+    MAX_STEP,
+    Math.max(1, Math.ceil(Math.max(vw, vh) / (MAX_SIDE - 2)))
+  );
   const x0 = Math.floor(viewX0() / step) * step;
   const z0 = Math.floor(viewZ0() / step) * step;
   const x1 = x0 + Math.max(1, Math.ceil((viewX0() + vw - x0) / step)) * step;
@@ -188,10 +214,11 @@ function viewRect() {
   return { x0, z0, x1, z1, step };
 }
 
-/** 已经有瓦片（粒度不粗于需要的）把整个视野盖住了吗 */
+/** 已经有瓦片（同一粒度）把整个视野盖住了吗 */
 function covered(r: { x0: number; z0: number; x1: number; z1: number; step: number }) {
   return tiles.value.some(
-    (t) => t.step <= r.step && t.x0 <= r.x0 && t.z0 <= r.z0 && t.x1 >= r.x1 && t.z1 >= r.z1
+    (t) =>
+      t.step === r.step && t.x0 <= r.x0 && t.z0 <= r.z0 && t.x1 >= r.x1 && t.z1 >= r.z1
   );
 }
 
@@ -227,7 +254,13 @@ async function render() {
     addTile(data);
     draw();
   } catch {
-    // 渲染失败（比如范围过大）不打断交互，保持已有的图
+    // 渲染失败（比如范围过大）不打断交互，保持已有的图。
+    // 但如果连一张当前粒度的图都没有，画布上剩下的可能是上一个世界/上一档
+    // 缩放的残留，宁可清空也别让人看着一张假地图。
+    if (!tiles.value.some((t) => t.step === r.step)) {
+      tiles.value = [];
+      draw();
+    }
   } finally {
     if (mine === seq) {
       rendering.value = false;
@@ -313,15 +346,19 @@ function onUp(e: MouseEvent) {
   dragging = false;
   if (moved > 4) return; // 拖过就不算点击
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  const wx = viewX0() + (e.clientX - rect.left) * zoom.value;
-  const wz = viewZ0() + (e.clientY - rect.top) * zoom.value;
+  // 画布 CSS 宽度和测量值可能有零点几像素的差，按比例换算一下，
+  // 否则点选到的区块会和看到的位置差一格（"明明有地形却提示尚未生成"）
+  const k = rect.width > 0 ? cssW.value / rect.width : 1;
+  const wx = viewX0() + (e.clientX - rect.left) * k * zoom.value;
+  const wz = viewZ0() + (e.clientY - rect.top) * k * zoom.value;
   emit("pick", Math.floor(wx / 16), Math.floor(wz / 16));
 }
 
 function onWheel(e: WheelEvent) {
   const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-  const bx = viewX0() + (e.clientX - rect.left) * zoom.value;
-  const bz = viewZ0() + (e.clientY - rect.top) * zoom.value;
+  const k = rect.width > 0 ? cssW.value / rect.width : 1;
+  const bx = viewX0() + (e.clientX - rect.left) * k * zoom.value;
+  const bz = viewZ0() + (e.clientY - rect.top) * k * zoom.value;
   const next = Math.min(64, Math.max(0.25, zoom.value * (e.deltaY > 0 ? 1.25 : 0.8)));
   // 以鼠标位置为锚点缩放
   centerX.value = bx + (centerX.value - bx) * (next / zoom.value);
@@ -340,7 +377,8 @@ function zoomBy(f: number) {
 function measure() {
   if (!wrapRef.value) return;
   const w = wrapRef.value.clientWidth;
-  if (w > 0 && Math.abs(w - cssW.value) > 1) {
+  // 差 1 像素也要重算：画布宽度和这里记的宽度对不上时，点选的区块会整体偏一格
+  if (w > 0 && Math.abs(w - cssW.value) > 0.5) {
     cssW.value = w;
     draw();
     scheduleRender();
@@ -350,7 +388,9 @@ function measure() {
 defineExpose({ refresh });
 
 watch(
-  () => [props.world, props.dim].join("|"),
+  // 实例也要带上：不同实例里同名的世界（"新的世界" 这种）目录名完全一样，
+  // 只盯着 world 的话切换实例不会触发重置，地图上会一直挂着上一个实例的地形
+  () => [props.instanceId, props.world, props.dim].join("|"),
   async () => {
     tiles.value = [];
     await openInitialView();

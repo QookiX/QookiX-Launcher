@@ -100,6 +100,10 @@ export const api = {
   // 镜像测速：页面内已有独立加载态，不触发顶部加载条
   listMirrors: () => invoke<MirrorPreset[]>("list_mirrors"),
   testMirror: (base: string) => invoke<MirrorTestResult>("test_mirror", { base }),
+  // 内容 API 镜像（发现页 / 内容详情的 Modrinth、CurseForge 查询接口）
+  listContentMirrors: () => invoke<MirrorPreset[]>("list_content_mirrors"),
+  testContentMirror: (base: string) =>
+    invoke<MirrorTestResult>("test_content_mirror", { base }),
   testProxy: (proxyMode: string, proxy: string | null) =>
     invoke<MirrorTestResult>("test_proxy", { proxyMode, proxy }),
   changeDataDir: (newDir: string, mode: "move" | "copy" | "pointer") =>
@@ -465,6 +469,8 @@ export const api = {
   /** 多网卡时切换手机应连接的地址 */
   lanSyncPickIp: (ip: string) =>
     invoke<LanSyncState>("lan_sync_pick_ip", { ip }),
+  /** 本机首选的局域网 IPv4（离线/无网卡时 null）；与局域网同步共用同一套网卡打分 */
+  lanLocalIp: () => invoke<string | null>("lan_local_ip"),
 
   estimateDownload: (mcVersion: string) =>
     invoke<{

@@ -24,12 +24,42 @@ const HEADER_LEN: usize = SECTOR * 2;
 /// 单个条目最多 255 个扇区（≈1 MiB），超过写不下
 const MAX_SECTORS: usize = 255;
 
-/// 维度对应的 region 目录
+/// 维度对应的 region 目录。
+///
+/// 两种布局都要认：
+/// - 26.x（新的版本号方案）起，三个原版维度都搬到了
+///   `dimensions/minecraft/{overworld,the_nether,the_end}/region`，存档根下
+///   已经没有 `region/` 了；只认老路径的话这类存档的地图会整片空白、区块列表是 0。
+/// - 更早的版本：主世界 `region/`，下界 `DIM-1/region`，末地 `DIM1/region`。
+///
+/// 谁存在用谁；都不存在时返回新布局的路径（新建区块按游戏当前的写法落盘）。
 pub fn region_dir(world_dir: &Path, dim: &str) -> PathBuf {
-    match dim {
-        "nether" => world_dir.join("DIM-1").join("region"),
-        "end" => world_dir.join("DIM1").join("region"),
-        _ => world_dir.join("region"),
+    let (vanilla, legacy) = match dim {
+        "nether" => ("the_nether", "DIM-1"),
+        "end" => ("the_end", "DIM1"),
+        _ => ("overworld", ""),
+    };
+    let modern = world_dir
+        .join("dimensions")
+        .join("minecraft")
+        .join(vanilla)
+        .join("region");
+    if modern.is_dir() {
+        return modern;
+    }
+    let old = if legacy.is_empty() {
+        world_dir.join("region")
+    } else {
+        world_dir.join(legacy).join("region")
+    };
+    if old.is_dir() {
+        return old;
+    }
+    // 两个都没生成过：按存档本身的布局来定（新存档写 dimensions 下）
+    if world_dir.join("dimensions").is_dir() {
+        modern
+    } else {
+        old
     }
 }
 

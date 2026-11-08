@@ -206,6 +206,13 @@ fn score_ipv4(octets: [u8; 4], iface_name: &str) -> Option<i32> {
     Some(score)
 }
 
+/// 本机首选的局域网 IPv4（供 UI 展示「本机地址」，如服务器卡片的连接地址）。
+/// 复用上面的网卡打分规则：真实网卡优先，虚拟网卡降权，Clash 之类的假 IP 直接拒绝。
+/// 没有任何可用网卡时返回 None，调用方自行回退（一般是 localhost）。
+pub(crate) fn preferred_lan_ip() -> Option<String> {
+    list_lan_ips().into_iter().next()
+}
+
 /// 枚举本机所有可能的局域网 IPv4，按「可信度」降序排列。
 fn list_lan_ips() -> Vec<String> {
     let mut candidates: Vec<(i32, String)> = Vec::new();

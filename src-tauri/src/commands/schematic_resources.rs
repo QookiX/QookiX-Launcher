@@ -106,7 +106,12 @@ fn find_latest_version(versions_dir: &Path) -> Result<(String, PathBuf), String>
 /// ⚠️ 写入与校验必须用这同一个常量：此前写入端写 `v4-trns-alpha`、校验端读
 /// `v7-atlas-pad`，两边对不上 → `is_cache_complete` 永远是 false，缓存目录每次
 /// 都被删掉重新解包客户端 jar（打开投影白等几秒）。
-const RESOURCE_CACHE_VERSION: &str = "v7-atlas-pad";
+///
+/// `v8-alpha-expand`：解码改成 EXPAND+STRIP_16，灰度/tRNS 贴图终于带上 alpha，
+/// 图集内容变了 —— 旧缓存必须作废重建。
+///
+/// `v9-anim-first-frame`：动画贴图（灯笼/水/岩浆/火…）只打包首帧，图集尺寸也变了。
+const RESOURCE_CACHE_VERSION: &str = "v9-anim-first-frame";
 
 /// 检查缓存目录是否已有完整资源。
 fn is_cache_complete(cache_dir: &Path) -> bool {
@@ -146,6 +151,9 @@ fn extract_resources_from_jar(jar_path: &Path, cache_dir: &Path) -> Result<(), S
     let mut state_index: BTreeMap<String, Value> = BTreeMap::new();
     let mut textures: Vec<TextureEntry> = Vec::new();
     let mut lang_data: Option<Value> = None;
+    // 带动画的贴图（有 `*.png.mcmeta` 且含 `animation`）：这些 PNG 是竖着叠帧的
+    // 长条（灯笼 16×48、水 16×512、岩浆 32×1024…），打包图集前要裁成首帧。
+    let mut animated: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     let mut tex_fail = 0;
     let mut tex_fail_msg = String::new();
@@ -199,6 +207,19 @@ fn extract_resources_from_jar(jar_path: &Path, cache_dir: &Path) -> Result<(), S
                 }
                 Err(_) => { tex_fail += 1; }
             }
+        } else if name.starts_with("assets/minecraft/textures/") && name.ends_with(".png.mcmeta") {
+            // 动画元数据：`{"animation": {...}}` 才是叠帧长条；只有 `{"gui": ...}`
+            // 的那批（gui 缩放信息）不算，不能裁。
+            let key = name
+                .strip_prefix("assets/minecraft/textures/")
+                .and_then(|s| s.strip_suffix(".png.mcmeta"))
+                .unwrap_or("")
+                .to_string();
+            if let Ok(v) = serde_json::from_slice::<Value>(&buf) {
+                if v.get("animation").is_some() {
+                    animated.insert(key);
+                }
+            }
         } else if name == "assets/minecraft/lang/en_us.json" {
             if let Ok(v) = serde_json::from_slice::<Value>(&buf) {
                 lang_data = Some(v);
@@ -206,7 +227,27 @@ fn extract_resources_from_jar(jar_path: &Path, cache_dir: &Path) -> Result<(), S
         }
     }
 
-    eprintln!("[schematic] 模型:{} 状态:{} 纹理:{} 失败:{}", model_index.len(), state_index.len(), textures.len(), tex_fail);
+    // 动画贴图只保留第一帧 —— 图集里存整条 16×512 的话，模型 UV 0..16 会把
+    // 全部帧一起铺到一个面上，看起来就是一条条横着的色带（用户报的"灯笼贴图错乱"）。
+    // 静态预览不需要动画，首帧就是最直观的样子。
+    let mut cropped = 0;
+    for tex in textures.iter_mut() {
+        if !animated.contains(&tex.key) {
+            continue;
+        }
+        if let Some(new_height) =
+            first_frame_height(tex.width, tex.height, tex.data.len())
+        {
+            tex.data.truncate((tex.width as usize) * (new_height as usize) * 4);
+            tex.height = new_height;
+            cropped += 1;
+        }
+    }
+
+    eprintln!(
+        "[schematic] 模型:{} 状态:{} 纹理:{} 失败:{} 动画裁帧:{}",
+        model_index.len(), state_index.len(), textures.len(), tex_fail, cropped
+    );
     if !tex_fail_msg.is_empty() {
         eprintln!("[schematic] 失败示例: {}", tex_fail_msg);
     }
@@ -280,100 +321,81 @@ fn extract_resources_from_jar(jar_path: &Path, cache_dir: &Path) -> Result<(), S
 }
 
 /// 解码 PNG 为 RGBA 像素数据。
+///
+/// 关键：必须让 png crate 先做 `EXPAND` + `STRIP_16`（即 `normalize_to_color8`）。
+///
+/// * `EXPAND`：调色板→RGB、<8bit 的灰度→8bit、**tRNS 色键→alpha 通道**；
+/// * `STRIP_16`：16bit 采样→8bit。
+///
+/// 不展开会踩两个坑：
+/// 1. 原版有一批「灰度 + tRNS」的贴图（睡莲、藤蔓、云杉树叶、铁砧顶面、
+///    草方块侧面叠加层、萤石/瓜藤等，1.21.11 里共 17 张方块贴图）。旧代码
+///    只看 `color_type == Grayscale`，把 tRNS 扔了 → 透明像素退化成**不透明黑块**，
+///    预览里就是睡莲/藤蔓该透的地方一圈黑（用户报的正是这个）。
+/// 2. 1/2/4bit 的灰度贴图（`effect/dither`、部分 gui sprites）按「1 字节 1 像素」
+///    校验尺寸必然失败，整张贴图被丢弃。
 fn decode_png(data: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
-    let decoder = png::Decoder::new(Cursor::new(data));
+    let mut decoder = png::Decoder::new(Cursor::new(data));
+    decoder.set_transformations(
+        png::Transformations::EXPAND | png::Transformations::STRIP_16,
+    );
     let mut reader = decoder
         .read_info()
         .map_err(|e| format!("PNG 解码失败: {e}"))?;
-    let info = reader.info().clone();
-    let width = info.width;
-    let height = info.height;
 
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let frame = reader
         .next_frame(&mut buf)
         .map_err(|e| format!("PNG 帧读取失败: {e}"))?;
-    buf.truncate(frame.buffer_size());
 
+    let width = frame.width;
+    let height = frame.height;
     let expected = (width as usize) * (height as usize);
-    if info.color_type == png::ColorType::Rgba {
-        if buf.len() != expected * 4 {
-            return Err(format!("RGBA 数据大小不匹配: {} != {}", buf.len(), expected * 4));
-        }
-        Ok((width, height, buf))
-    } else if info.color_type == png::ColorType::Rgb {
-        if buf.len() != expected * 3 {
-            return Err(format!("RGB 数据大小不匹配: {} != {}", buf.len(), expected * 3));
-        }
-        let mut rgba = Vec::with_capacity(expected * 4);
-        for chunk in buf.chunks_exact(3) {
-            rgba.push(chunk[0]);
-            rgba.push(chunk[1]);
-            rgba.push(chunk[2]);
-            rgba.push(255);
-        }
-        Ok((width, height, rgba))
-    } else if info.color_type == png::ColorType::Grayscale {
-        if buf.len() != expected {
-            return Err(format!("灰度数据大小不匹配: {} != {}", buf.len(), expected));
-        }
-        let mut rgba = Vec::with_capacity(expected * 4);
-        for &g in &buf {
-            rgba.push(g);
-            rgba.push(g);
-            rgba.push(g);
-            rgba.push(255);
-        }
-        Ok((width, height, rgba))
-    } else if info.color_type == png::ColorType::GrayscaleAlpha {
-        if buf.len() != expected * 2 {
-            return Err(format!("灰度Alpha数据大小不匹配: {} != {}", buf.len(), expected * 2));
-        }
-        let mut rgba = Vec::with_capacity(expected * 4);
-        for chunk in buf.chunks_exact(2) {
-            rgba.push(chunk[0]);
-            rgba.push(chunk[0]);
-            rgba.push(chunk[0]);
-            rgba.push(chunk[1]);
-        }
-        Ok((width, height, rgba))
-    } else if info.color_type == png::ColorType::Indexed {
-        let palette = info.palette.as_ref().ok_or("索引 PNG 缺少调色板")?;
-        let trns = info.trns.as_deref().unwrap_or(&[]);
-        let bd = info.bit_depth as u8 as usize;
-        let mut rgba = Vec::with_capacity(expected * 4);
-        if bd == 8 {
-            if buf.len() < expected {
-                return Err(format!("索引数据大小不匹配: {} < {}", buf.len(), expected));
-            }
-            for &idx in &buf[..expected] {
-                let i = idx as usize * 3;
-                rgba.push(palette.get(i).copied().unwrap_or(0));
-                rgba.push(palette.get(i + 1).copied().unwrap_or(0));
-                rgba.push(palette.get(i + 2).copied().unwrap_or(0));
-                rgba.push(trns.get(idx as usize).copied().unwrap_or(255));
-            }
-        } else {
-            let ppb = 8 / bd;
-            let mask = (1u8 << bd) - 1;
-            let row_bytes = (width as usize * bd + 7) / 8;
-            for y in 0..height as usize {
-                for x in 0..width as usize {
-                    let bi = y * row_bytes + x / ppb;
-                    let shift = 8 - bd - (x % ppb) * bd;
-                    let idx = (buf.get(bi).copied().unwrap_or(0) >> shift) & mask;
-                    let i = idx as usize * 3;
-                    rgba.push(palette.get(i).copied().unwrap_or(0));
-                    rgba.push(palette.get(i + 1).copied().unwrap_or(0));
-                    rgba.push(palette.get(i + 2).copied().unwrap_or(0));
-                    rgba.push(trns.get(idx as usize).copied().unwrap_or(255));
-                }
-            }
-        }
-        Ok((width, height, rgba))
-    } else {
-        Err(format!("不支持的 PNG 颜色类型: {:?}", info.color_type))
+    let channels = match frame.color_type {
+        png::ColorType::Rgba => 4,
+        png::ColorType::Rgb => 3,
+        png::ColorType::GrayscaleAlpha => 2,
+        png::ColorType::Grayscale => 1,
+        png::ColorType::Indexed => return Err("索引 PNG 未被展开".to_string()),
+    };
+    let src = &buf[..frame.buffer_size()];
+    if src.len() < expected * channels {
+        return Err(format!(
+            "像素数据大小不匹配: {} < {}",
+            src.len(),
+            expected * channels
+        ));
     }
+    if channels == 4 {
+        return Ok((width, height, src.to_vec()));
+    }
+
+    let mut rgba = Vec::with_capacity(expected * 4);
+    for i in 0..expected {
+        let b = i * channels;
+        match channels {
+            1 => {
+                let g = src[b];
+                rgba.extend_from_slice(&[g, g, g, 255]);
+            }
+            2 => {
+                let g = src[b];
+                rgba.extend_from_slice(&[g, g, g, src[b + 1]]);
+            }
+            _ => rgba.extend_from_slice(&[src[b], src[b + 1], src[b + 2], 255]),
+        }
+    }
+    Ok((width, height, rgba))
+}
+
+/// 动画贴图长条的「首帧高度」。MC 的动画帧一律是 `宽×宽` 竖着叠起来，所以首帧
+/// 高度就等于宽度；不是整数倍（或本来就是方形）就说明不是叠帧长条，返回 None。
+fn first_frame_height(width: u32, height: u32, data_len: usize) -> Option<u32> {
+    if width == 0 || height <= width || height % width != 0 {
+        return None;
+    }
+    let frame_len = (width as usize) * (width as usize) * 4;
+    (data_len >= frame_len).then_some(width)
 }
 
 /// 编码 RGBA 数据为 PNG 文件。
@@ -643,6 +665,51 @@ mod tests {
 
         let [bx, ..] = layout["b"];
         assert!(bx >= ax + aw + 2, "两张贴图之间要隔开：{ax}+{aw} vs {bx}");
+    }
+
+    /// 灰度 + tRNS 的贴图（睡莲、藤蔓、云杉树叶这一批）必须解出真正的 alpha，
+    /// 否则 tRNS 被忽略、透明像素退化成不透明黑块
+    #[test]
+    fn decode_png_expands_grayscale_trns_to_alpha() {
+        use base64::Engine;
+        // 4×4 灰度 PNG，tRNS 声明灰度值 0 为透明色；左上 2×2 是 0，其余是 200
+        const B64: &str = "iVBORw0KGgoAAAANSUhEUgAAAAQAAAAECAAAAACMmsGiAAAAAnRSTlMAAHaTzTgAAAATSURBVHicY2BgOHGCAUycOAElAEsUCWE9Mt9cAAAAAElFTkSuQmCC";
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(B64)
+            .expect("测试用 PNG 的 base64 应可解码");
+
+        let (w, h, rgba) = decode_png(&bytes).expect("灰度 + tRNS 应能解码");
+        assert_eq!((w, h), (4, 4));
+        assert_eq!(rgba.len(), 4 * 4 * 4);
+        assert_eq!(&rgba[0..4], &[0, 0, 0, 0], "tRNS 声明的颜色必须变成全透明");
+        let opaque = &rgba[rgba.len() - 4..];
+        assert_eq!(opaque, &[200, 200, 200, 255], "其余像素应不透明");
+        assert!(
+            rgba.chunks_exact(4).filter(|p| p[3] == 0).count() == 4,
+            "恰好 4 个像素透明"
+        );
+    }
+
+    /// 动画贴图必须只用首帧：整条 16×48 打包进图集的话，模型 UV 0..16 会把
+    /// 三帧一起铺到一个面上（灯笼那圈横条色带就是这么来的）
+    #[test]
+    fn animation_strip_uses_first_frame_only() {
+        // 16×48 = 3 帧，每帧 16×16
+        let mut data = vec![0u8; 16 * 48 * 4];
+        for (i, b) in data.iter_mut().enumerate() {
+            *b = (i % 251) as u8;
+        }
+        let h = first_frame_height(16, 48, data.len()).expect("16x48 应识别为 3 帧长条");
+        assert_eq!(h, 16);
+        data.truncate((16 * h as usize) * 4);
+        assert_eq!(data.len(), 16 * 16 * 4, "只留第一帧");
+
+        // 方形贴图不动
+        assert_eq!(first_frame_height(16, 16, 16 * 16 * 4), None);
+        // 高度不是宽度的整数倍：不是叠帧长条，不动
+        assert_eq!(first_frame_height(16, 40, 16 * 40 * 4), None);
+        // 32×1024 的流水（32 帧）
+        assert_eq!(first_frame_height(32, 1024, 32 * 1024 * 4), Some(32));
     }
 
     #[test]

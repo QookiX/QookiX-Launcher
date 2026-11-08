@@ -3,7 +3,6 @@ use crate::state::AppState;
 use serde_json::{json, Value};
 use tauri::Emitter;
 
-const API: &str = "https://api.curseforge.com/v1";
 const GAME_ID: u32 = 432; // Minecraft
 
 /// CurseForge class ids for Minecraft content.
@@ -34,9 +33,28 @@ fn api_key(state: &AppState) -> Result<String, String> {
     Err("未配置 CurseForge API Key，请在设置中填写，或用 CURSEFORGE_API_KEY 环境变量重新构建（可前往 console.curseforge.com 免费申请）".into())
 }
 
+/// reqwest 的 Display 只给最外层（"error sending request for url (...)"），
+/// 真正原因（DNS 解析失败 / TCP 连不上 / TLS 握手失败 / 连接被重置）都挂在
+/// source 链上。逐层拼出来，否则排查时只能看到一句无信息量的"发送失败"。
+fn error_chain(e: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = e.to_string();
+    let mut cur = e.source();
+    while let Some(err) = cur {
+        let msg = err.to_string();
+        // 有些层只是把上层的话重复一遍，跳过避免刷屏
+        if !msg.is_empty() && !out.contains(&msg) {
+            out.push_str(" <- ");
+            out.push_str(&msg);
+        }
+        cur = err.source();
+    }
+    out
+}
+
 async fn get(state: &AppState, path: &str, params: &[(&str, String)]) -> Result<Value, String> {
     let key = api_key(state)?;
-    let mut url = format!("{API}{path}");
+    // 发现页/详情页的 CurseForge 查询同样跟随「内容 API 镜像」设置
+    let mut url = format!("{}{path}", crate::mirror::content_api(state, "curseforge"));
     if !params.is_empty() {
         url.push('?');
         url.push_str(
@@ -53,7 +71,7 @@ async fn get(state: &AppState, path: &str, params: &[(&str, String)]) -> Result<
         .header("x-api-key", key)
         .send()
         .await
-        .map_err(|e| format!("CurseForge 请求失败: {e}"))?;
+        .map_err(|e| format!("CurseForge 请求失败: {}", error_chain(&e)))?;
     let status = resp.status();
     let text = resp
         .text()
@@ -114,7 +132,7 @@ pub async fn dependencies(state: &AppState, mod_id: &str, file_id: &str) -> Resu
     let mut info_map: std::collections::HashMap<u64, (String, String)> = std::collections::HashMap::new();
     if !mod_ids.is_empty() {
         let key = api_key(state)?;
-        let url = format!("{API}/mods");
+        let url = format!("{}/mods", crate::mirror::content_api(state, "curseforge"));
         let payload = json!({ "modIds": mod_ids });
         if let Ok(resp) = state
             .client

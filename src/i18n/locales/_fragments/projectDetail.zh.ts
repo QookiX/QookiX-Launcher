@@ -6,6 +6,8 @@ export default {
   close: "关闭",
   install: "安装",
   installed: "已安装",
+  favorite: "收藏",
+  favorited: "已收藏",
   back: "返回",
   loading: "加载中…",
   loadFailed: "加载失败",

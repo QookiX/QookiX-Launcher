@@ -412,9 +412,30 @@ a:focus-visible,
   white-space: nowrap;
 }
 
-.fade-enter-active,
+/* —— 动效令牌 ——
+   全站统一的手感基准，与 Dock 启动区浮层（SideBar 的 inst-unfold /
+   inst-row-in）、实例详情的 tab 指示条用的是同一套曲线：
+   --ease-out   快起缓收，收尾长，最"顺"的通用出场曲线
+   --ease-spring 轻微过冲，用于需要一点弹性的小元素（角标、按钮）
+   --ease-in    出场/收起，快速离开视线
+   新写动画优先用这些令牌，别再散落 cubic-bezier 字面量。
+   注意：本项目对 transform 敏感（会隔离合成层让 backdrop-filter 采样失效），
+   玻璃元素上只做 opacity，别加位移。 */
+:root {
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --dur-xs: 0.12s;
+  --dur-sm: 0.18s;
+  --dur-md: 0.24s;
+  --dur-lg: 0.32s;
+}
+
+.fade-enter-active {
+  transition: opacity var(--dur-sm) var(--ease-out);
+}
 .fade-leave-active {
-  transition: opacity 0.18s ease;
+  transition: opacity var(--dur-xs) var(--ease-in);
 }
 .fade-enter-from,
 .fade-leave-to {
@@ -422,12 +443,13 @@ a:focus-visible,
 }
 
 /* 路由切换：纯 opacity 淡入淡出（out-in），无 transform，
-   不触发合成层隔离，backdrop-filter 磨砂全程稳定。 */
+   不触发合成层隔离，backdrop-filter 磨砂全程稳定。
+   出场用 ease-in 快速退场、入场用 ease-out 缓收，比两边都用 ease 更有方向感。 */
 .page-fade-enter-active {
-  transition: opacity 0.22s ease;
+  transition: opacity 0.2s var(--ease-out);
 }
 .page-fade-leave-active {
-  transition: opacity 0.18s ease;
+  transition: opacity var(--dur-xs) var(--ease-in);
 }
 .page-fade-enter-from,
 .page-fade-leave-to {
@@ -435,46 +457,47 @@ a:focus-visible,
 }
 
 /* 方向转场：新旧页面都位移（"全部移走"），out-in 先出后入。
+   位移轴跟导航栏（Dock / 侧栏）的排列方向一致——左右。
    旧页面用 transform 移出（淡出中磨砂异常不可见，保性能）。
-   新页面用 position:relative + top 位移——top 触发 layout 但不创建合成层，
+   新页面用 position:relative + left 位移——left 触发 layout 但不创建合成层，
    backdrop-filter 采样文档流内容全程有效，磨砂不失效（transform 会隔离合成层）。 */
-/* 向下导航（目标在侧边栏更下方）：旧页面向上移出，新页面从下方移入 */
+/* 向右导航（目标在导航栏更右侧）：旧页面向左移出，新页面从右侧移入 */
 .slide-forward-leave-active {
-  transition: opacity 0.18s ease-in, transform 0.2s ease-in;
+  transition: opacity var(--dur-sm) var(--ease-in), transform 0.2s var(--ease-in);
   overflow: hidden;
 }
 .slide-forward-leave-to {
   opacity: 0;
-  transform: translateY(-32px);
+  transform: translateX(-32px);
 }
 .slide-forward-enter-active {
-  transition: opacity 0.24s ease-out, top 0.22s ease-out;
+  transition: opacity var(--dur-md) var(--ease-out), left 0.22s var(--ease-out);
   overflow: hidden;
   position: relative;
-  top: 0;
+  left: 0;
 }
 .slide-forward-enter-from {
   opacity: 0;
-  top: 32px;
+  left: 32px;
 }
-/* 向上导航（目标在侧边栏更上方）：旧页面向下移出，新页面从上方移入 */
+/* 向左导航（目标在导航栏更左侧）：旧页面向右移出，新页面从左侧移入 */
 .slide-back-leave-active {
-  transition: opacity 0.18s ease-in, transform 0.2s ease-in;
+  transition: opacity var(--dur-sm) var(--ease-in), transform 0.2s var(--ease-in);
   overflow: hidden;
 }
 .slide-back-leave-to {
   opacity: 0;
-  transform: translateY(32px);
+  transform: translateX(32px);
 }
 .slide-back-enter-active {
-  transition: opacity 0.24s ease-out, top 0.22s ease-out;
+  transition: opacity var(--dur-md) var(--ease-out), left 0.22s var(--ease-out);
   overflow: hidden;
   position: relative;
-  top: 0;
+  left: 0;
 }
 .slide-back-enter-from {
   opacity: 0;
-  top: -32px;
+  left: -32px;
 }
 
 .n-loading-bar-container {

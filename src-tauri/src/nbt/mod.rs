@@ -153,29 +153,27 @@ pub fn list_worlds(
 /// 逐个 stat 会让"扫描世界"慢到像卡死。
 fn world_size(dir: &Path) -> u64 {
     let mut total = 0u64;
-    let subdirs = [
-        ["region", ""],
-        ["entities", ""],
-        ["poi", ""],
-        ["DIM-1", "region"],
-        ["DIM-1", "entities"],
-        ["DIM-1", "poi"],
-        ["DIM1", "region"],
-        ["DIM1", "entities"],
-        ["DIM1", "poi"],
-    ];
-    for [a, b] in subdirs {
-        let path = if b.is_empty() {
-            dir.join(a)
-        } else {
-            dir.join(a).join(b)
-        };
+    let mut add_dir = |path: PathBuf| {
         if let Ok(rd) = std::fs::read_dir(path) {
             for e in rd.flatten() {
                 if let Ok(m) = e.metadata() {
                     total += m.len();
                 }
             }
+        }
+    };
+    for sub in ["region", "entities", "poi"] {
+        add_dir(dir.join(sub));
+    }
+    for dim in ["DIM-1", "DIM1"] {
+        for sub in ["region", "entities", "poi"] {
+            add_dir(dir.join(dim).join(sub));
+        }
+    }
+    // 26.x：所有维度都搬到了 dimensions/minecraft/<维度>/ 下
+    for dim in ["overworld", "the_nether", "the_end"] {
+        for sub in ["region", "entities", "poi"] {
+            add_dir(dir.join("dimensions").join("minecraft").join(dim).join(sub));
         }
     }
     if let Ok(rd) = std::fs::read_dir(dir) {

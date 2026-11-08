@@ -13,6 +13,7 @@ import { translateCategory } from "../utils/categories";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import { useSettingsStore } from "../stores/settings";
 import { useInstancesStore } from "../stores/instances";
+import { useFavoritesStore, favoriteKey } from "../stores/favorites";
 import SimplePagination from "../components/SimplePagination.vue";
 import InstallDialog from "../components/InstallDialog.vue";
 import ImageViewer from "../components/ImageViewer.vue";
@@ -21,6 +22,8 @@ import {
   IconChevronLeft,
   IconExternal,
   IconGlobe,
+  IconStar,
+  IconStarFilled,
 } from "../components/icons";
 
 const route = useRoute();
@@ -29,6 +32,7 @@ const { t, locale } = useI18n();
 const message = useMessage();
 const settingsStore = useSettingsStore();
 const instancesStore = useInstancesStore();
+const favorites = useFavoritesStore();
 
 const provider = computed(() => route.params.provider as string);
 const projectId = computed(() => route.params.id as string);
@@ -145,6 +149,14 @@ const showInstall = ref(false);
 // 版本列表里点「下载」时带进弹窗的版本 / 兼容实例
 const installVersionId = ref<string | null>(null);
 const installInstanceId = ref<string | null>(null);
+
+// —— 收藏夹 ——
+const isFav = computed(() => (project.value ? favorites.has(favoriteKey(project.value)) : false));
+function toggleFavorite() {
+  if (!project.value) return;
+  const on = favorites.toggle(project.value);
+  message.success(on ? t("projectCard.addedToFavorites") : t("projectCard.removedFromFavorites"));
+}
 
 /** 顶部「安装」按钮：不预选版本/实例，交给弹窗自己决定 */
 function openInstall() {
@@ -421,6 +433,10 @@ watch([provider, projectId], loadProject);
           </div>
         </div>
         <div class="pd-head-actions">
+          <button class="btn ghost fav-btn" :class="{ on: isFav }" @click="toggleFavorite">
+            <IconStarFilled v-if="isFav" /><IconStar v-else />
+            {{ isFav ? t("projectDetail.favorited") : t("projectDetail.favorite") }}
+          </button>
           <button class="btn primary" @click="openInstall">
             <IconDownload /> {{ t("projectDetail.install") }}
           </button>
@@ -679,6 +695,17 @@ watch([provider, projectId], loadProject);
 .pd-head-actions {
   flex-shrink: 0;
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 已收藏：主题色描边 + 浅底，和主按钮并排也不会抢焦点 */
+.fav-btn.on {
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.fav-btn.on:hover {
+  background: var(--accent-16);
 }
 .pd-body {
   padding: 20px 24px;

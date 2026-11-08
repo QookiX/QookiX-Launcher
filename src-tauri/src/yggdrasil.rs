@@ -36,11 +36,34 @@ async fn post_json(state: &AppState, url: &str, body: &Value) -> Result<(u16, Va
         .await
         .map_err(|e| format!("请求皮肤站失败: {e}"))?;
     let status = resp.status().as_u16();
-    let v: Value = resp
-        .json()
+    // 规范里 `/authserver/validate` 成功时返回 204 + 空响应体。以前这里直接
+    // `resp.json()`，空 body 会报「解析失败」，validate 于是被误判成「令牌无效」，
+    // 每次启动都白跑一次 refresh；而 refresh 会让旧令牌 rotate 失效，站点一旦
+    // 不支持刷新（或有多端同时在用同一账号）就直接 403 Invalid token，启动失败。
+    let text = resp
+        .text()
         .await
-        .map_err(|e| format!("解析皮肤站响应失败: {e}"))?;
+        .map_err(|e| format!("读取皮肤站响应失败: {e}"))?;
+    if text.trim().is_empty() {
+        return Ok((status, Value::Null));
+    }
+    let v: Value = serde_json::from_str(&text).map_err(|_| {
+        format!(
+            "皮肤站返回了非 JSON 响应（HTTP {status}）：{}",
+            text.chars().take(120).collect::<String>()
+        )
+    })?;
     Ok((status, v))
+}
+
+/// validate / refresh 的请求体。`clientToken` 在 Yggdrasil 规范里是可选项，
+/// 本地没有时就不要发空字符串——个别站点会把空值当成「与令牌不匹配」而 403。
+fn token_body(access_token: &str, client_token: &str) -> Value {
+    let mut body = json!({ "accessToken": access_token });
+    if !client_token.trim().is_empty() {
+        body["clientToken"] = json!(client_token);
+    }
+    body
 }
 
 /// 把皮肤站的错误响应转成用户可读的信息（Yggdrasil 约定 `errorMessage` 字段）。
@@ -231,6 +254,14 @@ pub async fn yggdrasil_login(
         .and_then(|v| v.as_str())
         .ok_or_else(|| server_error(status, &body, "皮肤站未返回令牌"))?
         .to_string();
+    // 以服务端回填的 clientToken 为准：部分站点（如拾木空间）会生成自己的
+    // clientToken 并要求后续 refresh 与之一致，继续用本地生成的会一直 403。
+    let client_token = body
+        .get("clientToken")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .unwrap_or(client_token);
     let profiles: Vec<YggProfile> = body
         .get("availableProfiles")
         .and_then(|v| v.as_array())
@@ -292,58 +323,102 @@ pub async fn yggdrasil_add_account(
     Ok(account)
 }
 
+/// `/authserver/validate` 的三种结论。
+enum TokenState {
+    /// 令牌有效：规范返回 204（空响应体），个别实现返回 200 + 用户资料
+    Valid,
+    /// 站点明确判定令牌无效（401 / 403）
+    Invalid,
+    /// 网络异常或意外状态码：判断不了，**不能**据此刷新令牌
+    Unknown(String),
+}
+
 /// 校验令牌是否有效（`/authserver/validate` 返回 204 即有效）。
-pub async fn validate(
+async fn validate(
     state: &AppState,
     root: &str,
     access_token: &str,
     client_token: &str,
-) -> bool {
+) -> TokenState {
     match post_json(
         state,
         &format!("{root}/authserver/validate"),
-        &json!({ "accessToken": access_token, "clientToken": client_token }),
+        &token_body(access_token, client_token),
     )
     .await
     {
-        Ok((status, _)) => status == 204 || status == 200,
-        Err(_) => false,
+        Ok((200 | 204, _)) => TokenState::Valid,
+        Ok((401 | 403, _)) => TokenState::Invalid,
+        Ok((status, _)) => TokenState::Unknown(format!("HTTP {status}")),
+        Err(e) => TokenState::Unknown(e),
     }
 }
 
+/// 刷新结果：新令牌，以及站点可能回填的新 clientToken。
+struct RefreshedToken {
+    access_token: String,
+    client_token: Option<String>,
+}
+
 /// 刷新令牌（rotate：返回新令牌，旧的立即失效）。
-pub async fn refresh(
+async fn refresh(
     state: &AppState,
     root: &str,
     access_token: &str,
     client_token: &str,
-) -> Result<String, String> {
+) -> Result<RefreshedToken, String> {
     let (status, body) = post_json(
         state,
         &format!("{root}/authserver/refresh"),
-        &json!({ "accessToken": access_token, "clientToken": client_token }),
+        &token_body(access_token, client_token),
     )
     .await?;
     if status != 200 {
-        return Err(server_error(status, &body, "令牌已失效，请重新登录皮肤站"));
+        // 401/403 基本就是令牌已失效（expired / rotated / 站点清理过），
+        // 刷新救不回来，直接把「该做什么」告诉用户，别只甩英文 errorMessage。
+        if status == 401 || status == 403 {
+            let detail = body
+                .get("errorMessage")
+                .and_then(|m| m.as_str())
+                .filter(|s| !s.is_empty())
+                .unwrap_or("令牌无效");
+            return Err(format!(
+                "皮肤站登录状态已失效（{detail}），请重新登录该账号后再启动"
+            ));
+        }
+        return Err(server_error(status, &body, "刷新令牌失败，请重新登录皮肤站"));
     }
-    body.get("accessToken")
+    let access_token = body
+        .get("accessToken")
         .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "皮肤站未返回新令牌".into())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .ok_or("皮肤站未返回新令牌")?;
+    let client_token = body
+        .get("clientToken")
+        .and_then(|v| v.as_str())
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
+    Ok(RefreshedToken {
+        access_token,
+        client_token,
+    })
 }
 
 /// 启动前调用：令牌有效则原样返回；失效则尝试刷新并持久化新令牌。
 /// 刷新也失败时返回错误，提示用户重新登录。
 pub async fn ensure_token(state: &AppState, account_uuid: &str) -> Result<String, String> {
-    let account = {
-        let list = load_accounts(state);
-        list.iter()
-            .find(|a| a.uuid() == account_uuid)
-            .cloned()
-            .ok_or("账号不存在")?
-    };
-    let (root, access_token, client_token) = match &account {
+    let account = load_accounts(state)
+        .into_iter()
+        .find(|a| a.uuid() == account_uuid)
+        .ok_or("账号不存在")?;
+    ensure_token_for(state, &account).await
+}
+
+/// 同上，但直接按账号对象续期：启动流程本来就拿着完整账号，
+/// 用 uuid 反查会在「两个站点恰好同角色 UUID」时拿错令牌。
+pub async fn ensure_token_for(state: &AppState, account: &Account) -> Result<String, String> {
+    let (root, access_token, client_token) = match account {
         Account::Yggdrasil {
             server,
             access_token,
@@ -352,18 +427,42 @@ pub async fn ensure_token(state: &AppState, account_uuid: &str) -> Result<String
         } => (server.clone(), access_token.clone(), client_token.clone()),
         _ => return Err("该账号不是皮肤站账号".into()),
     };
-    if validate(state, &root, &access_token, &client_token).await {
-        return Ok(access_token);
-    }
-    let new_token = refresh(state, &root, &access_token, &client_token).await?;
-    let mut list = load_accounts(state);
-    if let Some(acc) = list.iter_mut().find(|a| a.uuid() == account_uuid) {
-        if let Account::Yggdrasil { access_token, .. } = acc {
-            *access_token = new_token.clone();
+    match validate(state, &root, &access_token, &client_token).await {
+        TokenState::Valid => return Ok(access_token),
+        TokenState::Invalid => {}
+        TokenState::Unknown(reason) => {
+            // 校验接口本身不可用（站点 5xx、网络抖动）时不要贸然刷新：
+            // refresh 会让旧令牌 rotate 失效，反而把本来能用的令牌弄坏。
+            // 直接放行，游戏内 authlib-injector 还会再校验一次。
+            eprintln!("[yggdrasil] 无法确认令牌状态（{reason}），沿用现有令牌启动");
+            return Ok(access_token);
         }
     }
-    save_accounts(state, &list)?;
-    Ok(new_token)
+    let refreshed = refresh(state, &root, &access_token, &client_token).await?;
+    let mut list = load_accounts(state);
+    let mut changed = false;
+    for acc in list.iter_mut() {
+        if let Account::Yggdrasil {
+            uuid,
+            server,
+            access_token: saved,
+            client_token: saved_client,
+            ..
+        } = acc
+        {
+            if uuid == account.uuid() && server.as_str() == root.as_str() && *saved == access_token {
+                *saved = refreshed.access_token.clone();
+                if let Some(new_client) = &refreshed.client_token {
+                    *saved_client = new_client.clone();
+                }
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        save_accounts(state, &list)?;
+    }
+    Ok(refreshed.access_token)
 }
 
 /// 命令包装：供前端在启动前手动触发令牌保活。
@@ -715,5 +814,16 @@ mod tests {
         push_unique(&mut v, "a".into());
         push_unique(&mut v, "b".into());
         assert_eq!(v, vec!["a".to_string(), "b".to_string()]);
+    }
+
+    /// clientToken 为空时不能发空字符串：部分站点会当成「与令牌不匹配」直接 403
+    #[test]
+    fn token_body_omits_blank_client_token() {
+        let body = token_body("at", "");
+        assert_eq!(body.get("accessToken").and_then(|v| v.as_str()), Some("at"));
+        assert!(body.get("clientToken").is_none());
+
+        let body = token_body("at", "ct");
+        assert_eq!(body.get("clientToken").and_then(|v| v.as_str()), Some("ct"));
     }
 }

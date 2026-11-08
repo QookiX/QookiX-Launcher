@@ -339,15 +339,15 @@ onBeforeRouteLeave(() => {
   z-index: -1;
   pointer-events: none;
 }
-/* 离开首页时 .section 往下滑出。
+/* 离开首页时 .section 往右滑出。
    取消整页 overflow:hidden 让位移可见；
-   translateY(64px) 抵消整页 translateY(-32px) 后净 +32px 往下 */
+   translateX(64px) 抵消整页 translateX(-32px) 后净 +32px 往右 */
 .slide-forward-leave-active {
   overflow: visible;
 }
 .section > .glass.leaving {
   transition: transform 0.22s ease-in, opacity 0.22s ease-in;
-  transform: translateY(64px);
+  transform: translateX(64px);
   opacity: 0;
 }
 /* 固定快捷启动 */

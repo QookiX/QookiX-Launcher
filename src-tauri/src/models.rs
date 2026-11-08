@@ -94,6 +94,12 @@ pub struct Settings {
     pub mirror: String,
     /// 自定义镜像根地址（`mirror == "custom"` 时生效），需兼容 BMCLAPI 接口
     pub mirror_custom: String,
+    /// 内容 API 镜像 id："official"（默认，官方源） | "mcim" | "custom"。
+    /// 只影响发现页 / 内容详情的 Modrinth、CurseForge 查询接口，与下载镜像相互独立。
+    pub content_mirror: String,
+    /// 自定义内容 API 镜像根地址（`content_mirror == "custom"` 时生效），
+    /// 根地址下需提供 `/modrinth/v2` 与 `/curseforge/v1`；也可直接填平台专属地址
+    pub content_mirror_custom: String,
     /// 自定义背景图片绝对路径（None = 使用默认渐变背景）
     pub background_image: Option<String>,
     /// 背景图片模糊半径 px（0-50）
@@ -162,6 +168,9 @@ impl Default for Settings {
             // 下载器仍会自动回退官方（海外用户手动切回官方即可）
             mirror: "bmclapi".into(),
             mirror_custom: String::new(),
+            // 内容 API 默认官方源：镜像属于第三方服务，首次使用应由用户主动选择
+            content_mirror: "official".into(),
+            content_mirror_custom: String::new(),
             background_image: None,
             background_blur: 0,
             background_dim: 45,

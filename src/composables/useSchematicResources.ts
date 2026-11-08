@@ -71,7 +71,10 @@ export async function loadSchematicResources(): Promise<SchematicResources> {
   bitmap.close();
 
   const texture = new CanvasTexture(canvas);
-  texture.flipY = true;
+  // 图集按"行 0 = 图像顶部"直接上传，UV 的 v 也按同一方向增长（见
+  // schematicMeshWorker 里 textureUvs 的注释）。这里千万不能再开 flipY ——
+  // 那会把整个世界上下颠倒，花草和农作物的贴图最先露馅。
+  texture.flipY = false;
   texture.magFilter = NearestFilter;
   texture.minFilter = LinearMipmapLinearFilter;
   texture.generateMipmaps = true;

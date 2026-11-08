@@ -130,8 +130,12 @@ fn id_name(id: u16) -> String {
 type Surface = Vec<u16>;
 /// 区块坐标
 type ChunkKey = (i32, i32);
-/// 缓存键：维度 + 区块坐标
-type CacheKey = (String, i32, i32);
+/// 缓存键：世界 + 维度 + 区块坐标
+///
+/// 世界必须算进键里。只按 (维度, 区块) 缓存的话，从世界 A 切到世界 B 时
+/// 同一片坐标会直接命中 A 的地表——地图上画的是"别的世界的地形"，
+/// 点进去却提示"该区块尚未生成"，看起来就像随机生成了奇怪的地形。
+type CacheKey = (u64, String, i32, i32);
 /// 待解压的区块，按 region 文件分组
 type RegionGroups = std::collections::BTreeMap<ChunkKey, Vec<ChunkKey>>;
 
@@ -140,10 +144,20 @@ static CACHE: LazyLock<Mutex<HashMap<CacheKey, Surface>>> = LazyLock::new(|| Mut
 /// 缓存上限（一条 512 字节，6 万条约 30MB），超了整体清空
 const CACHE_LIMIT: usize = 60_000;
 
+/// 世界目录 → 缓存用的稳定标识（Windows 路径不分大小写，先统一压小写）
+pub fn world_key(world_dir: &Path) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for b in world_dir.to_string_lossy().to_lowercase().as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100_0000_01b3);
+    }
+    h
+}
+
 /// 区块被改动后要失效，否则地图会显示改之前的地形
-pub fn invalidate(dim: &str, cx: i32, cz: i32) {
+pub fn invalidate(world_dir: &Path, dim: &str, cx: i32, cz: i32) {
     if let Ok(mut c) = CACHE.lock() {
-        c.remove(&(dim.to_string(), cx, cz));
+        c.remove(&(world_key(world_dir), dim.to_string(), cx, cz));
     }
 }
 
@@ -276,7 +290,9 @@ pub fn render(
     mut progress: impl FnMut(usize, usize),
 ) -> Result<MapImage, String> {
     let Rect { x0, z0, x1, z1, step } = rect;
-    let step = step.clamp(1, 64);
+    // 上限跟着前端 MAX_STEP 走：放到 256 才够"缩到最远"（1 像素 64 格）时
+    // 让整屏仍落在 512 像素以内，否则请求会被下面这条尺寸检查直接打回
+    let step = step.clamp(1, 256);
     let (x0, x1) = (x0, x1.max(x0 + 1));
     let (z0, z1) = (z0, z1.max(z0 + 1));
     let width = ((x1 - x0) + step - 1) / step;
@@ -406,6 +422,7 @@ fn fetch(
         .map(|n| n.get())
         .unwrap_or(4)
         .clamp(1, 16);
+    let wkey = world_key(world_dir);
 
     let mut out: HashMap<ChunkKey, Surface> = HashMap::new();
     if threads <= 1 || items.len() <= 1 {
@@ -414,7 +431,7 @@ fn fetch(
         for (key, list) in items.iter() {
             done += list.len();
             progress(done, total);
-            load_region(world_dir, dim, *key, list, &mut memo, &mut out);
+            load_region(world_dir, dim, wkey, *key, list, &mut memo, &mut out);
         }
         return out;
     }
@@ -434,7 +451,7 @@ fn fetch(
                     let mut local = HashMap::new();
                     let mut memo = None;
                     for (key, list) in part {
-                        load_region(world_dir, dim, key, &list, &mut memo, &mut local);
+                        load_region(world_dir, dim, wkey, key, &list, &mut memo, &mut local);
                     }
                     local
                 })
@@ -460,6 +477,7 @@ fn fetch(
 fn load_region(
     world_dir: &Path,
     dim: &str,
+    wkey: u64,
     (rx, rz): ChunkKey,
     list: &[ChunkKey],
     memo: &mut Option<(ChunkKey, Vec<u8>)>,
@@ -471,7 +489,7 @@ fn load_region(
         if out.contains_key(&(*cx, *cz)) {
             continue;
         }
-        match cache_get(&(dim.to_string(), *cx, *cz)) {
+        match cache_get(&(wkey, dim.to_string(), *cx, *cz)) {
             Some(s) => {
                 out.insert((*cx, *cz), s);
             }
@@ -503,14 +521,14 @@ fn load_region(
             continue;
         };
         let ids = intern_surface(&names);
-        cache_put((dim.to_string(), cx, cz), ids.clone());
+        cache_put((wkey, dim.to_string(), cx, cz), ids.clone());
         out.insert((cx, cz), ids);
     }
 }
 
 /// 一个区块 256 列的"地表方块名"：从上往下第一个非空气方块
 fn surface_ids(chunk: &Value) -> Option<Vec<String>> {
-    let sections = level::as_list(level::get(chunk, "sections")?)?;
+    let sections = sections_of(chunk)?;
     let mut out = vec![String::new(); 256];
     let mut filled = 0usize;
 
@@ -520,9 +538,17 @@ fn surface_ids(chunk: &Value) -> Option<Vec<String>> {
     order.sort_by_key(|s| level::get_int(s, "Y").unwrap_or(0));
 
     for section in order.iter().rev() {
-        let Some((names, idx)) = section_blocks(section) else {
-            continue;
+        // 1.13+ 有调色板；1.12 及更早是 4096 个数字 ID，两条路分开取
+        let modern = section_blocks(section);
+        let legacy = if modern.is_none() {
+            legacy_cells(section)
+        } else {
+            None
         };
+        if modern.is_none() && legacy.is_none() {
+            continue;
+        }
+        let (names, idx) = modern.unwrap_or_default();
         if names.len() == 1 && is_air(&names[0]) {
             continue;
         }
@@ -533,10 +559,16 @@ fn surface_ids(chunk: &Value) -> Option<Vec<String>> {
                     continue;
                 }
                 for y in (0..16usize).rev() {
-                    let i = idx[(y << 8) | (z << 4) | x] as usize;
-                    let Some(name) = names.get(i) else { continue };
-                    if !is_air(name) {
-                        out[col] = name.clone();
+                    let i = (y << 8) | (z << 4) | x;
+                    let name = match &legacy {
+                        Some(cells) => legacy_name(cells[i]).to_string(),
+                        None => match names.get(idx[i] as usize) {
+                            Some(n) => n.clone(),
+                            None => continue,
+                        },
+                    };
+                    if !is_air(&name) {
+                        out[col] = name;
                         filled += 1;
                         break;
                     }
@@ -550,12 +582,33 @@ fn surface_ids(chunk: &Value) -> Option<Vec<String>> {
     Some(out)
 }
 
+/// 取出区块的 section 列表。
+/// - 1.18+：根上直接是 `sections`
+/// - 1.13~1.17：塞在 `Level` 里，键名是大写的 `Sections`
+///
+/// 少了这一层兼容，老存档（1.16 及以前）一个 section 都取不到，
+/// 整张地图会渲染成空白。
+fn sections_of(chunk: &Value) -> Option<&Vec<Value>> {
+    if let Some(list) = level::get(chunk, "sections").and_then(level::as_list) {
+        return Some(list);
+    }
+    let lv = level::get(chunk, "Level")?;
+    level::get(lv, "sections")
+        .or_else(|| level::get(lv, "Sections"))
+        .and_then(level::as_list)
+}
+
 /// 一个 section 的调色板 + 4096 个方块的下标（顺序 `y*256 + z*16 + x`）
 fn section_blocks(section: &Value) -> Option<(Vec<String>, Vec<u16>)> {
-    // 1.18+ 叫 block_states/palette/data，1.13~1.17 叫 BlockStates/Palette/Data
-    let states =
-        level::get(section, "block_states").or_else(|| level::get(section, "BlockStates"))?;
-    let palette = level::get(states, "palette").or_else(|| level::get(states, "Palette"))?;
+    // 1.18+：section.block_states{palette, data}
+    // 1.13~1.17：section.Palette + section.BlockStates（LongArray 直接挂在这层）
+    let (palette, data) = match level::get(section, "block_states") {
+        Some(states) => (level::get(states, "palette")?, level::get(states, "data")),
+        None => (
+            level::get(section, "Palette")?,
+            level::get(section, "BlockStates"),
+        ),
+    };
     let names: Vec<String> = level::as_list(palette)?
         .iter()
         .filter_map(|e| level::get_string(e, "Name"))
@@ -565,20 +618,137 @@ fn section_blocks(section: &Value) -> Option<(Vec<String>, Vec<u16>)> {
     }
     let mut idx = vec![0u16; 4096];
     if names.len() > 1 {
-        let data = level::get(states, "data").or_else(|| level::get(states, "Data"))?;
-        let Value::LongArray(longs) = data else {
+        let Value::LongArray(longs) = data? else {
             return None;
         };
-        let bits = bits_for(names.len());
-        let per = 64 / bits;
-        let mask = (1u64 << bits) - 1;
+        unpack_into(&mut idx, longs, names.len());
+    }
+    Some((names, idx))
+}
+
+/// 把打包的方块下标解到 `idx`。
+///
+/// 位宽从 1.16 起改过一次：1.15 及更早是**连续位流**（一项可以跨 long），
+/// 1.16/1.18 是**每个 long 内部够用就截断**。两种方式的 long 数量不一样
+/// （位宽 5 时分别是 320 和 342），所以直接按长度判断，不用去猜版本号。
+fn unpack_into(idx: &mut [u16], longs: &fastnbt::LongArray, n: usize) {
+    let bits = bits_for(n);
+    let per = 64 / bits;
+    let mask = (1u64 << bits) - 1;
+
+    if longs.len() * per >= idx.len() {
         for (i, slot) in idx.iter_mut().enumerate() {
             // 数据比理论长度短（存档被截断）时按 0 处理，不整块丢掉
             let Some(v) = longs.get(i / per) else { break };
             *slot = (((*v as u64) >> ((i % per) * bits)) & mask) as u16;
         }
+    } else {
+        for (i, slot) in idx.iter_mut().enumerate() {
+            let bit = i * bits;
+            let (li, off) = (bit / 64, bit % 64);
+            let Some(v) = longs.get(li) else { break };
+            let mut val = (*v as u64) >> off;
+            if off + bits > 64 {
+                if let Some(next) = longs.get(li + 1) {
+                    val |= (*next as u64) << (64 - off);
+                }
+            }
+            *slot = (val & mask) as u16;
+        }
     }
-    Some((names, idx))
+}
+
+/// 1.12 及更早的 section：`Blocks` 是 4096 个**数字方块 ID**（BYTE，按无符号读），
+/// 1.8+ 还有 `Add`（半字节数组，补第 9 位，给 256 以后的 ID 用）。
+/// 这个版本没有调色板，取不到方块名。
+fn legacy_cells(section: &Value) -> Option<Vec<u16>> {
+    let Some(Value::ByteArray(blocks)) = level::get(section, "Blocks") else {
+        return None;
+    };
+    if blocks.len() < 4096 {
+        return None;
+    }
+    let add = match level::get(section, "Add") {
+        Some(Value::ByteArray(a)) if a.len() >= 2048 => Some(a),
+        _ => None,
+    };
+    let mut out = vec![0u16; 4096];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let Some(b) = blocks.get(i) else { break };
+        let mut id = *b as u8 as u16;
+        if let Some(add) = add {
+            let Some(v) = add.get(i / 2) else { break };
+            let v = *v as u8;
+            let hi = if i % 2 == 0 { v & 0x0f } else { (v >> 4) & 0x0f };
+            id |= (hi as u16) << 8;
+        }
+        *slot = id;
+    }
+    Some(out)
+}
+
+/// 1.12 的方块 ID → 名字（只要名字，颜色交给 block_color 那套关键字规则）。
+/// 只列会出现在**地表**的那些；认不出的给 `legacy_block`（灰调），
+/// 这样老存档至少能看出地形轮廓，而不是整张空白。
+fn legacy_name(id: u16) -> &'static str {
+    match id {
+        0 => "", // 空气
+        1 => "stone",
+        2 => "grass_block",
+        3 => "dirt",
+        4 => "cobblestone",
+        5 => "oak_planks",
+        7 => "bedrock",
+        8 | 9 => "water",
+        10 | 11 => "lava",
+        12 => "sand",
+        13 => "gravel",
+        14 | 15 | 16 | 21 | 56 | 73 | 74 | 129 | 153 => "ore",
+        17 => "oak_log",
+        18 => "oak_leaves",
+        20 => "glass",
+        24 => "sandstone",
+        31 | 175 => "short_grass",
+        32 => "dead_bush",
+        35 => "wool",
+        39 | 40 | 99 | 100 => "mushroom",
+        41 => "iron_block",
+        42 => "iron_block",
+        43 | 44 | 181 | 182 => "stone_slab",
+        45 => "brick_block",
+        48 => "mossy_cobblestone",
+        49 => "obsidian",
+        57 => "diamond_block",
+        60 => "farmland",
+        61 | 62 => "furnace",
+        78 | 80 => "snow_block",
+        79 => "ice",
+        81 => "cactus",
+        82 => "clay",
+        83 => "reeds",
+        87 => "netherrack",
+        88 => "soul_sand",
+        89 => "glowstone",
+        98 => "stone_bricks",
+        110 => "mycelium",
+        111 => "lily_pad",
+        112 | 113 | 114 => "nether_bricks",
+        121 => "end_stone",
+        155 | 156 => "quartz_block",
+        159 | 172 => "terracotta",
+        161 => "azalea_leaves",
+        162 => "oak_log",
+        168 | 169 => "prismarine",
+        174 => "packed_ice",
+        179 | 180 => "red_sandstone",
+        206 => "end_stone_bricks",
+        208 => "dirt_path",
+        213 => "magma_block",
+        214 => "nether_wart_block",
+        215 => "red_nether_bricks",
+        251 | 252 => "concrete",
+        _ => "legacy_block",
+    }
 }
 
 /// 每项占多少 bit（跟游戏一致：至少 4）
@@ -713,6 +883,17 @@ fn exact_color(name: &str) -> Option<[u8; 3]> {
         "crimson_nylium" | "warped_nylium" => [125, 45, 55],
         "basalt" | "smooth_basalt" | "blackstone" => [70, 68, 74],
         "magma_block" => [150, 70, 20],
+        // 1.12 数字 ID 表里用到、老存档地表会碰到的几种
+        "quartz_block" => [235, 230, 225],
+        "prismarine" => [95, 160, 150],
+        "glowstone" => [205, 180, 110],
+        "nether_wart_block" => [115, 15, 15],
+        "red_nether_bricks" => [80, 30, 35],
+        "lily_pad" => [60, 130, 55],
+        "dead_bush" => [140, 110, 50],
+        "reeds" => [140, 180, 90],
+        "furnace" => [110, 110, 110],
+        "mushroom" => [150, 90, 80],
         _ => return None,
     })
 }
@@ -889,6 +1070,105 @@ mod tests {
         assert_eq!(a.data, b.data, "缓存命中的结果要和首次一致");
         assert_eq!(a.palette, b.palette);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 1.13~1.17 的区块把 section 塞在 Level 里，键名还是大写的 Sections，
+    /// 而且 Palette / BlockStates 直接挂在 section 上（没有 block_states 这层壳）。
+    /// 这条路径挂了的话老存档整张地图会是空白。
+    fn old_section(names: &[&str], longs: Vec<i64>) -> Value {
+        let palette: Vec<Value> = names
+            .iter()
+            .map(|n| nbt(j!({ "Name": n })))
+            .collect();
+        let mut m = std::collections::HashMap::new();
+        m.insert("Y".to_string(), Value::Byte(0));
+        m.insert("Palette".to_string(), Value::List(palette));
+        m.insert(
+            "BlockStates".to_string(),
+            Value::LongArray(fastnbt::LongArray::new(longs)),
+        );
+        Value::Compound(m)
+    }
+
+    fn old_chunk(sections: Vec<Value>) -> Value {
+        let mut level = std::collections::HashMap::new();
+        level.insert("Sections".to_string(), Value::List(sections));
+        let mut root = std::collections::HashMap::new();
+        root.insert("Level".to_string(), Value::Compound(level));
+        root.insert("DataVersion".to_string(), Value::Int(2578));
+        Value::Compound(root)
+    }
+
+    /// 按给定位宽打包（val 全相同时很好构造）
+    fn pack(vals: &[u64], bits: usize, cross: bool) -> Vec<i64> {
+        let per = 64 / bits;
+        let n = if cross {
+            (vals.len() * bits).div_ceil(64)
+        } else {
+            vals.len().div_ceil(per)
+        };
+        let mut buf = vec![0u64; n + 1];
+        for (i, v) in vals.iter().enumerate() {
+            if cross {
+                let bit = i * bits;
+                let (li, off) = (bit / 64, bit % 64);
+                buf[li] |= v << off;
+                if off + bits > 64 {
+                    buf[li + 1] |= v >> (64 - off);
+                }
+            } else {
+                buf[i / per] |= v << ((i % per) * bits);
+            }
+        }
+        buf[..n].iter().map(|x| *x as i64).collect()
+    }
+
+    #[test]
+    fn reads_old_world_sections() {
+        // 17 个调色板项 → 位宽 5，两种打包方式的 long 数量不同（342 / 320）
+        let mut names = vec!["minecraft:air"];
+        for _ in 0..16 {
+            names.push("minecraft:stone");
+        }
+        let vals = vec![1u64; 4096];
+
+        for cross in [false, true] {
+            let chunk = old_chunk(vec![old_section(&names, pack(&vals, 5, cross))]);
+            let s = surface_ids(&chunk).expect("老格式也要能解出地表");
+            assert!(
+                s.iter().all(|id| id == "minecraft:stone"),
+                "整层石头，地表应全是石头（cross={cross}）"
+            );
+        }
+    }
+
+    /// 1.12 及更早：Sections 里没有调色板，只有 4096 个数字 ID 的 Blocks。
+    /// 认不出这条路径的话，1.12 存档的地图会整片空白。
+    #[test]
+    fn reads_legacy_number_blocks() {
+        let mut blocks = vec![0i8; 4096];
+        for z in 0..16 {
+            for x in 0..16 {
+                // 顶层整层草方块（ID 2），其余留空
+                blocks[(15 << 8) | (z << 4) | x] = 2;
+            }
+        }
+        let mut m = std::collections::HashMap::new();
+        m.insert("Y".to_string(), Value::Byte(0));
+        m.insert(
+            "Blocks".to_string(),
+            Value::ByteArray(fastnbt::ByteArray::new(blocks)),
+        );
+        let chunk = old_chunk(vec![Value::Compound(m)]);
+
+        let s = surface_ids(&chunk).expect("1.12 的 Blocks 也要能解出地表");
+        assert!(
+            s.iter().all(|id| id == "grass_block"),
+            "顶层是草方块，地表应全是草"
+        );
+        // 数字 ID 要能落到配色表里，而不是一律灰
+        assert_eq!(block_color("grass_block"), [145, 189, 89]);
+        assert_eq!(block_color("water"), [63, 118, 228]);
     }
 
     #[test]

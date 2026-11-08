@@ -24,6 +24,11 @@ export function cacheSet<T>(key: string, data: T, ttlMs: number) {
   store.set(key, { data, expire: Date.now() + ttlMs });
 }
 
+/** 删除内存缓存条目（不存在时静默） */
+export function cacheDelete(key: string) {
+  store.delete(key);
+}
+
 // —— 持久化层（localStorage，跨会话）——
 // Tauri webview2 的 localStorage 默认持久化到磁盘，应用重启后仍在。
 // 用于发现页等"有缓存就不重新调 API"的场景。
@@ -52,5 +57,32 @@ export function cacheSetPersistent<T>(key: string, data: T, ttlMs: number) {
     localStorage.setItem(PERSIST_PREFIX + key, JSON.stringify({ data, expire: Date.now() + ttlMs } satisfies CacheEntry<T>));
   } catch {
     // localStorage 容量超限或不可用，静默降级
+  }
+}
+
+/** 删除持久化缓存条目（不存在时静默） */
+export function cacheDeletePersistent(key: string) {
+  try {
+    localStorage.removeItem(PERSIST_PREFIX + key);
+  } catch {
+    // localStorage 不可用，忽略
+  }
+}
+
+/** 按 key 前缀清空缓存（内存 + 持久化）。切换内容来源/镜像后用它让旧结果立即失效 */
+export function cacheClearPrefix(prefix: string) {
+  for (const key of [...store.keys()]) {
+    if (key.startsWith(prefix)) store.delete(key);
+  }
+  try {
+    const full = PERSIST_PREFIX + prefix;
+    const doomed: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith(full)) doomed.push(k);
+    }
+    for (const k of doomed) localStorage.removeItem(k);
+  } catch {
+    // localStorage 不可用，忽略
   }
 }

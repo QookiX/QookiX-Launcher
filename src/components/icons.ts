@@ -4,7 +4,7 @@
 // SPDX-License-Identifier: MIT
 import { h, type Component } from "vue";
 
-function make(paths: string): Component {
+function make(paths: string, opts: { filled?: boolean } = {}): Component {
   return () =>
     h(
       "svg",
@@ -12,7 +12,7 @@ function make(paths: string): Component {
         viewBox: "0 0 24 24",
         width: "1em",
         height: "1em",
-        fill: "none",
+        fill: opts.filled ? "currentColor" : "none",
         stroke: "currentColor",
         "stroke-width": 2,
         "stroke-linecap": "round",
@@ -21,6 +21,11 @@ function make(paths: string): Component {
       [h("g", { innerHTML: paths })]
     );
 }
+
+const STAR_PATH = `<polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/>`;
+/** 收藏（空心）/ 已收藏（实心）：同一套坐标，只差填充，切换时不会有形变感 */
+export const IconStar = make(STAR_PATH);
+export const IconStarFilled = make(STAR_PATH, { filled: true });
 
 export const IconHome = make(`<path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/>`);
 export const IconGrid = make(`<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>`);
@@ -109,3 +114,7 @@ export const IconGithub: Component = () =>
 export const IconCloud = make(`<path d="M18 10h-1.26A8 8 0 1 0 9 20h9a5 5 0 0 0 0-10z"/>`);
 export const IconUploadCloud = make(`<polyline points="16 16 12 12 8 16"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/><polyline points="16 16 12 12 8 16"/>`);
 export const IconDownloadCloud = make(`<polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/>`);
+
+// 内容分类图标（发现页标签栏）
+export const IconArchive = make(`<polyline points="21 8 21 21 3 21 3 8"/><rect x="1" y="3" width="22" height="5"/><line x1="10" y1="12" x2="14" y2="12"/>`);
+export const IconDatabase = make(`<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>`);

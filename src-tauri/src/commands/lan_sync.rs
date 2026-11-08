@@ -47,6 +47,15 @@ pub async fn lan_sync_start(
     Ok(resp)
 }
 
+/// 本机首选的局域网 IPv4；没有可用网卡（例如完全离线）时返回 null。
+///
+/// 给「服务器卡片」这类需要展示「别人该连哪个地址」的地方用，
+/// 与局域网同步共用同一套网卡打分规则，避免两处各算一套、结果不一致。
+#[tauri::command]
+pub fn lan_local_ip() -> Option<String> {
+    lan_sync::preferred_lan_ip()
+}
+
 /// 关闭局域网同步服务。
 #[tauri::command]
 pub fn lan_sync_stop(state: State<'_, AppState>) -> Result<(), String> {

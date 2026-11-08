@@ -11,9 +11,19 @@ use serde_json::{json, Value as Json};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// playerdata 目录
+/// 玩家数据目录。
+/// 26.x 起改叫 `players/`（还是 `<uuid>.dat`），老存档是 `playerdata/`，两套都认。
 pub fn playerdata_dir(state: &AppState, instance_id: &str, world: &str) -> Result<PathBuf, String> {
-    Ok(super::resolve_world(state, instance_id, world)?.join("playerdata"))
+    Ok(players_dir(&super::resolve_world(state, instance_id, world)?))
+}
+
+/// 世界目录 → 玩家数据所在目录（优先新布局的 players/）
+pub fn players_dir(world_dir: &Path) -> PathBuf {
+    let modern = world_dir.join("players");
+    if modern.is_dir() {
+        return modern;
+    }
+    world_dir.join("playerdata")
 }
 
 /// 读实例根目录下的 `usercache.json`：UUID（小写）→ 玩家名
@@ -73,7 +83,7 @@ pub fn first_player_with(
 ) -> (usize, Option<String>) {
     let mut count = 0usize;
     let mut first: Option<String> = None;
-    if let Ok(rd) = std::fs::read_dir(world_dir.join("playerdata")) {
+    if let Ok(rd) = std::fs::read_dir(players_dir(world_dir)) {
         for e in rd.flatten() {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) != Some("dat") {
