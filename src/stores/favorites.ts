@@ -81,6 +81,12 @@ function persist(items: FavoriteItem[]) {
   }
 }
 
+/** 云同步：云端条目的最小校验（手改过 / 老版本都可能缺字段） */
+export function isFavoriteItem(it: unknown): it is FavoriteItem {
+  const o = it as FavoriteItem | null;
+  return !!o && typeof o.key === "string" && !!o.provider && !!o.id && !!o.title;
+}
+
 export const useFavoritesStore = defineStore("favorites", {
   state: () => ({
     items: loadStored(),
@@ -120,6 +126,32 @@ export const useFavoritesStore = defineStore("favorites", {
         this.items = next;
         persist(this.items);
       }
+    },
+    /** 云同步：导出快照 */
+    snapshot(): FavoriteItem[] {
+      return this.items.map((it) => ({ ...it }));
+    },
+    /**
+     * 云同步：合并云端收藏。
+     * 以本地为准（同 key 不覆盖），只补本地没有的——收藏是「只增」的数据，
+     * 直接覆盖会把另一台机器上刚加的条目吞掉。
+     * @returns 新增条数
+     */
+    mergeFromCloud(list: unknown): number {
+      if (!Array.isArray(list)) return 0;
+      const seen = new Set(this.items.map((i) => i.key));
+      let added = 0;
+      for (const raw of list) {
+        if (!isFavoriteItem(raw) || seen.has(raw.key)) continue;
+        seen.add(raw.key);
+        this.items.push(raw);
+        added += 1;
+      }
+      if (added > 0) {
+        this.items.sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
+        persist(this.items);
+      }
+      return added;
     },
     /** @returns 收藏后的状态：true = 已收藏，false = 已取消 */
     toggle(p: ProjectHit): boolean {

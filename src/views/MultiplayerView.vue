@@ -5,12 +5,13 @@ import { fmtBytes } from "../utils/format";
 import { CORE_COLORS, CORE_LABELS } from "../utils/cores";
 import { isAprilFools } from "../utils/versions";
 import { useRouter } from "vue-router";
-import { NModal, NInput, NProgress, useMessage } from "naive-ui";
+import { NModal, NInput, NProgress, NSelect, NSwitch, useMessage } from "naive-ui";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { useAccountsStore } from "../stores/accounts";
 import { useServersStore } from "../stores/servers";
+import { useInstancesStore } from "../stores/instances";
 import type { ServerCore, TerracottaDownloadProgress, TerracottaInfo } from "../types";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import {
@@ -21,30 +22,231 @@ import {
   IconDoorOpen,
   IconDownload,
   IconExternal,
+  IconGlobe,
   IconPlay,
   IconPlus,
   IconRefresh,
   IconServer,
   IconStop,
   IconTrash,
+  IconUser,
   IconUsers,
 } from "../components/icons";
 import McMotd from "../components/McMotd.vue";
+import FriendsPanel from "../components/FriendsPanel.vue";
+import RoomDirectoryPanel from "../components/RoomDirectoryPanel.vue";
+import QookixLoginDialog from "../components/QookixLoginDialog.vue";
+import FrpPanel from "../components/FrpPanel.vue";
+import { qookixErrorMessage, useQookixStore } from "../stores/qookix";
+import { useQookixPrefsStore } from "../stores/qookixPrefs";
+import { PLAY_TYPES } from "../utils/qookix";
 
 const router = useRouter();
 const { t } = useI18n();
 const accounts = useAccountsStore();
 const servers = useServersStore();
+const instances = useInstancesStore();
 const message = useMessage();
 
-const tab = ref<"servers" | "rooms">("servers");
+// ---- QookiX 可选账号（好友 / 房间目录） ----
+const qookix = useQookixStore();
+const qookixPrefs = useQookixPrefsStore();
+const qookixLoginRef = ref<InstanceType<typeof QookixLoginDialog> | null>(null);
+const shareBusy = ref(false);
+
+function openQookixLogin() {
+  qookixLoginRef.value?.open();
+}
+
+/** 把当前陶瓦房间分享到目录（好友可见 / 公开到大厅）；未登录时先弹登录 */
+async function shareRoom(
+  visibility: "friends" | "public",
+  playType?: string,
+  version?: string,
+  title?: string,
+  pack?: string,
+  modsCount?: number,
+  packNet?: string,
+) {
+  const code = tcRoomCodeFinal.value;
+  if (!code) {
+    message.warning(t("qookix.rooms.noCode"));
+    return;
+  }
+  if (!qookix.loggedIn) {
+    openQookixLogin();
+    return;
+  }
+  shareBusy.value = true;
+  try {
+    await qookix.shareRoom(code, visibility, title, playType, version, pack, modsCount, packNet);
+    message.success(
+      visibility === "public" ? t("qookix.rooms.sharedPublic") : t("qookix.rooms.sharedFriends"),
+    );
+  } catch (e) {
+    message.error(qookixErrorMessage(e));
+  } finally {
+    shareBusy.value = false;
+  }
+}
+
+// ---- 公开到大厅：标题 / 玩法 / 版本（服务端用来做筛选，本机记住上次填的） ----
+const publishOpen = ref(false);
+const publishTitle = ref("");
+const publishPlayType = ref<string | null>(null);
+const publishVersion = ref("");
+// 环境清单（Phase 2a）：房主可以顺带把实例的模组清单分享出去
+const publishSharePack = ref(false);
+const publishInstanceId = ref<string | null>(null);
+const publishVisibility = ref<"friends" | "public">("friends");
+const playTypeOptions = computed(() =>
+  PLAY_TYPES.map((p) => ({ label: t(p.labelKey), value: p.value })),
+);
+const packInstanceOptions = computed(() =>
+  instances.instances
+    .filter((i) => i.installed)
+    .map((i) => ({ label: i.name, value: i.id })),
+);
+
+/** 公开到大厅是唯一面向陌生人的入口，要求正版已验证；好友分享不受影响 */
+const canPublishLobby = computed(() => qookix.loggedIn && !!qookix.user?.mc_verified);
+
+/** 统一的分享弹窗：好友分享不要求正版，公开到大厅才要求 */
+function openShareDialog(visibility: "friends" | "public") {
+  if (!tcRoomCodeFinal.value) {
+    message.warning(t("qookix.rooms.noCode"));
+    return;
+  }
+  if (!qookix.loggedIn) {
+    openQookixLogin();
+    return;
+  }
+  if (visibility === "public" && !canPublishLobby.value) {
+    // 不打开弹窗，直接说清楚缺什么、去哪儿补
+    message.warning(t("qookix.rooms.needVerified"));
+    return;
+  }
+  publishVisibility.value = visibility;
+  // 上次填过什么就带出来，别每次都重敲
+  publishTitle.value = qookixPrefs.share.title;
+  publishPlayType.value = qookixPrefs.share.playType || null;
+  publishVersion.value = qookixPrefs.share.version;
+  publishSharePack.value = false;
+  publishInstanceId.value = null;
+  if (!instances.instances.length) void instances.load();
+  publishOpen.value = true;
+}
+
+function openPublishDialog() {
+  openShareDialog("public");
+}
+
+/** 只分享给好友：也用上次的标题，邀请卡片里能认出来是什么房 */
+function shareWithFriends() {
+  openShareDialog("friends");
+}
+
+async function confirmPublish() {
+  // 双保险：弹窗打开期间解绑了也不该发出去
+  if (publishVisibility.value === "public" && !canPublishLobby.value) {
+    publishOpen.value = false;
+    message.warning(t("qookix.rooms.needVerified"));
+    return;
+  }
+  const preset = {
+    title: publishTitle.value.trim(),
+    playType: publishPlayType.value ?? "",
+    version: publishVersion.value.trim(),
+  };
+  qookixPrefs.saveSharePreset(preset);
+
+  // 环境清单：清单 JSON 只几 KB，走服务端；文件本体永远走 P2P
+  let pack: string | undefined;
+  let modsCount: number | undefined;
+  let packNet: string | undefined;
+  if (publishSharePack.value) {
+    if (!publishInstanceId.value) {
+      message.warning(t("qookix.pack.instanceEmpty"));
+      return;
+    }
+    try {
+      // 起服务 = 生成清单 + 起 HTTP + 起 EasyTier 节点，一次拿全
+      const s = await api.qookixPackServe(publishInstanceId.value);
+      pack = s.manifest;
+      modsCount = s.modsCount;
+      packNet = s.packNet;
+    } catch (e) {
+      message.error(String(e));
+      return;
+    }
+  } else {
+    // 不共享环境就别留着上次的节点
+    void api.qookixPackStopServe().catch(() => {});
+  }
+
+  publishOpen.value = false;
+  await shareRoom(
+    publishVisibility.value,
+    preset.playType || undefined,
+    preset.version || undefined,
+    preset.title || undefined,
+    pack,
+    modsCount,
+    packNet,
+  );
+}
+
+async function stopSharing() {
+  shareBusy.value = true;
+  try {
+    await qookix.stopShare();
+    message.success(t("qookix.rooms.unshared"));
+  } catch (e) {
+    message.error(qookixErrorMessage(e));
+  } finally {
+    shareBusy.value = false;
+  }
+}
+
+/** 从目录或邀请加入房间后，让陶瓦状态轮询立刻跑起来 */
+function onQookixJoined() {
+  void refreshTc();
+  startTcPoll();
+}
+
+const tab = ref<"servers" | "rooms" | "friends" | "tunnel">("servers");
 const tabSegRef = ref<HTMLElement | null>(null);
+const TAB_INDEX: Record<"servers" | "rooms" | "friends" | "tunnel", number> = {
+  servers: 0,
+  rooms: 1,
+  friends: 2,
+  tunnel: 3,
+};
 const { indicatorStyle: tabSegStyle, refresh: refreshTabSeg } = useSlidingIndicator(
   tabSegRef,
   () => Array.from(tabSegRef.value?.querySelectorAll<HTMLElement>("button") ?? []),
-  () => (tab.value === "servers" ? 0 : 1),
+  () => TAB_INDEX[tab.value],
 );
 watch(tab, () => nextTick(() => refreshTabSeg()));
+
+// 内网穿透的两个子页签（内容在 FrpPanel，页签本身放在顶栏）
+const frpSub = ref<"panel" | "local">("panel");
+const frpSubRef = ref<HTMLElement | null>(null);
+const FRP_SUB_INDEX: Record<"panel" | "local", number> = { panel: 0, local: 1 };
+const { indicatorStyle: frpSubStyle, refresh: refreshFrpSub } = useSlidingIndicator(
+  frpSubRef,
+  () => Array.from(frpSubRef.value?.querySelectorAll<HTMLElement>("button") ?? []),
+  () => FRP_SUB_INDEX[frpSub.value],
+);
+const frpPanelCount = ref(0);
+const frpLocalCount = ref(0);
+function onFrpCounts(panel: number, local: number) {
+  frpPanelCount.value = panel;
+  frpLocalCount.value = local;
+}
+// 切页签、切子页签、计数徽标出现/变化都要重新测量：
+// 徽标是异步来的，第一次挂载时按钮还窄着，量早了指示器就会短一截。
+watch([frpSub, tab, frpPanelCount, frpLocalCount], () => nextTick(() => refreshFrpSub()));
 
 // ---- 版本清单 ----
 const versions = ref<{ id: string; type: string; releaseTime: string }[]>([]);
@@ -488,7 +690,8 @@ onUnmounted(() => stopTcPoll());
 
 <template>
   <div id="mp-root" class="mp-view" data-tauri-drag-region>
-    <div id="mp-tabs" ref="tabSegRef" class="mode-tabs glass">
+    <div class="mp-head">
+      <div id="mp-tabs" ref="tabSegRef" class="mode-tabs glass">
       <div class="indicator" :style="tabSegStyle"></div>
       <button :class="{ active: tab === 'servers' }" @click="tab = 'servers'">
         <IconServer /> {{ t('multiplayer.tab.servers') }}
@@ -496,6 +699,34 @@ onUnmounted(() => stopTcPoll());
       <button :class="{ active: tab === 'rooms' }" @click="tab = 'rooms'">
         <IconUsers /> {{ t('multiplayer.tab.rooms') }}
       </button>
+      <button :class="{ active: tab === 'friends' }" @click="tab = 'friends'">
+        <IconUser /> {{ t('qookix.tabs.friends') }}
+        <span v-if="qookix.pendingCount" class="tab-badge">{{ qookix.pendingCount }}</span>
+      </button>
+      <button :class="{ active: tab === 'tunnel' }" @click="tab = 'tunnel'">
+        <IconGlobe /> {{ t("frp.title") }}
+      </button>
+      </div>
+
+      <!-- 内网穿透的子页签：和主标签同一行，靠右 -->
+      <!-- 常驻挂载、只切显隐：v-if 会在每次进页签时重新挂载，
+           一挂载就要重新测量，滑块会有一次可见的定位跳动 -->
+      <div
+        ref="frpSubRef"
+        class="glass mp-subtabs"
+        :class="{ hidden: tab !== 'tunnel' }"
+      >
+        <div class="indicator" :style="frpSubStyle"></div>
+        <button :class="{ on: frpSub === 'panel' }" @click="frpSub = 'panel'">
+          {{ t("frp.panelTunnels") }}
+          <!-- 徽标先占位再显示：数量是异步来的，凭空多出个徽标会让按钮变宽、滑块跟着跳一下 -->
+          <span class="mp-sub-count" :class="{ ghost: !frpPanelCount }">{{ frpPanelCount }}</span>
+        </button>
+        <button :class="{ on: frpSub === 'local' }" @click="frpSub = 'local'">
+          {{ t("frp.localTunnels") }}
+          <span class="mp-sub-count" :class="{ ghost: !frpLocalCount }">{{ frpLocalCount }}</span>
+        </button>
+      </div>
     </div>
 
     <!-- 服务器 -->
@@ -560,7 +791,10 @@ onUnmounted(() => stopTcPoll());
     </template>
 
     <!-- 联机房间（陶瓦联机） -->
-    <template v-else>
+    <template v-else-if="tab === 'rooms'">
+      <!-- 好友房间 / 邀请（可选账号） -->
+      <RoomDirectoryPanel @login="openQookixLogin" @joined="onQookixJoined" />
+
       <!-- 检测中 -->
       <div v-if="tcLoading || !tc" class="empty glass">
         <div class="empty-icon"><IconRefresh /></div>
@@ -651,6 +885,42 @@ onUnmounted(() => stopTcPoll());
               <IconCopy /> {{ tcJoined ? t('multiplayer.tc.copied') : t('multiplayer.tc.copyCode') }}
             </button>
             <button class="btn ghost" @click="leaveRoom"><IconClose /> {{ t('multiplayer.tc.leaveRoom') }}</button>
+          </div>
+
+          <!-- 分享到目录（可选账号） -->
+          <div class="tc-share-row">
+            <template v-if="qookix.share">
+              <span class="tc-share-dot" :class="{ pub: qookix.share?.visibility === 'public' }"></span>
+              <span class="tc-share-text">
+                {{
+                  qookix.share?.visibility === "public"
+                    ? t("qookix.rooms.sharedPublic")
+                    : t("qookix.rooms.sharedFriends")
+                }}
+              </span>
+              <span class="tc-share-sep"></span>
+              <button class="tc-share-link" :disabled="shareBusy" @click="stopSharing">
+                {{ t("qookix.rooms.stopShare") }}
+              </button>
+            </template>
+            <template v-else>
+              <button class="tc-share-link" :disabled="shareBusy" @click="shareWithFriends">
+                <IconUsers /> {{ t("qookix.rooms.shareFriends") }}
+              </button>
+              <span class="tc-share-sep"></span>
+              <button
+                class="tc-share-link"
+                :class="{ locked: !canPublishLobby }"
+                :disabled="shareBusy"
+                :title="canPublishLobby ? '' : t('qookix.rooms.needVerified')"
+                @click="openPublishDialog"
+              >
+                <IconGlobe /> {{ t("qookix.rooms.sharePublic") }}
+                <span v-if="!canPublishLobby" class="tc-lock">
+                  · {{ t("qookix.rooms.needVerifiedShort") }}
+                </span>
+              </button>
+            </template>
           </div>
         </div>
 
@@ -803,6 +1073,86 @@ onUnmounted(() => stopTcPoll());
         {{ t('multiplayer.tc.poweredBySuffix') }}
       </div>
     </template>
+
+    <!-- 好友（可选账号：好友 + 申请 + 黑名单） -->
+    <template v-else-if="tab === 'friends'">
+      <FriendsPanel @login="openQookixLogin" @joined="onQookixJoined" />
+    </template>
+
+    <!-- 内网穿透（frp）：面板隧道 + 本地自定义隧道 -->
+    <template v-else>
+      <section class="glass frp-tab">
+        <FrpPanel :sub="frpSub" @counts="onFrpCounts" />
+      </section>
+    </template>
+
+    <QookixLoginDialog ref="qookixLoginRef" />
+
+    <!-- 分享到目录：玩法 / 版本会作为筛选条件；清单用于加入前比对 -->
+    <n-modal
+      v-model:show="publishOpen"
+      preset="card"
+      :title="publishVisibility === 'public' ? t('qookix.rooms.publishTitle') : t('qookix.rooms.shareFriendsTitle')"
+      style="width: 460px; max-width: 92vw"
+      :bordered="false"
+    >
+      <div class="dialog-body">
+        <p class="publish-desc">
+          {{
+            publishVisibility === "public"
+              ? t("qookix.rooms.publishDesc")
+              : t("qookix.rooms.shareFriendsDesc")
+          }}
+        </p>
+        <div class="field">
+          <label>{{ t("qookix.rooms.titleLabel") }}</label>
+          <n-input
+            v-model:value="publishTitle"
+            :placeholder="t('qookix.rooms.titlePlaceholder')"
+            maxlength="60"
+          />
+        </div>
+        <div class="field">
+          <label>{{ t("qookix.playType.label") }}</label>
+          <n-select
+            v-model:value="publishPlayType"
+            :options="playTypeOptions"
+            :placeholder="t('qookix.playType.none')"
+            clearable
+          />
+        </div>
+        <div class="field">
+          <label>{{ t("qookix.rooms.versionLabel") }}</label>
+          <n-input
+            v-model:value="publishVersion"
+            :placeholder="t('qookix.rooms.versionPlaceholder')"
+            maxlength="32"
+          />
+        </div>
+        <!-- 环境清单：房主顺带分享模组清单，客人加入前能先比对 -->
+        <div class="field">
+          <label>{{ t("qookix.pack.shareLabel") }}</label>
+          <n-switch v-model:value="publishSharePack" />
+        </div>
+        <div v-if="publishSharePack" class="field">
+          <label>{{ t("qookix.pack.instanceLabel") }}</label>
+          <n-select
+            v-model:value="publishInstanceId"
+            :options="packInstanceOptions"
+            :placeholder="t('qookix.pack.instancePlaceholder')"
+            filterable
+          />
+          <p class="publish-hint">{{ t("qookix.pack.shareHint") }}</p>
+        </div>
+
+        <div class="publish-ops">
+          <button class="btn ghost" @click="publishOpen = false">{{ t("common.cancel") }}</button>
+          <button class="btn primary" :disabled="shareBusy" @click="confirmPublish">
+            {{ t("common.confirm") }}
+          </button>
+        </div>
+      </div>
+    </n-modal>
 
     <!-- 创建服务器（仅名称 / 核心 / 版本）-->
     <n-modal
@@ -1450,11 +1800,33 @@ onUnmounted(() => stopTcPoll());
   display: flex;
   gap: 8px;
 }
+/* 之前 .op 只写了 padding/圆角，没写背景与文字色，按钮退回浏览器默认的白底黑字 */
 .tc-hero-ops .op {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 14px;
   font-size: 13px;
+  font-family: inherit;
   border-radius: 9px;
-  gap: 6px;
+  border: 1px solid var(--border);
+  background: var(--w-06);
+  color: var(--text-1);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.tc-hero-ops .op svg {
+  width: 14px;
+  height: 14px;
+}
+.tc-hero-ops .op:hover {
+  background: var(--w-10);
+}
+.tc-hero-ops .op.stop:hover {
+  background: var(--danger-16);
+  border-color: var(--danger-40);
+  color: var(--danger-text);
 }
 .tc-hero-launch {
   display: flex;
@@ -1862,5 +2234,182 @@ onUnmounted(() => stopTcPoll());
 .tc-divider {
   width: 1px;
   background: var(--border);
+}
+
+/* 公开到大厅弹窗 */
+.publish-desc {
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+.publish-ops {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+/* 顶栏：主标签靠左，子页签靠右，同一行 */
+.mp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+/* 和主标签同一套玻璃胶囊：同一个 .glass 底 + 5px 内边距 */
+.mp-subtabs {
+  position: relative;
+  display: inline-flex;
+  gap: 4px;
+  padding: 5px;
+  border-radius: 11px;
+  flex: none;
+}
+/* 不在穿透页时隐藏但仍占位：宽度保持不变，滑块不用重新测 */
+.mp-subtabs.hidden {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* 和主标签同款滑动指示器（位置由 useSlidingIndicator 内联提供） */
+.mp-subtabs .indicator {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  border-radius: 9px;
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+.mp-subtabs button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 11px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.mp-subtabs button:hover {
+  color: var(--text-1);
+}
+/* 背景交给滑动指示器，这里只负责文字颜色；点完不留焦点描边 */
+.mp-subtabs button.on {
+  color: var(--accent);
+}
+.mp-subtabs button:focus {
+  outline: none;
+}
+.mp-sub-count {
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--w-06);
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+  color: var(--text-3);
+  transition: opacity 0.15s ease;
+}
+/* 数量还没回来时只保留占位宽度，不显示内容——避免滑块跟着抖一下 */
+.mp-sub-count.ghost {
+  visibility: hidden;
+  opacity: 0;
+}
+
+/* 内网穿透标签页：与好友/房间面板同一套卡片内边距 */
+.frp-tab {
+  padding: 18px 20px;
+  border-radius: 14px;
+  min-width: 0;
+}
+
+/* 联机页签上的待处理角标 */
+.tab-badge {
+  margin-left: 4px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--danger, #e5534b);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* 房主卡片：分享到目录（做成一行状态 + 文字按钮，避免和主操作抢视觉） */
+.tc-share-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+.tc-share-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--success, #4ec9a0);
+  box-shadow: 0 0 0 3px rgba(78, 201, 160, 0.18);
+}
+.tc-share-dot.pub {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-08, rgba(232, 154, 75, 0.16));
+}
+.tc-share-text {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.tc-share-sep {
+  width: 1px;
+  height: 12px;
+  background: var(--border);
+}
+.tc-share-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  font-family: inherit;
+  color: var(--text-2);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--dur-sm, 0.15s) var(--ease-out, ease);
+}
+.tc-share-link svg {
+  width: 13px;
+  height: 13px;
+}
+.tc-share-link:hover:not(:disabled) {
+  color: var(--accent);
+}
+.tc-share-link:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+/* 未绑定正版时大厅入口降权：仍然可见可点，点了会说明缺什么 */
+.tc-share-link.locked {
+  color: var(--text-3);
+}
+.tc-lock {
+  font-size: 11px;
+  color: var(--text-3);
 }
 </style>

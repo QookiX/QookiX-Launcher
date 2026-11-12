@@ -134,6 +134,10 @@ pub struct Settings {
     pub onboarding_completed: bool,
     /// 打开内容详情时自动加载正文译文（默认关，手动点「翻译」不受此限）
     pub body_translate_auto: bool,
+    /// 是否向好友显示「我正在玩什么」（实例名 / 版本 / 加载器）。
+    /// 只影响 QookiX 账号的心跳上报，默认开；老配置缺这个键时按 true 处理。
+    #[serde(default = "default_true")]
+    pub share_activity: bool,
 }
 
 impl Default for Settings {
@@ -186,6 +190,7 @@ impl Default for Settings {
             translate_api_model: String::new(),
             onboarding_completed: false,
             body_translate_auto: false,
+            share_activity: true,
         }
     }
 }

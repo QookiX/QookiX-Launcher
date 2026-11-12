@@ -39,6 +39,8 @@ import newsZh from "./_fragments/news.zh";
 import toolboxZh from "./_fragments/toolbox.zh";
 import resourcePackZh from "./_fragments/resourcepack.zh";
 import shimuZh from "./_fragments/shimu.zh";
+import qookixZh from "./_fragments/qookix.zh";
+import frpZh from "./_fragments/frp.zh";
 import seedMapZh from "./_fragments/seedMap.zh";
 import settingsZh from "./_fragments/settings.zh";
 import nbtZh from "./_fragments/nbt.zh";
@@ -195,6 +197,8 @@ export default {
   ...toolboxZh,
   resourcePack: resourcePackZh.resourcePack,
   ...shimuZh,
+  ...qookixZh,
+  ...frpZh,
   ...seedMapZh,
   keybind,
   timemachine,

@@ -20,6 +20,7 @@
     "dialog:default",
     "process:default",
     "updater:default",
-    "deep-link:default"
+    "deep-link:default",
+    "notification:default"
   ]
 }

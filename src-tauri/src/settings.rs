@@ -352,6 +352,9 @@ pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Set
     if let Some(v) = patch.get("body_translate_auto").and_then(|v| v.as_bool()) {
         settings.body_translate_auto = v;
     }
+    if let Some(v) = patch.get("share_activity").and_then(|v| v.as_bool()) {
+        settings.share_activity = v;
+    }
     let cloned = settings.clone();
     drop(settings);
     persist(state)?;

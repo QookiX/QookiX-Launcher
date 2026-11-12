@@ -374,6 +374,32 @@ fn wait_for_port(port_file: &Path, timeout: Duration) -> Option<u16> {
     None
 }
 
+/// 访问 127.0.0.1 的专用客户端：**不继承任何代理设置**。
+///
+/// 陶瓦联机监听在本地回环，而 `state.client` 按用户设置可能挂着系统代理
+/// （Clash 之类）。本地请求被代理接管后拿回来的是代理的错误页，
+/// 表现就是「解析陶瓦联机响应失败: expected value at line 1 column 1」。
+fn local_http() -> &'static reqwest::Client {
+    static CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_secs(10))
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new())
+    })
+}
+
+/// 截断响应体，用于报错信息（避免把整页 HTML 塞进 toast）
+fn snippet(text: &str) -> String {
+    let s: String = text.trim().chars().take(120).collect();
+    if s.is_empty() {
+        "<空响应>".to_string()
+    } else {
+        s
+    }
+}
+
 /// 向陶瓦联机本地服务发送 GET 请求并解析 JSON
 async fn fetch_state(state: &AppState, path: &str, query: &str) -> Result<serde_json::Value, String> {
     let session = state
@@ -383,21 +409,57 @@ async fn fetch_state(state: &AppState, path: &str, query: &str) -> Result<serde_
         .clone()
         .ok_or_else(|| "陶瓦联机未运行".to_string())?;
     let url = format!("{}{}{}", base_url(session.port), path, query);
-    let resp = state
-        .client
+    let resp = local_http()
         .get(&url)
         .send()
         .await
         .map_err(|e| format!("请求陶瓦联机失败: {e}"))?;
+    let status = resp.status();
     let text = resp
         .text()
         .await
         .map_err(|e| format!("读取陶瓦联机响应失败: {e}"))?;
+    if !status.is_success() {
+        // 陶瓦用 Rocket，错误页是整页 HTML；直接甩给用户没法看
+        if text.trim_start().starts_with('<') {
+            return Err(format!(
+                "陶瓦联机拒绝了这次操作（HTTP {}）：通常是当前状态不允许，比如还在房里就点加入",
+                status.as_u16()
+            ));
+        }
+        return Err(format!(
+            "陶瓦联机返回 HTTP {}: {}",
+            status.as_u16(),
+            snippet(&text)
+        ));
+    }
     // 陶瓦联机空闲时可能返回空响应体，视为 JSON null 而不是解析失败
     if text.trim().is_empty() {
         return Ok(serde_json::Value::Null);
     }
-    serde_json::from_str(&text).map_err(|e| format!("解析陶瓦联机响应失败: {e}"))
+    serde_json::from_str(&text)
+        .map_err(|e| format!("解析陶瓦联机响应失败: {e}（响应内容：{}）", snippet(&text)))
+}
+
+/// 读取陶瓦本地状态（供房间分享 supervisor 对账，不走命令层）
+pub(crate) async fn local_state(state: &AppState) -> Result<serde_json::Value, String> {
+    fetch_state(state, "/state/", "").await
+}
+
+/// 从陶瓦状态里取房间码：`room` 可能是字符串，也可能是 `{ code }` 对象
+pub(crate) fn room_code_of(v: &serde_json::Value) -> Option<String> {
+    let pick = |s: &str| {
+        let s = s.trim();
+        (!s.is_empty()).then(|| s.to_string())
+    };
+    match v.get("room") {
+        Some(serde_json::Value::String(s)) => pick(s),
+        Some(serde_json::Value::Object(o)) => o
+            .get("code")
+            .and_then(|c| c.as_str())
+            .and_then(pick),
+        _ => None,
+    }
 }
 
 /// 检测陶瓦联机是否安装/运行
@@ -598,6 +660,21 @@ pub async fn terracotta_status(state: tauri::State<'_, AppState>) -> Result<serd
     fetch_state(&state, "/state/", "").await
 }
 
+/// 当前状态名（取不到就返回 None）
+async fn current_state_name(state: &AppState) -> Option<String> {
+    fetch_state(state, "/state/", "")
+        .await
+        .ok()
+        .and_then(|v| v.get("state").and_then(|s| s.as_str()).map(str::to_string))
+}
+
+/// 回到空闲态：陶瓦的状态机不允许「房里再进房」，
+/// 在 host-*/guest-* 状态下调 scanning/guesting 会被 Rocket 直接 400。
+async fn reset_to_idle(state: &AppState) {
+    let _ = fetch_state(state, "/state/ide", "").await;
+    tokio::time::sleep(Duration::from_millis(250)).await;
+}
+
 /// 创建房间（主机模式，自动生成房间码）
 #[tauri::command]
 pub async fn terracotta_create_room(
@@ -609,6 +686,13 @@ pub async fn terracotta_create_room(
         Some(p) => format!("?player={}", utf8_percent_encode(&p, NON_ALPHANUMERIC)),
         None => String::new(),
     };
+    // 正在当访客时先退出来，否则 scanning 同样会被拒
+    if current_state_name(&state)
+        .await
+        .is_some_and(|s| s.starts_with("guest"))
+    {
+        reset_to_idle(&state).await;
+    }
     fetch_state(&state, "/state/scanning", &query).await
 }
 
@@ -632,6 +716,9 @@ pub async fn terracotta_join_room(
             utf8_percent_encode(&p, NON_ALPHANUMERIC)
         ));
     }
+    // 陶瓦会沿用上次会话，启动后可能直接是 host-ok；
+    // 此时调 guesting 一定 400，所以先进空闲态再进房。
+    reset_to_idle(&state).await;
     fetch_state(&state, "/state/guesting", &query).await
 }
 

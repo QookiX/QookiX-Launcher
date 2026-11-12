@@ -30,6 +30,7 @@ import { useAccountsStore } from "./stores/accounts";
 import { useInstancesStore } from "./stores/instances";
 import { useTasksStore } from "./stores/tasks";
 import { usePinsStore } from "./stores/pins";
+import { useQookixStore } from "./stores/qookix";
 import {
   buildDarkOverrides,
   buildLightOverrides,
@@ -46,6 +47,7 @@ const accounts = useAccountsStore();
 const instances = useInstancesStore();
 const tasks = useTasksStore();
 const pins = usePinsStore();
+const qookix = useQookixStore();
 const onboarding = useOnboarding();
 const { t } = useI18n();
 const route = useRoute();
@@ -203,6 +205,8 @@ let unlistenShareErr: (() => void) | null = null;
 let unlistenTrayErr: (() => void) | null = null;
 onMounted(async () => {
   void boot();
+  // QookiX 可选账号：读登录态 + 注册后台推送事件（未登录时是空操作）
+  void qookix.init();
   // 对照探针：验证「前端 → log_debug → 落盘」这条日志通道本身可用
   api.logDebug("[fe] App 启动，日志通道自检");
   try {

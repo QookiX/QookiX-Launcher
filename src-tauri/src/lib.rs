@@ -27,6 +27,9 @@ mod modpack;
 mod pins;
 mod modrinth;
 mod paths;
+mod frp;
+mod qookix;
+mod room_pack;
 mod servers;
 mod secret;
 mod settings;
@@ -186,9 +189,21 @@ pub fn run() {
     }
 
     // QOOKIX_DATA_DIR：调试时指向空目录可模拟全新用户（优先级最高）
+    //
+    // 便携模式：exe 同目录放一个 portable.txt（内容随意），数据全部落在
+    // <exe 目录>\data，不碰 %APPDATA%。复制整个文件夹即可带走配置与实例。
+    let portable_root = std::env::current_exe().ok().and_then(|exe| {
+        let dir = exe.parent()?;
+        dir.join("portable.txt")
+            .is_file()
+            .then(|| dir.join("data"))
+    });
+    let portable = portable_root.is_some();
     let default_root = std::env::var("QOOKIX_DATA_DIR")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from(settings::default_root()));
+        .ok()
+        .or(portable_root)
+        .unwrap_or_else(|| std::path::PathBuf::from(settings::default_root()));
     let _ = settings::ensure_layout(&default_root);
 
     // The installer seeds a custom data directory for fresh installs by writing
@@ -227,6 +242,8 @@ pub fn run() {
     let shimu_auth = shimu::load_saved(&root);
     // LittleSkin OAuth2 待校验 state：同样在 root 被 move 之前读盘
     let ygg_oauth_pending = yggdrasil_oauth::load_saved(&root);
+    // QookiX 可选账号（好友 + 联机房间目录）登录态
+    let qookix_auth = qookix::load_saved(&root);
     let app_state = AppState {
         root,
         settings: RwLock::new(loaded),
@@ -245,15 +262,20 @@ pub fn run() {
         terracotta: Mutex::new(None),
         pending_update: Mutex::new(None),
         lan_sync: Mutex::new(None),
+        qookix: Mutex::new(qookix_auth),
+        qookix_refresh: tokio::sync::Mutex::new(()),
     };
 
-    tauri::Builder::default()
+    // 单实例锁按「应用标识符（+版本）」命名，同机只能开一个。
+    // 便携版刻意不注册：这样能复制出第二份、各用一份账号互测好友与房间目录。
+    let mut builder = tauri::Builder::default();
+    if !portable {
         // single-instance 必须最先注册：二次唤起（如 qookix:// 链接）时把
         // 参数转发给已运行实例，而不是开出第二个窗口。
         // 转发方式：deep-link 的 JS 端 onOpenUrl 监听 "deep-link://new-url"
         // 事件（载荷为 URL 字符串数组，见 tauri-plugin-deep-link 源码），
         // 从二次实例的 argv 中取出 qookix:// 链接原样重发该事件即可。
-        .plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
             println!("[single-instance] 二次启动 args={:?}", args);
             // 官方范式：交给 deep-link 插件处理 argv——它自己找出 qookix://
             // 链接、更新内部状态并 emit 一次 deep-link://new-url。
@@ -268,12 +290,15 @@ pub fn run() {
                 let _ = w.unminimize();
                 let _ = w.set_focus();
             }
-        }))
+        }));
+    }
+    builder
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_deep_link::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // cloud sync
@@ -558,6 +583,62 @@ pub fn run() {
             commands::resourcepack_text,
             commands::resourcepack_close,
             commands::resourcepack_list_instance_packs,
+            // QookiX 账号（可选）：好友 + 陶瓦联机房间目录
+            qookix::qookix_status,
+            qookix::qookix_login,
+            qookix::qookix_register,
+            qookix::qookix_resend_verification,
+            qookix::qookix_forgot_password,
+            qookix::qookix_logout,
+            qookix::qookix_me,
+            qookix::qookix_update_nickname,
+            qookix::qookix_bind_mc,
+            qookix::qookix_unbind_mc,
+            qookix::qookix_change_email,
+            qookix::qookix_user_profiles,
+            qookix::qookix_search_users,
+            qookix::qookix_friends,
+            qookix::qookix_requests,
+            qookix::qookix_send_friend_request,
+            qookix::qookix_respond_request,
+            qookix::qookix_remove_friend,
+            qookix::qookix_blocks,
+            qookix::qookix_set_block,
+            qookix::qookix_rooms,
+            qookix::qookix_public_rooms,
+            qookix::qookix_room_detail,
+            qookix::qookix_share_room,
+            qookix::qookix_stop_share,
+            qookix::qookix_invite,
+            qookix::qookix_invites,
+            qookix::qookix_accept_invite,
+            qookix::qookix_decline_invite,
+            qookix::qookix_report_room,
+            qookix::qookix_notifications,
+            // 配置云同步
+            qookix::qookix_sync_upload,
+            qookix::qookix_sync_download,
+            qookix::qookix_kv_get,
+            qookix::qookix_kv_put,
+            // 联机环境清单（预检）
+            room_pack::qookix_pack_manifest,
+            room_pack::qookix_compare_pack,
+            room_pack::qookix_pack_serve,
+            room_pack::qookix_pack_stop_serve,
+            room_pack::qookix_pack_pull,
+            // 内网穿透（frp）
+            frp::frp_login_start,
+            frp::frp_login_poll,
+            frp::frp_status,
+            frp::frp_tunnels,
+            frp::frp_start,
+            frp::frp_stop,
+            frp::frp_logout,
+            frp::frp_local_list,
+            frp::frp_local_save,
+            frp::frp_local_delete,
+            frp::frp_local_start,
+            frp::frp_logs,
         ])
         .on_window_event(|window, event| {
             use tauri::WindowEvent;
@@ -581,7 +662,10 @@ pub fn run() {
                         let _ = app.emit("app://close-requested", ());
                     }
                     // "quit"（或未知值）：放行，窗口关闭后进程退出
-                    _ => {}
+                    _ => {
+                        // 退出前关掉房间目录条目并结束陶瓦进程
+                        crate::qookix::cleanup_on_exit(app);
+                    }
                 }
             }
         })
@@ -614,6 +698,9 @@ pub fn run() {
                 *state.java_cache.lock().unwrap() = Some((ts, detected));
             });
 
+            // QookiX 可选账号：登录后由后台循环负责在线心跳、通知与好友刷新
+            crate::qookix::start_background(app.handle().clone());
+
             // System tray: when the close behaviour is set to "minimize to
             // background" the window is only hidden, so without a tray icon the
             // user has no way to bring it back. Left click opens the menu,
@@ -629,7 +716,10 @@ pub fn run() {
                     let id = event.id().as_ref();
                     match id {
                         "show" => show_main_window(app),
-                        "quit" => app.exit(0),
+                        "quit" => {
+                            crate::qookix::cleanup_on_exit(app);
+                            app.exit(0)
+                        }
                         other => {
                             if let Some(instance_id) = other.strip_prefix("recent:") {
                                 launch_instance_from_tray(app, instance_id);
@@ -846,6 +936,8 @@ mod smoke {
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
             lan_sync: Mutex::new(None),
+            qookix: Mutex::new(crate::qookix::QookixSession::default()),
+            qookix_refresh: tokio::sync::Mutex::new(()),
         };
         let instance = Instance {
             id: "test-fabric".into(),
@@ -894,6 +986,8 @@ mod smoke {
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
             lan_sync: Mutex::new(None),
+            qookix: Mutex::new(crate::qookix::QookixSession::default()),
+            qookix_refresh: tokio::sync::Mutex::new(()),
         };
         let vanilla = crate::mcmeta::fetch_version_json(&state, "1.18.2").await.unwrap();
         let vanilla_natives = vanilla.libraries.iter().filter(|l| l.natives.is_some()).count();
@@ -943,6 +1037,8 @@ mod smoke {
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
             lan_sync: Mutex::new(None),
+            qookix: Mutex::new(crate::qookix::QookixSession::default()),
+            qookix_refresh: tokio::sync::Mutex::new(()),
         };
         // modpack type + empty query (regression for the 400 bug)
         let res = crate::modrinth::search(&state, "", "modpack", "", "relevance", 0, 20, "", "")

@@ -168,6 +168,12 @@ const schematicSourceOptions = computed(() => [
 /** 投影库进详情时收起工具栏，避免上下两套控件打架 */
 const shimuDetailOpen = ref(false);
 
+/** 搜索框去掉了描边，靠 `.search-box` 自身当点击热区，所以点空白处要手动聚焦输入框 */
+const searchInputEl = ref<HTMLInputElement | null>(null);
+function focusSearch() {
+  searchInputEl.value?.focus();
+}
+
 /** 搜索框：投影走站点关键词搜索，其余走内容搜索 */
 const searchText = computed({
   get: () => (type.value === "shimu" ? shimuKeyword.value : query.value),
@@ -911,9 +917,9 @@ onMounted(async () => {
 
     <div v-if="type !== 'news' && !shimuDetailOpen" class="toolbar glass">
       <div class="toolbar-row">
-        <div id="browse-search" class="search-box">
+        <div id="browse-search" class="search-box" @click="focusSearch">
           <IconSearch />
-          <input v-model="searchText" :placeholder="searchPlaceholder" />
+          <input ref="searchInputEl" v-model="searchText" :placeholder="searchPlaceholder" />
         </div>
         <n-select
           v-if="showInstanceSelect"
@@ -1281,20 +1287,27 @@ onMounted(async () => {
 .tb-select.provider {
   width: 120px;
 }
+/* 与联机页「好友」搜索条同一观感：保留底色、不画描边 */
 .search-box {
   flex: 1;
   min-width: 220px;
   display: flex;
   align-items: center;
   gap: 8px;
-  background: var(--w-06);
-  border: 1px solid var(--border);
-  border-radius: 9px;
   padding: 0 12px;
+  border-radius: 9px;
+  background: var(--w-06);
   color: var(--text-3);
+  cursor: text;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+.search-box:focus-within {
+  background: var(--w-10);
+  color: var(--accent);
 }
 .search-box input {
   flex: 1;
+  min-width: 0;
   background: none;
   border: none;
   outline: none;
@@ -1302,6 +1315,9 @@ onMounted(async () => {
   padding: 8px 0;
   font-size: 13px;
   font-family: inherit;
+}
+.search-box input::placeholder {
+  color: var(--text-3);
 }
 .type-card {
   position: relative;

@@ -40,6 +40,10 @@ pub struct AppState {
     pub pending_update: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
     /// 局域网同步服务（运行中时为 Some，关闭后为 None）
     pub lan_sync: Mutex<Option<crate::lan_sync::LanSyncServer>>,
+    /// QookiX 账号（可选）：好友与陶瓦联机房间目录
+    pub qookix: Mutex<crate::qookix::QookixSession>,
+    /// 令牌刷新闸门：并发 401 时只放一个请求去刷新，其余等新令牌
+    pub qookix_refresh: tokio::sync::Mutex<()>,
 }
 
 impl AppState {
@@ -100,5 +104,9 @@ impl AppState {
     /// Guard for `db`, recovering from lock poison.
     pub fn db(&self) -> std::sync::MutexGuard<'_, rusqlite::Connection> {
         self.db.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    /// Guard for `qookix`, recovering from lock poison.
+    pub fn qookix(&self) -> std::sync::MutexGuard<'_, crate::qookix::QookixSession> {
+        self.qookix.lock().unwrap_or_else(|e| e.into_inner())
     }
 }

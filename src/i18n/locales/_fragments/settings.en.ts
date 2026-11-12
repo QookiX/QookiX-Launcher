@@ -185,6 +185,8 @@ export default {
     notConnected: "Not signed in to GitHub",
     loginGithub: "Sign in with GitHub",
     logoutGithub: "Sign out",
+    githubAccount: "GitHub account",
+    githubMoved: "GitHub account now lives on the Accounts tab",
     logoutConfirm: "Uploads stop after signing out; cloud data is not deleted",
     stats: "Storage stats",
     lastUpdate: "Last update",

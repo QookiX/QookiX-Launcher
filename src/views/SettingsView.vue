@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fmtMem, fmtSize, fmtTime } from "../utils/format";
 import { cacheClearPrefix } from "../utils/cache";
+import { useFavoritesStore } from "../stores/favorites";
 import { NModal, NSelect, NSlider, NTooltip, NInput, useMessage, useDialog } from "naive-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -45,12 +46,15 @@ import DiagnosticsDialog from "../components/DiagnosticsDialog.vue";
 import CloudSyncDialog from "../components/CloudSyncDialog.vue";
 import LanSyncPanel from "../components/LanSyncPanel.vue";
 import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
+import QookixLoginDialog from "../components/QookixLoginDialog.vue";
+import FrpDialog from "../components/FrpDialog.vue";
 import ColorPicker from "../components/ColorPicker.vue";
 import { IconCloud } from "../components/icons";
 import { error as devError } from "../utils/logger";
 import { useI18n } from "vue-i18n";
 import { SUPPORTED_LOCALES } from "../i18n";
 import { shimuErrorMessage, useShimuStore } from "../stores/shimu";
+import { qookixErrorMessage, useQookixStore } from "../stores/qookix";
 // 版本号唯一来源：package.json（发布时由 npm run version 同步）
 import { version as appVersion } from "../../package.json";
 import { titlebarThemeToggle } from "../composables/useDevFlags";
@@ -59,6 +63,7 @@ const settings = useSettingsStore();
 const accounts = useAccountsStore();
 const instances = useInstancesStore();
 const shimuStore = useShimuStore();
+const qookixStore = useQookixStore();
 const message = useMessage();
 const dialog = useDialog();
 const onboarding = useOnboarding();
@@ -122,8 +127,210 @@ function openShimuLogin() {
   shimuLoginRef.value?.open();
 }
 
-/** 刷新：重读配置与登录态，已登录时顺手拉一次余额 / 积分 */
-async function refreshShimu() {
+/**
+ * QookiX 账号（可选）：只承载好友与联机房间目录，与启动账号完全无关。
+ */
+const frpRef = ref<InstanceType<typeof FrpDialog> | null>(null);
+function openFrp() {
+  frpRef.value?.open();
+}
+
+const qookixLoginRef = ref<InstanceType<typeof QookixLoginDialog> | null>(null);
+const qookixBadge = computed<"on" | "off">(() => (qookixStore.loggedIn ? "on" : "off"));
+const qookixBadgeLabel = computed(() =>
+  qookixStore.loggedIn ? t("qookix.onlineBadge") : t("qookix.offlineBadge"),
+);
+const qookixMetaText = computed(() => {
+  const u = qookixStore.user;
+  if (!u) return t("qookix.intro");
+  const parts = [`@${u.username}`];
+  if (u.email) parts.push(u.email);
+  if (u.mc_name) {
+    parts.push(
+      u.mc_verified
+        ? t("qookix.mcNameVerified", { name: u.mc_name })
+        : t("qookix.mcNameUnverified", { name: u.mc_name }),
+    );
+  }
+  return parts.join(" · ");
+});
+
+const qookixMcVerified = computed(() => !!qookixStore.user?.mc_verified);
+const qookixMcName = computed(() => qookixStore.user?.mc_name ?? "");
+/**
+ * 用来绑定的正版账号：优先当前选中的，否则取列表里第一个微软账号。
+ * 不这么兜底的话，用户切到离线账号后按钮会直接消失，看着像功能没了。
+ */
+const bindTargetAccount = computed(() => {
+  const cur = accounts.current;
+  if (cur && cur.type === "microsoft") return cur;
+  return accounts.accounts.find((a) => a.type === "microsoft") ?? null;
+});
+const canBindMc = computed(() => !!bindTargetAccount.value && !qookixMcVerified.value);
+
+async function bindCurrentMc() {
+  const acc = bindTargetAccount.value;
+  if (!acc) {
+    message.warning(t("qookix.err.mcOfflineAccount"));
+    return;
+  }
+  try {
+    const r = await qookixStore.bindMc(acc.uuid);
+    const bound = (r?.user as { mc_name?: string } | undefined)?.mc_name || acc.username;
+    message.success(t("qookix.bindMcDone", { name: bound }));
+  } catch (e) {
+    message.error(qookixErrorMessage(e));
+  }
+}
+
+/** 解绑是有代价的（24 小时冷却 + 掉大厅权限），必须二次确认 */
+function unbindMc() {
+  dialog.warning({
+    title: t("qookix.unbindTitle"),
+    content: t("qookix.unbindConfirm"),
+    positiveText: t("common.confirm"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: async () => {
+      try {
+        const r = await qookixStore.unbindMc();
+        const hours = Math.round((r?.retry_after ?? 86400) / 3600);
+        message.success(t("qookix.unbindMcDone", { hours }));
+      } catch (e) {
+        message.error(qookixErrorMessage(e));
+      }
+    },
+  });
+}
+
+// ---- 修改邮箱 ----
+const emailOpen = ref(false);
+const emailDraft = ref("");
+const emailBusy = ref(false);
+
+function openEmailChange() {
+  emailDraft.value = "";
+  emailOpen.value = true;
+}
+
+async function submitEmailChange() {
+  const v = emailDraft.value.trim();
+  if (!v || !v.includes("@")) {
+    message.warning(t("qookix.err.invalidEmail"));
+    return;
+  }
+  emailBusy.value = true;
+  try {
+    await qookixStore.changeEmail(v);
+    emailOpen.value = false;
+    message.success(t("qookix.emailSent"));
+  } catch (e) {
+    message.error(qookixErrorMessage(e));
+  } finally {
+    emailBusy.value = false;
+  }
+}
+
+function openQookixLogin() {
+  qookixLoginRef.value?.open();
+}
+
+// ---- 配置云同步（Phase 3）----
+// 只同步白名单字段（内存/下载/外观/行为）+ 收藏；密钥与本机路径由 Rust 侧白名单挡掉。
+const favorites = useFavoritesStore();
+const syncBusy = ref(false);
+
+async function syncUpload() {
+  if (syncBusy.value) return;
+  syncBusy.value = true;
+  try {
+    const r = await api.qookixSyncUpload();
+    // 收藏是前端 localStorage 持有的，单独走通用 KV
+    await api.qookixKvPut("favorites", favorites.snapshot());
+    message.success(t("qookix.sync.uploadDone", { n: r.keys }));
+  } catch (e) {
+    message.error(String(e));
+  } finally {
+    syncBusy.value = false;
+  }
+}
+
+function syncDownload() {
+  if (syncBusy.value) return;
+  dialog.warning({
+    title: t("qookix.sync.download"),
+    content: t("qookix.sync.downloadConfirm"),
+    positiveText: t("common.confirm"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: async () => {
+      syncBusy.value = true;
+      try {
+        const r = await api.qookixSyncDownload();
+        if (r.empty) {
+          message.warning(t("qookix.sync.empty"));
+          return;
+        }
+        // 重新拉一次设置，界面立即反映云端值
+        await settings.load();
+        let added = 0;
+        try {
+          const fav = await api.qookixKvGet("favorites");
+          added = favorites.mergeFromCloud(fav.value);
+        } catch {
+          /* 收藏同步失败不影响设置已经生效 */
+        }
+        message.success(t("qookix.sync.downloadDone", { n: r.applied, fav: added }));
+      } catch (e) {
+        message.error(String(e));
+      } finally {
+        syncBusy.value = false;
+      }
+    },
+  });
+}
+
+async function logoutQookix() {
+  try {
+    await qookixStore.logout();
+    message.success(t("qookix.loggedOut"));
+  } catch (e) {
+    message.error(String(e));
+  }
+}
+
+/**
+ * 微软登录用的 OAuth Client ID：正式包由 CI 的 `MS_CLIENT_ID` 编译期注入
+ * （`option_env!`），开发构建没带就只能在这里临时填一个，写进本地设置。
+ */
+const showMsClientId = import.meta.env.DEV;
+const msClientIdDraft = ref("");
+const msClientIdSaving = ref(false);
+watch(
+  () => settings.settings?.ms_client_id,
+  (v) => {
+    if (v && !msClientIdDraft.value) msClientIdDraft.value = v;
+  },
+  { immediate: true },
+);
+
+async function saveMsClientId() {
+  const v = msClientIdDraft.value.trim();
+  if (!v) {
+    message.warning("先填一个 Client ID");
+    return;
+  }
+  msClientIdSaving.value = true;
+  try {
+    await settings.patch({ ms_client_id: v });
+    message.success("已保存，现在可以登录微软账号了");
+  } catch (e) {
+    message.error(String(e));
+  } finally {
+    msClientIdSaving.value = false;
+  }
+}
+
+/** 刷新：三个第三方账号（QookiX / 拾木 / GitHub）的登录态一起重读 */
+async function refreshAccounts() {
   shimuRefreshing.value = true;
   try {
     await shimuStore.init();
@@ -135,6 +342,8 @@ async function refreshShimu() {
         /* 资料刷新失败不影响登录态，保持原有显示 */
       }
     }
+    // 另外两个账号各自独立，失败互不影响
+    await Promise.all([qookixStore.refreshStatus(), loadCloudAccount()]);
     message.success(t("settings.accounts.refreshDone"));
   } catch (e) {
     message.error(shimuErrorMessage(e));
@@ -607,7 +816,11 @@ watch(tab, () => {
 });
 // 进「账号」页重新读一次登录态：可能在发现页/弹窗里刚授权或退出过
 watch(tab, (v) => {
-  if (v === "accounts") void shimuStore.init();
+  if (v === "accounts") {
+    void shimuStore.init();
+    // 账号页要显示三个第三方账号的实时登录态
+    void qookixStore.refreshStatus();
+  }
 });
 
 const tabs = computed(() => {
@@ -1845,44 +2058,199 @@ onUnmounted(() => {
       <!-- 账号 -->
       <div v-show="tab === 'accounts'" class="settings-pane">
         <div class="grid storage-grid">
+          <!-- 只出现在开发构建：微软登录需要的 OAuth Client ID（正式包由 CI 编译期注入） -->
+          <div v-if="showMsClientId" class="card glass storage-card">
+            <div class="storage-header">
+              <h3>Microsoft Client ID（开发）</h3>
+            </div>
+            <div class="ms-cid-row">
+              <input
+                v-model="msClientIdDraft"
+                class="ms-cid-input"
+                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                spellcheck="false"
+              />
+              <button class="mini-btn primary" :disabled="msClientIdSaving" @click="saveMsClientId">
+                保存
+              </button>
+            </div>
+            <p class="hint">
+              只写进本地设置，不会打进发布包。正式包由 CI 的 MS_CLIENT_ID 编译期注入。
+            </p>
+          </div>
+
           <div class="card glass storage-card" id="accounts-thirdparty">
             <div class="storage-header">
               <h3>{{ t("settings.accounts.thirdParty") }}</h3>
               <div class="storage-actions">
-                <button class="mini-btn" :disabled="shimuRefreshing" @click="refreshShimu">
+                <button class="mini-btn" :disabled="shimuRefreshing" @click="refreshAccounts">
                   <IconRefresh class="btn-icon" />
                   {{ shimuRefreshing ? t("settings.accounts.refreshing") : t("settings.accounts.refresh") }}
                 </button>
               </div>
             </div>
 
-            <!-- 拾木空间：唯一已接入的第三方账号（投影下载 / 付费内容） -->
-            <div class="acct-row">
-              <img v-if="shimuAvatar" class="acct-avatar" :src="shimuAvatar" alt="" />
-              <div v-else class="acct-avatar acct-avatar-ph">
-                {{ shimuStore.loggedIn ? (shimuStore.nickname.slice(0, 1) || "拾") : "拾" }}
-              </div>
-              <div class="acct-info">
-                <div class="acct-name">
-                  <span>{{ t("shimu.title") }}</span>
-                  <span class="acct-badge" :class="shimuBadge">{{ shimuBadgeLabel }}</span>
+            <div class="acct-list">
+              <!-- QookiX 账号（可选）：好友与联机房间目录 -->
+              <div class="acct-row">
+                <div class="acct-avatar acct-avatar-ph qk-avatar">
+                  <img src="/app-icon.png" alt="" draggable="false" />
                 </div>
-                <div class="acct-meta">{{ shimuMetaText }}</div>
+                <div class="acct-info">
+                  <div class="acct-name">
+                    <span>{{ t("qookix.title") }}</span>
+                    <span class="acct-badge" :class="qookixBadge">{{ qookixBadgeLabel }}</span>
+                    <span v-if="qookixMcVerified" class="acct-badge on">
+                      {{ t("qookix.mcVerified") }}
+                    </span>
+                    <span v-else-if="qookixMcName" class="acct-badge">
+                      {{ t("qookix.mcUnverified") }}
+                    </span>
+                  </div>
+                  <div class="acct-meta">{{ qookixMetaText }}</div>
+                </div>
+                <div class="acct-actions">
+                  <template v-if="qookixStore.loggedIn">
+                    <button v-if="canBindMc" class="mini-btn" @click="bindCurrentMc">
+                      {{ t("qookix.bindMc") }}
+                    </button>
+                    <template v-else-if="qookixMcVerified">
+                      <button class="mini-btn" @click="bindCurrentMc">
+                        {{ t("qookix.refreshMcName") }}
+                      </button>
+                      <button class="mini-btn danger" @click="unbindMc">
+                        {{ t("qookix.unbindMc") }}
+                      </button>
+                    </template>
+                    <button class="mini-btn" @click="openEmailChange">
+                      {{ t("qookix.changeEmail") }}
+                    </button>
+                    <button class="mini-btn danger" @click="logoutQookix">
+                      {{ t("qookix.logout") }}
+                    </button>
+                  </template>
+                  <button v-else class="mini-btn primary" @click="openQookixLogin">
+                    {{ t("qookix.login") }}
+                  </button>
+                </div>
               </div>
-              <div class="acct-actions">
-                <button class="mini-btn" @click="openShimuSite">
-                  <IconExternal class="btn-icon" />{{ t("shimu.openSite") }}
+
+              <!-- 隐私：向好友显示「正在玩什么」（读的是本机运行中的实例） -->
+              <div v-if="qookixStore.loggedIn" class="switch-row acct-switch">
+                <span>{{ t("qookix.shareActivity") }}</span>
+                <button
+                  class="toggle"
+                  :class="{ on: settings.settings.share_activity !== false }"
+                  role="switch"
+                  :aria-checked="settings.settings.share_activity !== false"
+                  @click="settings.patch({ share_activity: settings.settings.share_activity === false })"
+                >
+                  <span class="knob"></span>
                 </button>
-                <template v-if="shimuStore.loggedIn">
-                  <button class="mini-btn" @click="openShimuLogin">{{ t("shimu.reauth") }}</button>
-                  <button class="mini-btn danger" @click="logoutShimu">{{ t("shimu.logout") }}</button>
-                </template>
-                <button v-else class="mini-btn primary" @click="openShimuLogin">
-                  {{ t("shimu.login") }}
-                </button>
+              </div>
+              <p v-if="qookixStore.loggedIn" class="hint acct-switch-hint">
+                {{ t("qookix.shareActivityHint") }}
+              </p>
+
+              <!-- 配置云同步：换台电脑登录就能恢复偏好与收藏 -->
+              <div v-if="qookixStore.loggedIn" class="sync-box">
+                <div class="sync-head">
+                  <span class="sync-title">{{ t("qookix.sync.title") }}</span>
+                  <div class="sync-ops">
+                    <button class="mini-btn" :disabled="syncBusy" @click="syncUpload">
+                      {{ syncBusy ? t("qookix.sync.busy") : t("qookix.sync.upload") }}
+                    </button>
+                    <button class="mini-btn" :disabled="syncBusy" @click="syncDownload">
+                      {{ t("qookix.sync.download") }}
+                    </button>
+                  </div>
+                </div>
+                <p class="hint sync-hint">{{ t("qookix.sync.hint") }}</p>
+              </div>
+
+              <!-- 拾木空间：投影下载 / 付费内容 -->
+              <div class="acct-row">
+                <img v-if="shimuAvatar" class="acct-avatar" :src="shimuAvatar" alt="" />
+                <div v-else class="acct-avatar acct-avatar-ph">
+                  {{ shimuStore.loggedIn ? (shimuStore.nickname.slice(0, 1) || "拾") : "拾" }}
+                </div>
+                <div class="acct-info">
+                  <div class="acct-name">
+                    <span>{{ t("shimu.title") }}</span>
+                    <span class="acct-badge" :class="shimuBadge">{{ shimuBadgeLabel }}</span>
+                  </div>
+                  <div class="acct-meta">{{ shimuMetaText }}</div>
+                </div>
+                <div class="acct-actions">
+                  <button class="mini-btn" @click="openShimuSite">
+                    <IconExternal class="btn-icon" />{{ t("shimu.openSite") }}
+                  </button>
+                  <template v-if="shimuStore.loggedIn">
+                    <button class="mini-btn" @click="openShimuLogin">{{ t("shimu.reauth") }}</button>
+                    <button class="mini-btn danger" @click="logoutShimu">{{ t("shimu.logout") }}</button>
+                  </template>
+                  <button v-else class="mini-btn primary" @click="openShimuLogin">
+                    {{ t("shimu.login") }}
+                  </button>
+                </div>
+              </div>
+              <p v-if="shimuExpired" class="acct-warn inline">
+                {{ t("settings.accounts.expiredHint") }}
+              </p>
+
+              <!-- GitHub：云存档与时光机共用（原在「存储」页，现统一放账号页） -->
+              <div class="acct-row">
+                <div class="acct-avatar acct-avatar-ph gh-avatar">
+                  <IconGithub />
+                </div>
+                <div class="acct-info">
+                  <div class="acct-name">
+                    <span>{{ t("settings.storage.githubAccount") }}</span>
+                    <span class="acct-badge" :class="{ on: !!cloudAccount }">
+                      {{ cloudAccount ? t("settings.accounts.statusOn") : t("settings.storage.notConnected") }}
+                    </span>
+                  </div>
+                  <div class="acct-meta">
+                    <template v-if="cloudAccount">
+                      <button
+                        class="gh-user"
+                        :title="t('settings.about.githubHome')"
+                        @click="openUrl(`https://github.com/${cloudAccount}`)"
+                      >
+                        {{ cloudAccount }}
+                      </button>
+                      <span v-if="cloudRepo"> · {{ cloudRepo }}</span>
+                    </template>
+                    <template v-else>{{ t("settings.storage.cloudHint") }}</template>
+                  </div>
+                </div>
+                <div class="acct-actions">
+                  <button v-if="cloudAccount" class="mini-btn danger" @click="logoutGithub">
+                    {{ t("settings.storage.logoutGithub") }}
+                  </button>
+                  <button v-else class="mini-btn primary" @click="cloudOpen = true">
+                    {{ t("settings.storage.loginGithub") }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- 内网穿透（frp）：第三方面板，用于把本机端口映射到公网 -->
+              <div class="acct-row">
+                <div class="acct-avatar acct-avatar-ph">
+                  <IconGlobe v-if="false" />
+                  {{ "穿" }}
+                </div>
+                <div class="acct-info">
+                  <div class="acct-name">
+                    <span>{{ t("frp.title") }}</span>
+                  </div>
+                  <div class="acct-meta">{{ t("frp.loginHint") }}</div>
+                </div>
+                <div class="acct-actions">
+                  <button class="mini-btn primary" @click="openFrp">{{ t("frp.manage") }}</button>
+                </div>
               </div>
             </div>
-            <p v-if="shimuExpired" class="acct-warn">{{ t("settings.accounts.expiredHint") }}</p>
           </div>
         </div>
       </div>
@@ -1902,28 +2270,13 @@ onUnmounted(() => {
               </div>
             </div>
 
-            <!-- GitHub 账户：云存档与时光机共用，用户名可点开主页 -->
-            <div class="gh-row">
-              <IconGithub class="gh-icon" :class="{ dim: !cloudAccount }" />
-              <template v-if="cloudAccount">
-                <button
-                  class="gh-user"
-                  :title="t('settings.about.githubHome')"
-                  @click="openUrl(`https://github.com/${cloudAccount}`)"
-                >
-                  {{ cloudAccount }}
-                </button>
-                <span v-if="cloudRepo" class="gh-repo">{{ cloudRepo }}</span>
-              </template>
-              <span v-else class="gh-none">{{ t("settings.storage.notConnected") }}</span>
-              <span class="gh-spacer" />
-              <button v-if="cloudAccount" class="mini-btn danger" @click="logoutGithub">
-                {{ t("settings.storage.logoutGithub") }}
+            <!-- GitHub 账户已统一到「账号」页管理，这里只留入口 -->
+            <p class="gh-moved">
+              <span>{{ t("settings.storage.githubMoved") }}</span>
+              <button class="mini-btn" @click="tab = 'accounts'">
+                <IconGithub class="btn-icon" />{{ t("settings.tab.accounts") }}
               </button>
-              <button v-else class="mini-btn" @click="cloudOpen = true">
-                {{ t("settings.storage.loginGithub") }}
-              </button>
-            </div>
+            </p>
           </div>
 
           <div class="card glass storage-card" id="storage-stats">
@@ -2307,6 +2660,39 @@ onUnmounted(() => {
 
     <!-- 第三方账号授权弹窗（拾木空间 OAuth）：账号页与发现页投影共用同一套流程 -->
     <ShimuLoginDialog ref="shimuLoginRef" />
+
+    <!-- QookiX 账号（可选）：好友 / 联机房间目录 -->
+    <QookixLoginDialog ref="qookixLoginRef" />
+
+    <!-- 内网穿透（frp）：登录面板 → 启停隧道 -->
+    <FrpDialog ref="frpRef" />
+
+    <!-- 修改邮箱：验证信发到新邮箱，点开后才会生效 -->
+    <n-modal
+      v-model:show="emailOpen"
+      preset="card"
+      :title="t('qookix.changeEmail')"
+      style="width: 420px; max-width: 92vw"
+      :bordered="false"
+    >
+      <div class="acct-modal">
+        <p class="acct-modal-hint">{{ t("qookix.emailDialogHint") }}</p>
+        <input
+          v-model="emailDraft"
+          class="ms-cid-input"
+          :placeholder="t('qookix.newEmailPlaceholder')"
+          spellcheck="false"
+          @keyup.enter="submitEmailChange"
+        />
+        <div class="acct-modal-ops">
+          <button class="mini-btn" @click="emailOpen = false">{{ t("common.cancel") }}</button>
+          <button class="mini-btn primary" :disabled="emailBusy" @click="submitEmailChange">
+            {{ t("qookix.sendMail") }}
+          </button>
+        </div>
+      </div>
+    </n-modal>
+
 
     <n-modal v-model:show="migrateModal" preset="card" :title="t('settings.migrate.modalTitle')" class="migrate-modal" :style="{ width: '480px', maxWidth: '90vw' }">
       <div v-if="migratePhase === 'select'" class="migrate-body">
@@ -3746,6 +4132,48 @@ textarea.text-input {
   font-size: 13px;
   color: var(--text-2);
 }
+/* 账号页里的隐私开关：夹在账号行之间，靠内边距与行对齐 */
+.acct-switch {
+  margin-top: 2px;
+  padding: 0 4px;
+  font-size: 12px;
+  color: var(--text-2);
+}
+.acct-switch-hint {
+  margin: 4px 4px 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+/* 配置云同步：独立一小块，和上面三条账号行拉开距离 */
+.sync-box {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--w-04);
+}
+.sync-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.sync-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.sync-ops {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.sync-hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
 .proxy-row .seg {
   flex: 1;
   min-width: 0;
@@ -3776,47 +4204,87 @@ textarea.text-input {
   flex: 1;
   min-width: 150px;
 }
-/* 存储页：GitHub 账户行 */
-.gh-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 10px;
-  padding: 9px 12px;
-  border-radius: 10px;
-  background: var(--w-04);
-}
-.gh-icon {
-  font-size: 15px;
-  color: var(--text-2);
-  flex-shrink: 0;
-}
-.gh-icon.dim {
-  opacity: 0.45;
-}
+/* GitHub 用户名：账号页里作为可点开的链接 */
 .gh-user {
   border: none;
   background: transparent;
   padding: 0;
   color: var(--accent);
-  font-size: 13px;
-  font-weight: 600;
+  font-size: 11px;
+  font-weight: 500;
   font-family: inherit;
   cursor: pointer;
 }
 .gh-user:hover {
   text-decoration: underline;
 }
-.gh-repo {
-  font-size: 11px;
-  color: var(--text-3);
-}
-.gh-none {
+/* 存储页：GitHub 账户已挪到账号页，这里只留提示与跳转 */
+.gh-moved {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
   font-size: 12px;
   color: var(--text-3);
 }
-.gh-spacer {
+
+/* 开发构建：Microsoft Client ID 输入行 */
+.ms-cid-row {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.ms-cid-input {
   flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--w-06);
+  color: var(--text-1);
+  font-size: 12px;
+  font-family: Menlo, Consolas, monospace;
+}
+.ms-cid-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 账号页弹窗（改邮箱 / 转移码） */
+.acct-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.acct-modal-hint {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+.acct-modal-ops {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* 账号页：第三方账号列表（QookiX / 拾木 / GitHub） */
+.acct-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.gh-avatar svg {
+  width: 18px;
+  height: 18px;
+}
+/* QookiX 行：和 GitHub 行同款「深色圆角块 + 居中品牌图标」，
+   app-icon.png 是透明底的像素画，缩小后要保持硬边不能糊掉 */
+.qk-avatar img {
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  image-rendering: pixelated;
 }
 
 /* 账号页：第三方账号行（头像 + 名称/状态 + 右侧操作） */
@@ -3892,6 +4360,12 @@ textarea.text-input {
   margin: 8px 0 0;
   font-size: 12px;
   color: var(--accent);
+}
+/* 贴在对应账号行下面时，间距交给 .acct-list 的 gap */
+.acct-warn.inline {
+  margin: 0;
+  padding-left: 50px;
+  font-size: 11px;
 }
 .mini-btn.danger {
   color: var(--danger);

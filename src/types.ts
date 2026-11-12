@@ -71,6 +71,8 @@ export interface Settings {
   translate_provider: string;
   /** 打开内容详情时自动加载正文译文 */
   body_translate_auto: boolean;
+  /** 是否向好友显示「我正在玩什么」（QookiX 心跳上报），默认开 */
+  share_activity?: boolean;
   /** 自定义翻译 API 的 OpenAI 兼容地址 */
   translate_api_base: string;
   /** 自定义翻译 Key 是否已配置（Key 原文不下发前端） */
@@ -1021,4 +1023,274 @@ export interface CrashDiagnosis {
   details: CrashDetail[];
   /** 主因置信度 0-100，0 表示未能定位 */
   confidence: number;
+}
+
+// ---- QookiX 账号（可选）：好友 + 陶瓦联机房间目录 --------------
+// 字段名沿用服务端 snake_case，避免中间层再做一次改名。
+
+/** 对方心跳上报的「正在玩什么」，全部可选 */
+export interface QookixActivity {
+  instance?: string;
+  mc_version?: string;
+  loader?: string;
+  server?: string;
+}
+
+/** 他人视角的用户：主键是 uid（自己才是 id） */
+export interface QookixUserBrief {
+  uid: number;
+  username: string;
+  nickname: string;
+  online: boolean;
+  /** 仅对方在线且开启了上报时才有 */
+  activity?: QookixActivity;
+}
+
+export interface QookixUser {
+  id: number;
+  username: string;
+  email?: string;
+  nickname: string;
+  role: string;
+  status: string;
+  created_at: number;
+  email_verified: boolean;
+  /** 绑定的 Minecraft 用户名，空串表示未绑定 */
+  mc_name?: string;
+  /** 32 位小写十六进制（无连字符） */
+  mc_uuid?: string;
+  /** 是否经过 Minecraft Services 验证；false 表示旧的手填资料 */
+  mc_verified?: boolean;
+  mc_bound_at?: number;
+}
+
+/** 批量接口返回的绑定信息（只含 uid + mc 字段） */
+export interface QookixProfile {
+  uid: number;
+  mc_name: string;
+  mc_uuid: string;
+  mc_verified?: boolean;
+}
+
+export interface QookixShare {
+  roomId: string;
+  code: string;
+  title: string;
+  visibility: string;
+  /** 是否附带环境清单 */
+  hasPack?: boolean;
+  modsCount?: number;
+}
+
+// ---- 联机环境清单（Phase 2a）----
+
+// ---- 内网穿透（frp 面板）----
+
+export interface FrpUser {
+  id: number;
+  username: string;
+  email?: string;
+  balance?: number;
+}
+
+export interface FrpTunnel {
+  id: number;
+  name: string;
+  protocol: string;
+  local_ip?: string;
+  local_port: number;
+  remote_port?: number;
+  custom_domain?: string | null;
+  status: string;
+  node_name?: string;
+  node_hostname?: string;
+  node_port?: number;
+  billing_type?: string;
+}
+
+/** 在线来源：有它就不必走 P2P，客人自己重下更快 */
+export interface PackSource {
+  /** modrinth | curseforge */
+  provider: string;
+  project_id: string;
+  version_id: string;
+}
+
+/** 清单里的一条文件（以磁盘为准生成） */
+export interface PackFile {
+  /** mod | resourcepack | shaderpack */
+  kind: string;
+  /** 文件名（不含目录） */
+  name: string;
+  mod_id?: string;
+  version?: string;
+  size: number;
+  /** 内容 SHA1：比对与传输校验都靠它 */
+  sha1?: string;
+  source?: PackSource | null;
+  /** 资源包 / 光影默认不同步 */
+  optional?: boolean;
+}
+
+export interface PackManifest {
+  /** 格式版本 */
+  v: number;
+  mc_version: string;
+  loader: string;
+  loader_version: string;
+  files: PackFile[];
+  /** 需要 P2P 传输的字节数 */
+  need_bytes?: number;
+  /** 有在线来源的文件数 */
+  online_count?: number;
+}
+
+export interface PackDiff {
+  /** 房主有、我没有 */
+  missing: PackFile[];
+  /** 我有、房主没有 */
+  extra: PackFile[];
+  /** 两边都有但内容/版本不同 */
+  version_mismatch: PackFile[];
+  mc_version_mismatch: boolean;
+  loader_mismatch: boolean;
+}
+
+export interface PackManifestOut {
+  manifest: string;
+  modsCount: number;
+  mcVersion: string;
+  loader: string;
+  /** 需要 P2P 传输的字节数 */
+  needBytes: number;
+}
+
+export interface PackCompareOut {
+  hasPack: boolean;
+  ok: boolean;
+  diff?: PackDiff | null;
+  remoteMcVersion: string;
+  remoteLoader: string;
+  remoteMods: number;
+  localMods: number;
+  /** 需要从房主拉取的字节数（只算本地缺的、且无在线来源的） */
+  pullBytes: number;
+  extraCount: number;
+}
+
+export interface QookixStatus {
+  loggedIn: boolean;
+  expiresAt: number;
+  user: QookixUser | null;
+  share?: QookixShare | null;
+}
+
+export interface QookixStats {
+  friends: number;
+  pending_requests: number;
+  pending_invites: number;
+  active_rooms: number;
+}
+
+export interface QookixMe {
+  user: QookixUser;
+  stats: QookixStats;
+  online: boolean;
+}
+
+/** 服务端实际还可能返回 accepted（历史申请状态直出） */
+export type QookixRelation =
+  | "none"
+  | "friend"
+  | "requested"
+  | "incoming"
+  | "blocked"
+  | "blocked_by"
+  | "accepted"
+  | "rejected"
+  | "cancelled";
+
+export interface QookixSearchHit {
+  user: QookixUserBrief;
+  relation: QookixRelation;
+}
+
+export interface QookixFriend {
+  user: QookixUserBrief;
+  created_at: number;
+}
+
+export interface QookixRequest {
+  id: number;
+  from?: QookixUserBrief;
+  to?: QookixUserBrief;
+  message: string;
+  status: string;
+  created_at: number;
+}
+
+export interface QookixBlock {
+  user: QookixUserBrief;
+  created_at: number;
+}
+
+export interface QookixRoomMember {
+  name: string;
+  role: string;
+}
+
+export type QookixRoomStatus = "active" | "expired" | "closed" | "removed";
+
+export interface QookixRoom {
+  /** 24 位十六进制字符串，不是整数 */
+  id: string;
+  /** 仅 status=active 且可见时返回 */
+  code?: string;
+  owner: QookixUserBrief;
+  visibility: "friends" | "public";
+  title: string;
+  game_version: string;
+  modpack: string;
+  status: QookixRoomStatus;
+  /** 玩法类型（固定枚举），空串表示未标注 */
+  play_type?: string;
+  /** 环境清单里的 mod 数量（列表接口只给这个 + pack_hash） */
+  mods_count?: number;
+  /** 清单指纹，内容变了就变 */
+  pack_hash?: string;
+  /** 完整清单：只在详情接口出现 */
+  pack?: PackManifest;
+  member_count: number;
+  report_count: number;
+  created_at: number;
+  updated_at: number;
+  last_heartbeat: number;
+  expires_at: number;
+  members?: QookixRoomMember[];
+}
+
+export interface QookixInvite {
+  id: number;
+  room_id: string;
+  from: QookixUserBrief;
+  title: string;
+  visibility: string;
+  status: string;
+  /** 邀请是 pending，但房间可能已经过期/关闭 */
+  room_status: QookixRoomStatus;
+  created_at: number;
+  expires_at: number;
+}
+
+export interface QookixNotifications {
+  server_time: number;
+  friend_requests: QookixRequest[];
+  room_invites: QookixInvite[];
+}
+
+/** 命令层错误（src-tauri/src/qookix/api.rs::ApiError） */
+export interface QookixApiError {
+  status: number;
+  code: string;
+  message: string;
 }

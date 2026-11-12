@@ -469,6 +469,8 @@ mod tests {
             terracotta: Mutex::new(None),
             pending_update: Mutex::new(None),
             lan_sync: Mutex::new(None),
+            qookix: Mutex::new(crate::qookix::QookixSession::default()),
+            qookix_refresh: tokio::sync::Mutex::new(()),
         }
     }
 

@@ -39,6 +39,8 @@ import newsEn from "./_fragments/news.en";
 import toolboxEn from "./_fragments/toolbox.en";
 import resourcePackEn from "./_fragments/resourcepack.en";
 import shimuEn from "./_fragments/shimu.en";
+import qookixEn from "./_fragments/qookix.en";
+import frpEn from "./_fragments/frp.en";
 import seedMapEn from "./_fragments/seedMap.en";
 import settingsEn from "./_fragments/settings.en";
 import nbtEn from "./_fragments/nbt.en";
@@ -195,6 +197,8 @@ export default {
   ...toolboxEn,
   resourcePack: resourcePackEn.resourcePack,
   ...shimuEn,
+  ...qookixEn,
+  ...frpEn,
   ...seedMapEn,
   keybind,
   timemachine,

@@ -20,6 +20,20 @@ import type {
   ProjectDependency,
   ProjectHit,
   ProjectVersion,
+  QookixBlock,
+  QookixFriend,
+  QookixInvite,
+  QookixMe,
+  FrpTunnel,
+  FrpUser,
+  QookixNotifications,
+  PackCompareOut,
+  PackManifestOut,
+  QookixProfile,
+  QookixRequest,
+  QookixRoom,
+  QookixSearchHit,
+  QookixStatus,
   ServerConfig,
   ServerEntry,
   ServerStatus,
@@ -788,6 +802,227 @@ export const api = {
   terracottaJoinRoom: (room: string, player?: string) =>
     invoke<Record<string, unknown>>("terracotta_join_room", { room, player: player ?? null }),
   terracottaLeave: () => invoke<Record<string, unknown>>("terracotta_leave"),
+
+  // qookix（可选账号：好友 + 陶瓦联机房间目录）
+  qookixStatus: () => invoke<QookixStatus>("qookix_status"),
+  qookixLogin: (login: string, password: string) =>
+    invoke<QookixStatus>("qookix_login", { login, password }, { net: true }),
+  qookixRegister: (username: string, email: string, password: string, nickname?: string) =>
+    invoke<{
+      user?: Record<string, unknown>;
+      email_verification_required?: boolean;
+      email_sent?: boolean;
+      message?: string;
+    }>(
+      "qookix_register",
+      { username, email, password, nickname: nickname ?? null },
+      { net: true },
+    ),
+  qookixResendVerification: (login: string) =>
+    invoke<{ message: string }>("qookix_resend_verification", { login }, { net: true }),
+  qookixForgotPassword: (login: string) =>
+    invoke<{ message: string }>("qookix_forgot_password", { login }, { net: true }),
+  qookixLogout: () => invoke<QookixStatus>("qookix_logout", undefined, { net: true }),
+  qookixMe: () => invoke<QookixMe>("qookix_me", undefined, { net: true }),
+  /** 绑定正版 MC 账号（也用于刷新正版名）：令牌由 Rust 侧从本地账号读取，不过 IPC */
+  qookixBindMc: (uuid?: string) =>
+    invoke<{ user: Record<string, unknown> }>(
+      "qookix_bind_mc",
+      { uuid: uuid ?? null },
+      { net: true },
+    ),
+  /** 发起更换邮箱（验证邮件发到新邮箱） */
+  qookixChangeEmail: (newEmail: string) =>
+    invoke<{ sent: boolean; expires_in: number; email: string }>(
+      "qookix_change_email",
+      { newEmail },
+      { net: true },
+    ),
+  qookixUnbindMc: () =>
+    invoke<{ unbound: boolean; retry_after?: number }>(
+      "qookix_unbind_mc",
+      undefined,
+      { net: true },
+    ),
+  qookixUserProfiles: (uids: number[]) =>
+    invoke<{ profiles: QookixProfile[] }>("qookix_user_profiles", { uids }, { net: true }),
+  qookixUpdateNickname: (nickname: string) =>
+    invoke<QookixMe>("qookix_update_nickname", { nickname }, { net: true }),
+  qookixSearchUsers: (q: string, limit?: number) =>
+    invoke<{ users: QookixSearchHit[] }>(
+      "qookix_search_users",
+      { q, limit: limit ?? null },
+      { net: true },
+    ),
+  qookixFriends: () => invoke<{ friends: QookixFriend[]; total: number }>("qookix_friends", undefined, { net: true }),
+  qookixRequests: (kind: "incoming" | "outgoing") =>
+    invoke<{ type: string; requests: QookixRequest[] }>("qookix_requests", { kind }, { net: true }),
+  qookixSendFriendRequest: (toUid: number | null, message?: string) =>
+    invoke<{ request_id?: number; status: string }>(
+      "qookix_send_friend_request",
+      { toUid, toUsername: null, message: message ?? null },
+      { net: true },
+    ),
+  qookixRespondRequest: (requestId: number, action: "accept" | "reject" | "cancel") =>
+    invoke<{ status: string }>("qookix_respond_request", { requestId, action }, { net: true }),
+  qookixRemoveFriend: (uid: number) =>
+    invoke<{ removed: boolean }>("qookix_remove_friend", { uid }, { net: true }),
+  qookixBlocks: () => invoke<{ blocks: QookixBlock[] }>("qookix_blocks", undefined, { net: true }),
+  qookixSetBlock: (uid: number, blocked: boolean) =>
+    invoke<{ blocked: boolean }>("qookix_set_block", { uid, blocked }, { net: true }),
+  qookixRooms: (scope: "friends" | "mine" = "friends", page = 1, limit = 20) =>
+    invoke<{ rooms: QookixRoom[]; total: number; page: number; limit: number; scope: string }>(
+      "qookix_rooms",
+      { scope, page, limit },
+      { net: true },
+    ),
+  qookixPublicRooms: (
+    q?: string,
+    page = 1,
+    limit = 20,
+    filters?: {
+      version?: string;
+      playType?: string;
+      minPlayers?: number;
+      maxPlayers?: number;
+      sort?: "latest" | "players";
+    },
+  ) =>
+    invoke<{ rooms: QookixRoom[]; total: number; page: number; limit: number }>(
+      "qookix_public_rooms",
+      {
+        q: q ?? null,
+        page,
+        limit,
+        version: filters?.version ?? null,
+        playType: filters?.playType ?? null,
+        minPlayers: filters?.minPlayers ?? null,
+        maxPlayers: filters?.maxPlayers ?? null,
+        sort: filters?.sort ?? null,
+      },
+      { net: true },
+    ),
+  qookixRoomDetail: (roomId: string) =>
+    invoke<{ room: QookixRoom }>("qookix_room_detail", { roomId }, { net: true }),
+  qookixShareRoom: (
+    code: string,
+    visibility: "friends" | "public",
+    title?: string,
+    gameVersion?: string,
+    modpack?: string,
+    playType?: string,
+    /** 环境清单 JSON（房主共享环境时带上） */
+    pack?: string,
+    modsCount?: number,
+    /** P2P 连接信息（房主开了文件服务才有） */
+    packNet?: string,
+  ) =>
+    invoke<{ room: QookixRoom; created: boolean; share: unknown }>(
+      "qookix_share_room",
+      {
+        code,
+        visibility,
+        title: title ?? null,
+        gameVersion: gameVersion ?? null,
+        modpack: modpack ?? null,
+        playType: playType ?? null,
+        pack: pack ?? null,
+        modsCount: modsCount ?? null,
+        packNet: packNet ?? null,
+      },
+      { net: true },
+    ),
+  qookixStopShare: () => invoke<QookixStatus>("qookix_stop_share", undefined, { net: true }),
+  qookixInvite: (roomId: string, toUid: number) =>
+    invoke<{ invite_id: number; expires_at: number }>(
+      "qookix_invite",
+      { roomId, toUid },
+      { net: true },
+    ),
+  qookixInvites: () =>
+    invoke<{ invites: QookixInvite[] }>("qookix_invites", undefined, { net: true }),
+  qookixAcceptInvite: (inviteId: number) =>
+    invoke<{ room: QookixRoom }>("qookix_accept_invite", { inviteId }, { net: true }),
+  qookixDeclineInvite: (inviteId: number) =>
+    invoke<{ status: string }>("qookix_decline_invite", { inviteId }, { net: true }),
+  qookixReportRoom: (roomId: string, reason: string) =>
+    invoke<{ report_id: number }>("qookix_report_room", { roomId, reason }, { net: true }),
+  qookixNotifications: () =>
+    invoke<QookixNotifications>("qookix_notifications", undefined, { net: true }),
+
+  // 配置云同步（Phase 3）：只同步白名单字段，密钥与本机路径永不上传
+  qookixSyncUpload: () =>
+    invoke<{ keys: number; updated_at?: number }>("qookix_sync_upload", undefined, { net: true }),
+  qookixSyncDownload: () =>
+    invoke<{ applied: number; empty: boolean; updated_at?: number }>(
+      "qookix_sync_download",
+      undefined,
+      { net: true },
+    ),
+  qookixKvGet: (key: string) =>
+    invoke<{ value: unknown; updated_at?: number }>("qookix_kv_get", { key }, { net: true }),
+  qookixKvPut: (key: string, value: unknown) =>
+    invoke<{ key: string; updated_at: number }>("qookix_kv_put", { key, value }, { net: true }),
+
+  // 内网穿透（frp 面板）：设备授权登录 → 隧道列表 → 启停
+  frpLoginStart: () =>
+    invoke<{ userCode: string; uri: string; interval: number; expiresIn: number }>(
+      "frp_login_start",
+      undefined,
+      { net: true },
+    ),
+  frpLoginPoll: () =>
+    invoke<{ status: string; user?: FrpUser | null }>("frp_login_poll", undefined, { net: true }),
+  frpStatus: () =>
+    invoke<{ loggedIn: boolean; user?: FrpUser | null; warning?: string }>("frp_status", undefined, {
+      net: true,
+    }),
+  frpTunnels: () =>
+    invoke<{ tunnels: FrpTunnel[]; running: string[] }>("frp_tunnels", undefined, { net: true }),
+  frpStart: (tunnelId: number) =>
+    invoke<{ name: string; log: string }>("frp_start", { tunnelId }, { net: true }),
+  frpStop: (name: string) => invoke<void>("frp_stop", { name }),
+  frpLogout: () => invoke<void>("frp_logout"),
+  // 本地自定义隧道（不经面板创建，配置由启动器生成）
+  frpLocalList: () =>
+    invoke<
+      { name: string; protocol: string; local_port: number; remote_port: number; host: string; port: number }[]
+    >("frp_local_list"),
+  frpLocalSave: (tunnel: {
+    name: string;
+    protocol: string;
+    local_port: number;
+    remote_port: number;
+    host: string;
+    port: number;
+  }) => invoke<string>("frp_local_save", { tunnel }),
+  frpLocalDelete: (name: string) => invoke<void>("frp_local_delete", { name }),
+  frpLocalStart: (name: string) => invoke<void>("frp_local_start", { name }),
+  frpLogs: (name: string, lines = 300) =>
+    invoke<string>("frp_logs", { name, lines }),
+
+  // 联机环境清单（Phase 2a）
+  qookixPackManifest: (instanceId: string) =>
+    invoke<PackManifestOut>("qookix_pack_manifest", { instanceId }),
+  // P2P 文件传输（P1）：房主开服务 / 关服务，客人拉取
+  qookixPackServe: (instanceId: string) =>
+    invoke<{ packNet: string; manifest: string; modsCount: number; needBytes: number }>(
+      "qookix_pack_serve",
+      { instanceId },
+    ),
+  qookixPackStopServe: () => invoke<void>("qookix_pack_stop_serve"),
+  qookixPackPull: (roomId: string, instanceId: string) =>
+    invoke<{ downloaded: number; failed: number; bytes: number }>(
+      "qookix_pack_pull",
+      { roomId, instanceId },
+      { net: true },
+    ),
+  qookixComparePack: (roomId: string, instanceId: string) =>
+    invoke<PackCompareOut>(
+      "qookix_compare_pack",
+      { roomId, instanceId },
+      { net: true },
+    ),
 
   // storage
   getStorageStats: () => invoke<StorageStats>("get_storage_stats"),
