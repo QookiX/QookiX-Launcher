@@ -12,7 +12,12 @@ import { api } from "../api";
 import { useAccountsStore } from "../stores/accounts";
 import { useServersStore } from "../stores/servers";
 import { useInstancesStore } from "../stores/instances";
-import type { ServerCore, TerracottaDownloadProgress, TerracottaInfo } from "../types";
+import type {
+  FrpTunnel,
+  ServerCore,
+  TerracottaDownloadProgress,
+  TerracottaInfo,
+} from "../types";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import {
   IconBox,
@@ -98,6 +103,42 @@ const publishVersion = ref("");
 // 环境清单（Phase 2a）：房主可以顺带把实例的模组清单分享出去
 const publishSharePack = ref(false);
 const publishInstanceId = ref<string | null>(null);
+// 跨网络共享：把文件服务挂到 frp 隧道上（局域网走 EasyTier，不需要这个）
+const publishRelay = ref(false);
+const publishRelayTunnel = ref<number | null>(null);
+const relayTunnels = ref<FrpTunnel[]>([]);
+const relayLoading = ref(false);
+
+const relayTunnelOptions = computed(() =>
+  relayTunnels.value
+    .filter((t) => t.protocol === "tcp" && !!t.remote_port)
+    .map((t) => ({
+      label: `${t.name}（本地 ${t.local_port} → ${t.node_hostname ?? "节点"}:${t.remote_port}）`,
+      value: t.id,
+    })),
+);
+
+/** 打开开关时才去拉面板隧道，没登录就给出明确提示 */
+async function loadRelayTunnels() {
+  if (relayTunnels.value.length || relayLoading.value) return;
+  relayLoading.value = true;
+  try {
+    const r = await api.frpTunnels();
+    relayTunnels.value = r.tunnels ?? [];
+    if (!relayTunnels.value.length) {
+      message.warning(t("qookix.pack.relayEmpty"));
+    }
+  } catch (e) {
+    message.error(t("qookix.pack.relayNeedLogin") + " " + String(e));
+    publishRelay.value = false;
+  } finally {
+    relayLoading.value = false;
+  }
+}
+
+watch(publishRelay, (v) => {
+  if (v) void loadRelayTunnels();
+});
 const publishVisibility = ref<"friends" | "public">("friends");
 const playTypeOptions = computed(() =>
   PLAY_TYPES.map((p) => ({ label: t(p.labelKey), value: p.value })),
@@ -133,6 +174,8 @@ function openShareDialog(visibility: "friends" | "public") {
   publishVersion.value = qookixPrefs.share.version;
   publishSharePack.value = false;
   publishInstanceId.value = null;
+  publishRelay.value = false;
+  publishRelayTunnel.value = null;
   if (!instances.instances.length) void instances.load();
   publishOpen.value = true;
 }
@@ -169,9 +212,27 @@ async function confirmPublish() {
       message.warning(t("qookix.pack.instanceEmpty"));
       return;
     }
+    // 跨网络：先把面板隧道拉起来，文件服务绑到它的本地端口上
+    let relayUrl: string | undefined;
+    let relayPort: number | undefined;
+    if (publishRelay.value) {
+      const tn = relayTunnels.value.find((x) => x.id === publishRelayTunnel.value);
+      if (!tn || !tn.remote_port || !tn.node_hostname) {
+        message.warning(t("qookix.pack.relayPick"));
+        return;
+      }
+      try {
+        await api.frpStart(tn.id);
+      } catch (e) {
+        message.error(String(e));
+        return;
+      }
+      relayUrl = `http://${tn.node_hostname}:${tn.remote_port}`;
+      relayPort = tn.local_port;
+    }
     try {
-      // 起服务 = 生成清单 + 起 HTTP + 起 EasyTier 节点，一次拿全
-      const s = await api.qookixPackServe(publishInstanceId.value);
+      // 一次拿全：清单 + HTTP 服务 +（局域网时）EasyTier 节点
+      const s = await api.qookixPackServe(publishInstanceId.value, relayUrl, relayPort);
       pack = s.manifest;
       modsCount = s.modsCount;
       packNet = s.packNet;
@@ -1133,6 +1194,21 @@ onUnmounted(() => stopTcPoll());
         <div class="field">
           <label>{{ t("qookix.pack.shareLabel") }}</label>
           <n-switch v-model:value="publishSharePack" />
+        </div>
+        <div v-if="publishSharePack" class="field">
+          <label>{{ t("qookix.pack.relayLabel") }}</label>
+          <n-switch v-model:value="publishRelay" />
+          <p class="publish-hint">{{ t("qookix.pack.relayHint") }}</p>
+        </div>
+        <div v-if="publishSharePack && publishRelay" class="field">
+          <label>{{ t("qookix.pack.relayTunnel") }}</label>
+          <n-select
+            v-model:value="publishRelayTunnel"
+            :options="relayTunnelOptions"
+            :placeholder="relayLoading ? t('qookix.pack.relayLoading') : t('qookix.pack.relayPick')"
+            :disabled="relayLoading"
+          />
+          <p class="publish-hint">{{ t("qookix.pack.relayTunnelHint") }}</p>
         </div>
         <div v-if="publishSharePack" class="field">
           <label>{{ t("qookix.pack.instanceLabel") }}</label>

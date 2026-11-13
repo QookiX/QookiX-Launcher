@@ -74,6 +74,15 @@ export default {
     shareActivity: "向好友显示我正在玩什么",
     shareActivityHint:
       "开启后好友列表会显示你正在玩的实例与版本；只在本机游戏运行期间上报，不会记录历史。",
+    skin: {
+      title: "我的皮肤",
+      hint: "上传 64×64 的 PNG，好友和联机房间里会显示。未上传时用默认皮肤。",
+      upload: "选择图片",
+      uploading: "上传中…",
+      remove: "移除",
+      classic: "经典",
+      slim: "纤细",
+    },
     time: {
       justNow: "刚刚",
       minutes: "{n} 分钟前",
@@ -106,6 +115,16 @@ export default {
       installPartial: "装好 {ok} 个，{fail} 个失败（可在实例详情页重试）",
       manualHint: "{n} 个模组没有在线来源，需要向房主要文件：",
       pullHint: "其中 {size} 没有在线来源，需要从房主那里直接传过来（房主必须保持在线）",
+      relayLabel: "通过 frp 隧道对外（跨网络可用）",
+      relayHint:
+        "开启后文件服务会绑到隧道里配置的本地端口，好友不必和你在同一局域网。注意：隧道内的流量是明文 HTTP，会经过 frps 所在机器。",
+      relayTunnel: "选择隧道",
+      relayLoading: "正在读取隧道…",
+      relayPick: "请选择一条隧道",
+      relayTunnelHint:
+        "隧道需要在 MohuaFrp 面板上提前创建，并把「本地端口」设为文件服务要用的端口。",
+      relayEmpty: "面板里还没有 TCP 隧道，请先到 MohuaFrp 网页创建一条",
+      relayNeedLogin: "请先在「内网穿透」里登录 MohuaFrp 再开启中继",
       pullDo: "从房主同步",
       pulling: "正在传输…",
       pullOk: "已同步 {n} 个文件",

@@ -48,6 +48,7 @@ import LanSyncPanel from "../components/LanSyncPanel.vue";
 import ShimuLoginDialog from "../components/ShimuLoginDialog.vue";
 import QookixLoginDialog from "../components/QookixLoginDialog.vue";
 import FrpDialog from "../components/FrpDialog.vue";
+import { useSkinRenderer } from "../composables/useSkinRenderer";
 import ColorPicker from "../components/ColorPicker.vue";
 import { IconCloud } from "../components/icons";
 import { error as devError } from "../utils/logger";
@@ -232,6 +233,90 @@ async function submitEmailChange() {
 
 function openQookixLogin() {
   qookixLoginRef.value?.open();
+}
+
+// ---- 我的皮肤（QookiX 账号自带托管，复用 SkinView 的渲染器）----
+const skinCanvas = ref<HTMLCanvasElement | null>(null);
+const skinFileRef = ref<HTMLInputElement | null>(null);
+const skinBusy = ref(false);
+const skinModel = ref<"classic" | "slim">("classic");
+const skinImage = ref("");
+const skinRenderer = useSkinRenderer(skinCanvas);
+// 登录状态变化时补拉一次皮肤（onMounted 时可能还没登录）
+watch(
+  () => qookixStore.loggedIn,
+  (v) => {
+    if (v) void loadMySkin();
+  },
+  { immediate: true },
+);
+const skinModelOptions = computed(() => [
+  { label: t("qookix.skin.classic"), value: "classic" },
+  { label: t("qookix.skin.slim"), value: "slim" },
+]);
+
+async function loadMySkin() {
+  if (!qookixStore.loggedIn) return;
+  try {
+    const s = await api.qookixMySkin();
+    skinImage.value = s.skin || "";
+    skinModel.value = s.model === "slim" ? "slim" : "classic";
+    if (skinImage.value) {
+      await skinRenderer.loadSkinFromSrc(skinImage.value);
+      await skinRenderer.setModel(skinModel.value === "slim" ? "slim" : "default");
+    }
+  } catch {
+    // 没登录 / 没皮肤都当作「没有」，不打扰用户
+  }
+}
+
+function pickSkin() {
+  skinFileRef.value?.click();
+}
+
+async function onSkinFile(e: Event) {
+  const input = e.target as HTMLInputElement;
+  const file = input.files?.[0];
+  // 清空 value，否则选同一个文件不会再触发 change
+  input.value = "";
+  if (!file) return;
+  if (!file.name.toLowerCase().endsWith(".png")) {
+    message.warning(t("qookix.skin.hint"));
+    return;
+  }
+  const dataUrl = await new Promise<string>((resolve, reject) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(String(fr.result ?? ""));
+    fr.onerror = () => reject(fr.error);
+    fr.readAsDataURL(file);
+  });
+  skinBusy.value = true;
+  try {
+    const s = await api.qookixUploadSkin(dataUrl, undefined, skinModel.value);
+    skinImage.value = s.skin || "";
+    if (skinImage.value) {
+      await skinRenderer.loadSkinFromSrc(skinImage.value);
+      await skinRenderer.setModel(skinModel.value === "slim" ? "slim" : "default");
+    }
+    message.success(t("qookix.skin.title"));
+  } catch (err) {
+    message.error(String(err));
+  } finally {
+    skinBusy.value = false;
+  }
+}
+
+async function clearSkin() {
+  skinBusy.value = true;
+  try {
+    await api.qookixClearSkin();
+    skinImage.value = "";
+    message.success(t("qookix.skin.remove"));
+  } catch (e) {
+    message.error(String(e));
+  } finally {
+    skinBusy.value = false;
+  }
 }
 
 // ---- 配置云同步（Phase 3）----
@@ -2151,6 +2236,43 @@ onUnmounted(() => {
               <p v-if="qookixStore.loggedIn" class="hint acct-switch-hint">
                 {{ t("qookix.shareActivityHint") }}
               </p>
+
+              <!-- 我的皮肤：QookiX 账号自带托管（替代第三方皮肤站） -->
+              <div v-if="qookixStore.loggedIn" class="skin-box">
+                <div class="skin-preview">
+                  <canvas ref="skinCanvas" width="88" height="150"></canvas>
+                </div>
+                <div class="skin-info">
+                  <div class="skin-title">{{ t("qookix.skin.title") }}</div>
+                  <p class="skin-hint">{{ t("qookix.skin.hint") }}</p>
+                  <div class="skin-ops">
+                    <button class="mini-btn primary" :disabled="skinBusy" @click="pickSkin">
+                      {{ skinBusy ? t("qookix.skin.uploading") : t("qookix.skin.upload") }}
+                    </button>
+                    <button
+                      v-if="skinImage"
+                      class="mini-btn danger"
+                      :disabled="skinBusy"
+                      @click="clearSkin"
+                    >
+                      {{ t("qookix.skin.remove") }}
+                    </button>
+                    <n-select
+                      v-model:value="skinModel"
+                      size="small"
+                      :options="skinModelOptions"
+                      style="width: 104px"
+                    />
+                  </div>
+                  <input
+                    ref="skinFileRef"
+                    type="file"
+                    accept="image/png"
+                    class="skin-file"
+                    @change="onSkinFile"
+                  />
+                </div>
+              </div>
 
               <!-- 配置云同步：换台电脑登录就能恢复偏好与收藏 -->
               <div v-if="qookixStore.loggedIn" class="sync-box">
@@ -4145,6 +4267,56 @@ textarea.text-input {
   line-height: 1.6;
   color: var(--text-3);
 }
+/* 我的皮肤：左侧 3D 预览，右侧操作 */
+.skin-box {
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--w-04);
+}
+.skin-preview {
+  flex: none;
+  width: 88px;
+  height: 150px;
+  border-radius: 8px;
+  background: var(--w-06);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.skin-preview canvas {
+  width: 88px;
+  height: 150px;
+}
+.skin-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.skin-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.skin-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+.skin-ops {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.skin-file {
+  display: none;
+}
+
 /* 配置云同步：独立一小块，和上面三条账号行拉开距离 */
 .sync-box {
   margin-top: 6px;

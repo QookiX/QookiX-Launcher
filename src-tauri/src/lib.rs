@@ -621,6 +621,11 @@ pub fn run() {
             qookix::qookix_kv_get,
             qookix::qookix_kv_put,
             // 联机环境清单（预检）
+            // 皮肤托管
+            qookix::qookix_my_skin,
+            qookix::qookix_upload_skin,
+            qookix::qookix_clear_skin,
+            qookix::qookix_skins,
             room_pack::qookix_pack_manifest,
             room_pack::qookix_compare_pack,
             room_pack::qookix_pack_serve,

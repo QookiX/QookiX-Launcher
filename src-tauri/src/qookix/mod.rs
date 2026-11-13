@@ -9,11 +9,13 @@
 
 pub mod api;
 mod commands;
+mod skin;
 mod poller;
 mod rooms;
 mod sync;
 
 pub use commands::*;
+pub use skin::*;
 pub use poller::{cleanup_on_exit, start_background};
 pub use rooms::*;
 pub use sync::*;

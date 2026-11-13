@@ -40,18 +40,65 @@ struct ServeState {
     token: String,
     /// key = "kind/name"，只有登记过的才服务
     files: Arc<HashMap<String, PackFile>>,
+    /// 累计 token 失败次数：超过上限直接停止服务，挡住爆破
+    fails: Arc<std::sync::atomic::AtomicUsize>,
 }
+
+/// 定长比较，避免「按字节提前返回」泄露 token 前缀
+fn ct_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for i in 0..a.len() {
+        diff |= a[i] ^ b[i];
+    }
+    diff == 0
+}
+
+/// token 爆破上限：超过就拒绝一切请求（会话级，重启服务才恢复）
+const MAX_TOKEN_FAILS: usize = 20;
 
 fn err(status: StatusCode, msg: &str) -> Response {
     (status, msg.to_string()).into_response()
 }
 
+/// 校验凭据：优先 `Authorization: Bearer`，兼容 `?token=`
+///
+/// 走 frp 中继时 URL 会落进对端 nginx 的 access log，
+/// 所以中继模式下客户端一律用 header，query 只为兼容旧调用保留。
+fn check_auth(
+    st: &ServeState,
+    q: &HashMap<String, String>,
+    headers: &HeaderMap,
+) -> Result<(), Response> {
+    use std::sync::atomic::Ordering;
+    if st.fails.load(Ordering::Relaxed) >= MAX_TOKEN_FAILS {
+        return Err(err(StatusCode::TOO_MANY_REQUESTS, "too many attempts"));
+    }
+    let from_header = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .map(str::trim);
+    let provided = from_header.or_else(|| q.get("token").map(String::as_str));
+    match provided {
+        Some(t) if ct_eq(t, &st.token) => Ok(()),
+        _ => {
+            st.fails.fetch_add(1, Ordering::Relaxed);
+            Err(err(StatusCode::FORBIDDEN, "bad token"))
+        }
+    }
+}
+
 async fn handle_manifest(
     State(st): State<ServeState>,
     Query(q): Query<HashMap<String, String>>,
+    headers: HeaderMap,
 ) -> Response {
-    if q.get("token").map(String::as_str) != Some(st.token.as_str()) {
-        return err(StatusCode::FORBIDDEN, "bad token");
+    if let Err(r) = check_auth(&st, &q, &headers) {
+        return r;
     }
     let list: Vec<&PackFile> = st.files.values().collect();
     match serde_json::to_vec(&list) {
@@ -66,8 +113,8 @@ async fn handle_file(
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if q.get("token").map(String::as_str) != Some(st.token.as_str()) {
-        return err(StatusCode::FORBIDDEN, "bad token");
+    if let Err(r) = check_auth(&st, &q, &headers) {
+        return r;
     }
     let key = format!("{kind}/{name}");
     let Some(entry) = st.files.get(&key) else {
@@ -132,10 +179,13 @@ async fn handle_file(
 }
 
 /// 起本地 HTTP 服务（只绑 127.0.0.1），返回实际端口与后台任务
+///
+/// `port` 传 0 表示随机端口；走 frp 中继时必须用固定端口（隧道配置里写死的那个）。
 pub async fn serve(
     base: PathBuf,
     files: Vec<PackFile>,
     token: String,
+    port: u16,
 ) -> Result<(u16, tokio::task::JoinHandle<()>), String> {
     let map: HashMap<String, PackFile> = files
         .into_iter()
@@ -145,14 +195,16 @@ pub async fn serve(
         base,
         token,
         files: Arc::new(map),
+        fails: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
     };
     let app = Router::new()
         .route("/pack/manifest", get(handle_manifest))
         .route("/pack/file/:kind/:name", get(handle_file))
         .with_state(st);
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+    // 只绑回环：对外只能通过 frpc / EasyTier 转发进来，绝不直接暴露
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
         .await
-        .map_err(|e| format!("监听本地端口失败: {e}"))?;
+        .map_err(|e| format!("监听本地端口 {port} 失败: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, app).await;
@@ -191,9 +243,11 @@ pub async fn download_file(
 
     while written < file.size {
         let end = (written + MAX_SLICE - 1).min(file.size - 1);
-        let url = format!("{origin}/pack/file/{}/{}?token={}", file.kind, file.name, token);
+        // 凭据走 header：走 frp 中继时 URL 会落进对端 access log
+        let url = format!("{origin}/pack/file/{}/{}", file.kind, file.name);
         let resp = client
             .get(&url)
+            .bearer_auth(token)
             .header(header::RANGE, format!("bytes={written}-{end}"))
             .send()
             .await
@@ -287,7 +341,7 @@ mod tests {
                 source: None,
                 optional: false,
             };
-            let (port, handle) = serve(root.clone(), vec![file.clone()], "tok".into())
+            let (port, handle) = serve(root.clone(), vec![file.clone()], "tok".into(), 0)
                 .await
                 .unwrap();
             let client = reqwest::Client::new();
@@ -334,7 +388,7 @@ mod tests {
                 source: None,
                 optional: false,
             };
-            let (port, handle) = serve(root, vec![file.clone()], "tok".into()).await.unwrap();
+            let (port, handle) = serve(root, vec![file.clone()], "tok".into(), 0).await.unwrap();
             let dest = temp_dir("resume_dst");
             std::fs::create_dir_all(dest.join("mods")).unwrap();
             // 先放好前 512KB，模拟上次断在这里
@@ -379,7 +433,7 @@ mod tests {
                 source: None,
                 optional: false,
             };
-            let (port, handle) = serve(root, vec![file.clone()], "tok".into()).await.unwrap();
+            let (port, handle) = serve(root, vec![file.clone()], "tok".into(), 0).await.unwrap();
             let dest = temp_dir("bad_dst");
             let client = reqwest::Client::new();
             let err = download_file(
@@ -402,6 +456,73 @@ mod tests {
         });
     }
 
+    /// 爆破防护：连续试错到上限后，即使拿对 token 也不再服务
+    #[test]
+    fn token_bruteforce_locks_out() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let root = temp_dir("lockout_src");
+            let (port, handle) = serve(root, vec![], "secret-token".into(), 0).await.unwrap();
+            let client = reqwest::Client::new();
+            let base = format!("http://127.0.0.1:{port}/pack/manifest");
+
+            for i in 0..MAX_TOKEN_FAILS {
+                let r = client
+                    .get(&base)
+                    .query(&[("token", format!("wrong{i}"))])
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(r.status(), reqwest::StatusCode::FORBIDDEN);
+            }
+            // 达到上限后：正确的 token 也一律 429，避免继续试探
+            let r = client
+                .get(&base)
+                .bearer_auth("secret-token")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                r.status(),
+                reqwest::StatusCode::TOO_MANY_REQUESTS,
+                "超过失败上限后应直接拒绝"
+            );
+            handle.abort();
+        });
+    }
+
+    /// 凭据可以用 Authorization 头传（中继模式下不再把 token 写进 URL）
+    #[test]
+    fn accepts_bearer_header() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            let root = temp_dir("bearer_src");
+            let (port, handle) = serve(root, vec![], "tok2".into(), 0).await.unwrap();
+            let client = reqwest::Client::new();
+            let ok = client
+                .get(format!("http://127.0.0.1:{port}/pack/manifest"))
+                .bearer_auth("tok2")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(ok.status(), reqwest::StatusCode::OK);
+            let bad = client
+                .get(format!("http://127.0.0.1:{port}/pack/manifest"))
+                .bearer_auth("nope")
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(bad.status(), reqwest::StatusCode::FORBIDDEN);
+            handle.abort();
+        });
+    }
+
     #[test]
     fn unknown_file_and_bad_token_are_rejected() {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -411,7 +532,7 @@ mod tests {
         rt.block_on(async {
             let root = temp_dir("reject");
             std::fs::create_dir_all(root.join("mods")).unwrap();
-            let (port, handle) = serve(root, vec![], "tok".into()).await.unwrap();
+            let (port, handle) = serve(root, vec![], "tok".into(), 0).await.unwrap();
             let c = reqwest::Client::new();
             // 清单里没有的文件 → 404（防任意文件读取）
             let r = c

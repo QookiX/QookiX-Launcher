@@ -19,6 +19,40 @@ use std::process::{Child, Command, Stdio};
 
 /// 一套连接信息
 #[derive(Debug, Clone, PartialEq, Eq)]
+/// 客人的取文件方式：局域网直连（EasyTier）或公网中继（frp / 其它 TCP 转发）
+pub enum PackRoute {
+    /// `qkx1|...`：起 EasyTier 节点 + port-forward
+    Lan(PackNet),
+    /// `qkx2|relay|<url>|<token>`：直接用 HTTP 拉，不经 EasyTier
+    Relay { url: String, token: String },
+}
+
+/// 编码中继路由：`qkx2|relay|http://host:port|token`
+pub fn encode_relay(url: &str, token: &str) -> String {
+    format!("qkx2|relay|{url}|{token}")
+}
+
+/// 解析任意版本的连接串。中继模式不依赖 EasyTier，
+/// 所以房主即使没装/没跑陶瓦也能对外提供文件。
+pub fn parse_route(s: &str) -> Option<PackRoute> {
+    if let Some(rest) = s.strip_prefix("qkx2|relay|") {
+        let (url, token) = rest.rsplit_once('|')?;
+        if url.is_empty() || token.is_empty() {
+            return None;
+        }
+        // 只接受 http(s)，挡住 `file://` 之类被伪造出来的地址
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return None;
+        }
+        return Some(PackRoute::Relay {
+            url: url.to_string(),
+            token: token.to_string(),
+        });
+    }
+    PackNet::parse(s).map(PackRoute::Lan)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PackNet {
     pub network: String,
     pub secret: String,

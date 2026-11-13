@@ -1084,6 +1084,16 @@ export interface QookixShare {
 
 // ---- 联机环境清单（Phase 2a）----
 
+/** QookiX 账号自带的皮肤托管 */
+export interface QookixSkin {
+  /** 文件名（相对 /skins/），空串表示没上传 */
+  skin: string;
+  cape: string;
+  /** classic | slim */
+  model: string;
+  updated_at: number;
+}
+
 // ---- 内网穿透（frp 面板）----
 
 export interface FrpUser {
