@@ -268,7 +268,7 @@ defineExpose({ open, close });
     v-model:show="show"
     preset="card"
     :title="t('accountChip.addAccountTitle')"
-    style="width: 480px; max-width: 92vw"
+    style="width: 560px; max-width: 92vw"
   >
     <n-tabs v-model:value="activeTab" type="segment" size="medium" animated>
       <!-- 微软账号 -->
@@ -419,13 +419,13 @@ defineExpose({ open, close });
 }
 .qk-add-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-3);
 }
 .qk-field-label {
   display: block;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -450,7 +450,7 @@ defineExpose({ open, close });
   border: none;
   background: transparent;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   padding: 0;
@@ -463,7 +463,7 @@ defineExpose({ open, close });
 .qk-chevron {
   display: inline-block;
   transition: transform 0.18s ease;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .qk-chevron.open {
   transform: rotate(90deg);
@@ -482,7 +482,7 @@ defineExpose({ open, close });
 /* 购买 Minecraft 链接 */
 .qk-buy-link {
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   cursor: pointer;
   text-decoration: underline;
@@ -497,7 +497,7 @@ defineExpose({ open, close });
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .ygg-server-label {
   color: var(--text-3);
@@ -523,7 +523,7 @@ defineExpose({ open, close });
   align-items: center;
   gap: 10px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   margin: 2px 0;
 }
 .ygg-oauth-divider::before,
@@ -544,7 +544,7 @@ defineExpose({ open, close });
   gap: 2px;
   text-align: left;
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--w-08);
   background: var(--w-04);
   cursor: pointer;
@@ -559,51 +559,51 @@ defineExpose({ open, close });
 }
 .ygg-pname {
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .ygg-pid {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-family: "Cascadia Code", Consolas, monospace;
 }
 
 /* 微软设备码 */
 .qkms-box p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   text-align: center;
 }
 .qkms-link {
   color: var(--accent);
-  font-size: 14px;
+  font-size: var(--fs-base);
   word-break: break-all;
   cursor: pointer;
   text-decoration: underline;
 }
 .qkms-code {
   font-size: 30px;
-  font-weight: 800;
+  font-weight: var(--fw-bold);
   letter-spacing: 10px;
   text-align: center;
   color: var(--accent);
   background: var(--accent-08);
   border: 1px dashed var(--accent-04);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 14px 0;
   width: 100%;
 }
 .qkms-hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .qkms-polling {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 .qkms-error-box {
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   word-break: break-all;
   user-select: text;
@@ -611,7 +611,7 @@ defineExpose({ open, close });
   cursor: text;
   background: var(--danger-08);
   border: 1px solid var(--danger-30);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 12px;
   width: 100%;
 }

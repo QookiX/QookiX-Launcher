@@ -561,8 +561,9 @@ pub async fn apply_skin_to_account(
     Ok(())
 }
 
-/// Save the offline skin PNG so it can be injected into the version jar at
-/// launch time.  No jar modification happens here — that would be slow.
+/// Save the offline skin PNG. At launch time `launch::build_skin_resourcepack`
+/// turns it into `resourcepacks/QookiX_Skin.zip` and enables that pack in
+/// `options.txt`; `client.jar` is never modified.
 /// The skin variant ("slim"/"classic") is persisted alongside in a JSON meta
 /// file so it survives any frontend cache (localStorage) clears.
 #[tauri::command]

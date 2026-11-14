@@ -131,9 +131,9 @@ watch(visible, (v) => {
   width: 440px;
   max-width: 90vw;
   padding: 32px 28px 24px;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: var(--card-bg, #1e1e1e);
-  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--pop-shadow);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -155,7 +155,7 @@ watch(visible, (v) => {
 
 .force-body {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-2, #999);
 }
@@ -169,7 +169,7 @@ watch(visible, (v) => {
 }
 
 .force-progress-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3, #777);
 }
 
@@ -179,7 +179,7 @@ watch(visible, (v) => {
 
 .force-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: #e55;
   word-break: break-word;
 }

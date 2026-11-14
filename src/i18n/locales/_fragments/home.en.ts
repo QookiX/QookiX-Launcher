@@ -1,5 +1,11 @@
 export default {
   home: {
+    /** Default home content when the custom home layout is off */
+    default: {
+      recentTitle: "Recent",
+      pinTitle: "Quick launch",
+      viewAll: "All instances",
+    },
     pin: {
       typeServer: "Server",
       typeWorld: "Save",
@@ -35,6 +41,22 @@ export default {
       joiningServer: 'Joining server "{name}"',
       enteringWorld: 'Entering world "{name}"',
       launchingInstance: 'Launching instance "{name}"',
+    },
+    /** Runtime messages for the custom home page; config lives in Settings */
+    layout: {
+      reloaded: "Layout reloaded",
+      parseError: "Layout file error: {error}",
+      openFailed: "Failed to open: {error}",
+      goSettings: "Edit or reset it under Settings > Appearance > Custom Home.",
+      copied: "Copied to clipboard",
+      copyFailed: "Copy failed",
+      dialogTitle: "Notice",
+      guest: "Player",
+      noInstanceName: "No instance selected",
+      launchNoInstance: "No instance available to launch",
+      launchNoAccount: "Please add an account (Microsoft or offline) from the title bar first",
+      launched: "Launched {name}",
+      unknownAction: "Unsupported action type: {type}",
     },
   },
 };

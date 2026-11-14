@@ -1,548 +1,68 @@
-* {
-  box-sizing: border-box;
-}
+/* ============================================================================
+   styles.css —— 全局样式入口
+   只做三件事：按顺序引入分层样式表、覆写第三方组件、给可访问性兜底。
+   项目自己的颜色/尺寸/圆角全部走 tokens.css，组件外观走 components.css，
+   不要在页面里再写一套同款样式。
+   ========================================================================== */
 
-html,
-body,
-#app {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
-  -webkit-font-smoothing: antialiased;
-  user-select: none;
-}
+@import "./styles/tokens.css";
+@import "./styles/base.css";
+@import "./styles/components.css";
 
-:root {
-  --accent: #e89a4b;
-  --accent-deep: #d97f33;
-  --accent-hover: #f2a860;
-  --accent-soft: rgba(232, 154, 75, 0.14);
-  --accent-contrast: #1a1208;
-  --accent-01: rgba(232, 154, 75, 0.01);
-  --accent-02: rgba(232, 154, 75, 0.02);
-  --accent-03: rgba(232, 154, 75, 0.03);
-  --accent-04: rgba(232, 154, 75, 0.04);
-  --accent-05: rgba(232, 154, 75, 0.05);
-  --accent-06: rgba(232, 154, 75, 0.06);
-  --accent-08: rgba(232, 154, 75, 0.08);
-  --accent-10: rgba(232, 154, 75, 0.1);
-  --accent-12: rgba(232, 154, 75, 0.12);
-  --accent-14: rgba(232, 154, 75, 0.14);
-  --accent-16: rgba(232, 154, 75, 0.16);
-  --accent-20: rgba(232, 154, 75, 0.2);
-  --accent-22: rgba(232, 154, 75, 0.22);
-  --accent-25: rgba(232, 154, 75, 0.25);
-  --accent-30: rgba(232, 154, 75, 0.3);
-  --accent-35: rgba(232, 154, 75, 0.35);
-  --accent-40: rgba(232, 154, 75, 0.4);
-  --accent-45: rgba(232, 154, 75, 0.45);
-  --accent-50: rgba(232, 154, 75, 0.5);
-  --accent-60: rgba(232, 154, 75, 0.6);
-  --bg-0: #0b0d12;
-  --bg-1: #10131a;
-  --bg-2: #151924;
-  --wipe-bg: #0b0d12;
-  --panel: rgba(255, 255, 255, 0.04);
-  --panel-hover: rgba(255, 255, 255, 0.07);
-  --border: rgba(255, 255, 255, 0.08);
-  --feat-solid: #0f1218;
-  --feat-mid: rgba(15, 18, 24, 0.5);
-  --text-1: #f2f3f7;
-  --text-2: #c6c8d2;
-  --text-3: #8b8e9c;
-  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.2);
-  /* 卡片阴影：静止时贴在表面上，悬停浮起时加深加大传达高度 */
-  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.28);
-  --card-shadow-hover: 0 10px 28px rgba(0, 0, 0, 0.42);
-  /* 中性叠加色阶：--w-* 为白色叠加（表面 / 描边 / 悬停），--k-* 为黑色叠加（遮罩 / 阴影）。
-     命名与 --accent-* 一致，数值 = alpha × 100。 */
-  --w-02: rgba(255, 255, 255, 0.02);
-  --w-03: rgba(255, 255, 255, 0.03);
-  --w-04: rgba(255, 255, 255, 0.04);
-  --w-05: rgba(255, 255, 255, 0.05);
-  --w-06: rgba(255, 255, 255, 0.06);
-  --w-07: rgba(255, 255, 255, 0.07);
-  --w-08: rgba(255, 255, 255, 0.08);
-  --w-09: rgba(255, 255, 255, 0.09);
-  --w-10: rgba(255, 255, 255, 0.1);
-  --w-12: rgba(255, 255, 255, 0.12);
-  --w-14: rgba(255, 255, 255, 0.14);
-  --w-20: rgba(255, 255, 255, 0.2);
-  --k-12: rgba(0, 0, 0, 0.12);
-  --k-15: rgba(0, 0, 0, 0.15);
-  --k-18: rgba(0, 0, 0, 0.18);
-  --k-20: rgba(0, 0, 0, 0.2);
-  --k-22: rgba(0, 0, 0, 0.22);
-  --k-25: rgba(0, 0, 0, 0.25);
-  --k-30: rgba(0, 0, 0, 0.3);
-  --k-40: rgba(0, 0, 0, 0.4);
-  --k-45: rgba(0, 0, 0, 0.45);
-  --k-50: rgba(0, 0, 0, 0.5);
-  /* 语义色阶，与 theme.ts 的 errorColor / successColor / infoColor 对齐 */
-  --danger-08: rgba(229, 83, 75, 0.08);
-  --danger-10: rgba(229, 83, 75, 0.1);
-  --danger-12: rgba(229, 83, 75, 0.12);
-  --danger-14: rgba(229, 83, 75, 0.14);
-  --danger-16: rgba(229, 83, 75, 0.16);
-  --danger-26: rgba(229, 83, 75, 0.26);
-  --danger-30: rgba(229, 83, 75, 0.3);
-  --danger-35: rgba(229, 83, 75, 0.35);
-  --danger-40: rgba(229, 83, 75, 0.4);
-  --danger-45: rgba(229, 83, 75, 0.45);
-  --danger-50: rgba(229, 83, 75, 0.5);
-  --success-12: rgba(78, 201, 160, 0.12);
-  --info-14: rgba(90, 162, 240, 0.14);
-  --info-15: rgba(90, 162, 240, 0.15);
-  --info-22: rgba(90, 162, 240, 0.22);
-  /* 语义纯色：与 theme.ts 的 errorColor/successColor/warningColor 对齐，
-     供 latency 等级、stop-all 按钮等需要纯色文字/描边处使用。
-     --danger-text 比 --danger 浅一档，用于深色面板上的次要危险文字。 */
-  --danger: #e5534b;
-  --danger-text: #f0907f;
-  --success: #4ec9a0;
-  --info: #5aa2f0;
-  --warn: #e0a030;
-  --pad-panel: 20px 24px;
-  --gap-panel: 16px;
-  --gap-grid: 16px;
-  --gap-page: 16px;
-}
-
-:root.light {
-  --accent: #ffa050;
-  --accent-deep: #e8893c;
-  --accent-hover: #ffb978;
-  --accent-soft: rgba(255, 160, 80, 0.12);
-  --accent-contrast: #1a1208;
-  --accent-01: rgba(255, 160, 80, 0.01);
-  --accent-02: rgba(255, 160, 80, 0.02);
-  --accent-03: rgba(255, 160, 80, 0.03);
-  --accent-04: rgba(255, 160, 80, 0.04);
-  --accent-05: rgba(255, 160, 80, 0.05);
-  --accent-06: rgba(255, 160, 80, 0.06);
-  --accent-08: rgba(255, 160, 80, 0.08);
-  --accent-10: rgba(255, 160, 80, 0.1);
-  --accent-12: rgba(255, 160, 80, 0.12);
-  --accent-14: rgba(255, 160, 80, 0.14);
-  --accent-16: rgba(255, 160, 80, 0.16);
-  --accent-20: rgba(255, 160, 80, 0.2);
-  --accent-22: rgba(255, 160, 80, 0.22);
-  --accent-25: rgba(255, 160, 80, 0.25);
-  --accent-30: rgba(255, 160, 80, 0.3);
-  --accent-35: rgba(255, 160, 80, 0.35);
-  --accent-40: rgba(255, 160, 80, 0.4);
-  --accent-45: rgba(255, 160, 80, 0.45);
-  --accent-50: rgba(255, 160, 80, 0.5);
-  --accent-60: rgba(255, 160, 80, 0.6);
-  --bg-0: #f7f6f4;
-  --bg-1: #eceef2;
-  --bg-2: #e2e4ea;
-  --wipe-bg: #f7f6f4;
-  --panel: rgba(255, 255, 255, 0.55);
-  --panel-hover: rgba(255, 255, 255, 0.75);
-  --border: rgba(0, 0, 0, 0.09);
-  --feat-solid: #edeef1;
-  --feat-mid: rgba(237, 238, 241, 0.5);
-  --text-1: #1a1d24;
-  --text-2: #4a4d58;
-  --text-3: #55586a;
-  --scrollbar-thumb: rgba(0, 0, 0, 0.15);
-  --scrollbar-thumb-hover: rgba(0, 0, 0, 0.25);
-  --card-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
-  --card-shadow-hover: 0 10px 28px rgba(0, 0, 0, 0.14);
-  /* --w-* 在深色主题是白色叠加（浅化表面）；浅色底上白色不可见，改为黑色叠加（加深表面），
-     与本主题 --border / --scrollbar-thumb 的黑色叠加语义一致。全应用 234 处 --w-* 用作
-     微妙背景 / 边框 / 悬停态 / 进度槽等，不重定义则浅色主题下全部消失。 */
-  --w-02: rgba(0, 0, 0, 0.02);
-  --w-03: rgba(0, 0, 0, 0.03);
-  --w-04: rgba(0, 0, 0, 0.04);
-  --w-05: rgba(0, 0, 0, 0.05);
-  --w-06: rgba(0, 0, 0, 0.06);
-  --w-07: rgba(0, 0, 0, 0.07);
-  --w-08: rgba(0, 0, 0, 0.08);
-  --w-09: rgba(0, 0, 0, 0.09);
-  --w-10: rgba(0, 0, 0, 0.1);
-  --w-12: rgba(0, 0, 0, 0.12);
-  --w-14: rgba(0, 0, 0, 0.14);
-  --w-20: rgba(0, 0, 0, 0.2);
-  /* 语义色阶：深色用 rgb(229,83,75)/rgb(78,201,160)，浅色主题 --danger/--success 已改为
-     更深的 #d63d35 / #2d9b6f（白底可读），这里 alpha 变体同步用浅色 RGB，避免底色色相与
-     文字色不一致（如 --danger-12 做徽章底色时与 --danger 文字色对不上）。 */
-  --danger-08: rgba(214, 61, 53, 0.08);
-  --danger-10: rgba(214, 61, 53, 0.1);
-  --danger-12: rgba(214, 61, 53, 0.12);
-  --danger-14: rgba(214, 61, 53, 0.14);
-  --danger-16: rgba(214, 61, 53, 0.16);
-  --danger-26: rgba(214, 61, 53, 0.26);
-  --danger-30: rgba(214, 61, 53, 0.3);
-  --danger-35: rgba(214, 61, 53, 0.35);
-  --danger-40: rgba(214, 61, 53, 0.4);
-  --danger-45: rgba(214, 61, 53, 0.45);
-  --danger-50: rgba(214, 61, 53, 0.5);
-  --success-12: rgba(45, 155, 111, 0.12);
-  --info-22: rgba(59, 130, 196, 0.2);
-  /* 浅色主题语义纯色：比深色档更深，保证白底可读 */
-  --danger: #d63d35;
-  --danger-text: #c9332c;
-  --success: #2d9b6f;
-  --info: #3b82c4;
-  --warn: #c87420;
-}
-
-:root.has-bg {
-  --panel: rgba(22, 25, 34, 0.62);
-  --panel-hover: rgba(30, 34, 44, 0.74);
-  --border: rgba(255, 255, 255, 0.14);
-}
-:root.has-bg.light {
-  --panel: rgba(255, 255, 255, 0.62);
-  --panel-hover: rgba(255, 255, 255, 0.8);
-  --border: rgba(0, 0, 0, 0.1);
-}
-:root.has-bg .content h1,
-:root.has-bg .content h3 {
-  text-shadow: 0 1px 3px var(--k-50);
-}
-:root.has-bg.light .content h1,
-:root.has-bg.light .content h3 {
-  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.65);
-}
-
-/* 无背景图的深色模式：导航栏与抽屉面板加一点黑底。
-   这些悬浮岛平时用 --panel（深色无图时仅 4% 白），在深色渐变底上过于通透、
-   轮廓发虚；叠一层淡黑让导航栏与抽屉更沉得下来。有背景图时 --panel 已是半透
-   深色（rgba(22,25,34,0.62)），无需此处理；浅色模式同理不走这里。 */
-:root:not(.light):not(.has-bg) .dock,
-:root:not(.light):not(.has-bg) .dl-drawer,
-:root:not(.light):not(.has-bg) .acct-drawer {
-  background: rgba(0, 0, 0, 0.2), var(--panel);
-}
-
-/* 深浅色切换过渡：仅在切换瞬间由脚本给 <html> 挂上 .theme-transition，
-   动画结束后立即移除，避免常驻全局 transition 影响性能与按钮 hover。 */
-.theme-transition,
-.theme-transition *,
-.theme-transition *::before,
-.theme-transition *::after {
-  transition:
-    background-color 0.28s ease,
-    border-color 0.28s ease,
-    color 0.28s ease,
-    fill 0.28s ease,
-    box-shadow 0.28s ease !important;
-  transition-delay: 0s !important;
-}
-
-.app-bg {
-  position: relative;
-  background:
-    radial-gradient(700px 420px at -10% 110%, rgba(90, 162, 240, 0.08), transparent 55%),
-    linear-gradient(180deg, var(--bg-0), var(--bg-1) 55%, var(--bg-2));
-  color: var(--text-1);
-}
-/* —— 背景层 ::before：无背景图时是装饰纹理（仅首页），有图时是图片（所有页面）——
-   无图纹理（双层叠加）：
-   1. 点阵网格——26px 间距的 1px 细点，工程蓝图的秩序感颗粒；
-   2. 斜向光带——从右上划下一道极淡主题色渐变，打破点阵的均匀。
-   深浅色分别用白/黑点适配底色。其他页面无图时 ::before 留空，只剩底色渐变。 */
-.app-bg::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-.app-bg.show-texture::before {
-  background-image:
-    radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.4px),
-    linear-gradient(115deg, transparent 60%, var(--accent-04) 82%, transparent 96%);
-  background-size:
-    26px 26px,
-    100% 100%;
-}
-:root.light .app-bg.show-texture::before {
-  background-image:
-    radial-gradient(rgba(0, 0, 0, 0.045) 1px, transparent 1.4px),
-    linear-gradient(115deg, transparent 60%, var(--accent-06) 82%, transparent 96%);
-}
-/* 有背景图：::before 变成图片层（纹理让位） */
-:root.has-bg .app-bg::before {
-  background-image: var(--bg-image, none);
-  background-size: cover;
-  background-position: center;
-  background-repeat: no-repeat;
-  filter: blur(var(--bg-blur, 0px));
-  transform: scale(1.08);
-}
-.app-bg::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: rgba(0, 0, 0, var(--bg-dim, 0));
-  z-index: 0;
-  pointer-events: none;
-}
-:root.light .app-bg::after {
-  background: rgba(255, 255, 255, var(--bg-dim-light, 0));
-}
-.app-bg > * {
-  position: relative;
-  z-index: 1;
-}
-
-::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
-}
-::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb);
-  border-radius: 8px;
-  transition: background 0.18s ease;
-}
-::-webkit-scrollbar-thumb:hover {
-  background: var(--scrollbar-thumb-hover);
-}
-::-webkit-scrollbar-thumb:active {
-  background: var(--scrollbar-thumb-hover);
-}
-::-webkit-scrollbar-track {
-  background: transparent;
-}
-
-.glass {
-  background: var(--panel);
-  border-radius: 14px;
-  backdrop-filter: blur(var(--glass-blur, 8px));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-}
-/* 过渡结束后瞬间摘掉 backdrop-filter 强制 WebView2 重新采样背景 */
-.bf-reset .glass {
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-
-/* naive-ui 下拉菜单（Select 等）统一成应用内的玻璃面板风格。
-   菜单是 teleport 到 body 的，scoped 样式够不到，所以放在全局。 */
-.qk-select-menu {
-  --n-color: var(--panel) !important;
-  --n-border-radius: 10px !important;
-  --n-option-text-color: var(--text-1) !important;
-  --n-option-text-color-pending: var(--text-1) !important;
-  --n-option-text-color-active: var(--accent) !important;
-  --n-option-color-pending: var(--w-06) !important;
-  --n-option-color-active: var(--accent-soft) !important;
-  --n-option-check-color: var(--accent) !important;
-  backdrop-filter: blur(var(--glass-blur, 8px));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-}
-
-.clickable {
-  cursor: pointer;
-  transition: transform 0.1s ease, background 0.12s ease, border-color 0.12s ease;
-}
-.clickable:hover {
-  background: var(--panel-hover);
-  border-color: var(--accent-35);
-}
-.clickable:active {
-  transform: scale(0.97);
-}
-
-button {
-  transition: transform 0.1s ease;
-}
-button:active {
-  transform: scale(0.96);
-}
-
-a {
-  transition: transform 0.1s ease;
-}
-a:active {
-  transform: scale(0.96);
-}
-
-/* 键盘聚焦时给一个清晰的 accent 焦点环（鼠标点击不触发 :focus-visible，不会干扰）。
-   outline 在 Chromium 下跟随 border-radius，所以圆角元素得到圆角环。 */
-button:focus-visible,
-a:focus-visible,
-.clickable:focus-visible,
-[tabindex]:focus-visible {
-  outline: 2px solid var(--accent-50);
-  outline-offset: 2px;
-}
-
-/* 尊重用户「减少动效」系统偏好：把所有动画/过渡压到近乎瞬时。
-   覆盖页面转场、卡片进场、splash 脉冲、hover 抬升、滚动条过渡等全部动画，
-   让前庭功能敏感用户不被运动干扰。交互态（hover/active 背景变化）仍生效，只是不再渐变。 */
-@media (prefers-reduced-motion: reduce) {
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
-}
-
-/* 全局文本选中色：用 accent 半透明底替代浏览器默认蓝，与品牌统一。
-   半透明保证原文字色仍可读。 */
-::selection {
-  background: var(--accent-25);
-}
-
-/* 模态框 / 抽屉遮罩磨砂化：与全局玻璃风格统一，背景内容被柔焦而非纯黑压暗 */
-.n-modal-mask,
-.n-drawer-mask {
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-}
-
-.mono {
-  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
-}
-
-.text-ellipsis {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* —— 动效令牌 ——
-   全站统一的手感基准，与 Dock 启动区浮层（SideBar 的 inst-unfold /
-   inst-row-in）、实例详情的 tab 指示条用的是同一套曲线：
-   --ease-out   快起缓收，收尾长，最"顺"的通用出场曲线
-   --ease-spring 轻微过冲，用于需要一点弹性的小元素（角标、按钮）
-   --ease-in    出场/收起，快速离开视线
-   新写动画优先用这些令牌，别再散落 cubic-bezier 字面量。
-   注意：本项目对 transform 敏感（会隔离合成层让 backdrop-filter 采样失效），
-   玻璃元素上只做 opacity，别加位移。 */
-:root {
-  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
-  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  --ease-in: cubic-bezier(0.4, 0, 1, 1);
-  --dur-xs: 0.12s;
-  --dur-sm: 0.18s;
-  --dur-md: 0.24s;
-  --dur-lg: 0.32s;
-}
-
-.fade-enter-active {
-  transition: opacity var(--dur-sm) var(--ease-out);
-}
-.fade-leave-active {
-  transition: opacity var(--dur-xs) var(--ease-in);
-}
-.fade-enter-from,
-.fade-leave-to {
-  opacity: 0;
-}
-
-/* 路由切换：纯 opacity 淡入淡出（out-in），无 transform，
-   不触发合成层隔离，backdrop-filter 磨砂全程稳定。
-   出场用 ease-in 快速退场、入场用 ease-out 缓收，比两边都用 ease 更有方向感。 */
-.page-fade-enter-active {
-  transition: opacity 0.2s var(--ease-out);
-}
-.page-fade-leave-active {
-  transition: opacity var(--dur-xs) var(--ease-in);
-}
-.page-fade-enter-from,
-.page-fade-leave-to {
-  opacity: 0;
-}
-
-/* 方向转场：新旧页面都位移（"全部移走"），out-in 先出后入。
-   位移轴跟导航栏（Dock / 侧栏）的排列方向一致——左右。
-   旧页面用 transform 移出（淡出中磨砂异常不可见，保性能）。
-   新页面用 position:relative + left 位移——left 触发 layout 但不创建合成层，
-   backdrop-filter 采样文档流内容全程有效，磨砂不失效（transform 会隔离合成层）。 */
-/* 向右导航（目标在导航栏更右侧）：旧页面向左移出，新页面从右侧移入 */
-.slide-forward-leave-active {
-  transition: opacity var(--dur-sm) var(--ease-in), transform 0.2s var(--ease-in);
-  overflow: hidden;
-}
-.slide-forward-leave-to {
-  opacity: 0;
-  transform: translateX(-32px);
-}
-.slide-forward-enter-active {
-  transition: opacity var(--dur-md) var(--ease-out), left 0.22s var(--ease-out);
-  overflow: hidden;
-  position: relative;
-  left: 0;
-}
-.slide-forward-enter-from {
-  opacity: 0;
-  left: 32px;
-}
-/* 向左导航（目标在导航栏更左侧）：旧页面向右移出，新页面从左侧移入 */
-.slide-back-leave-active {
-  transition: opacity var(--dur-sm) var(--ease-in), transform 0.2s var(--ease-in);
-  overflow: hidden;
-}
-.slide-back-leave-to {
-  opacity: 0;
-  transform: translateX(32px);
-}
-.slide-back-enter-active {
-  transition: opacity var(--dur-md) var(--ease-out), left 0.22s var(--ease-out);
-  overflow: hidden;
-  position: relative;
-  left: 0;
-}
-.slide-back-enter-from {
-  opacity: 0;
-  left: -32px;
-}
-
-.n-loading-bar-container {
-  top: 40px !important;
-}
-
-/* —— driver.js 新手引导弹窗主题适配 —— */
-/* 默认深色：深底浅字 */
+/* ---------------------------------------------------------------------------
+   driver.js 新手引导弹窗：用局部变量区分深浅色，避免维护两份重复规则。
+   --------------------------------------------------------------------------- */
 .driver-popover {
-  background-color: #1a1d24;
-  color: #f2f3f7;
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: 12px;
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.5);
+  --dp-bg: #1a1d24;
+  --dp-fg: var(--text-1);
+  --dp-fg-2: var(--text-2);
+  --dp-fg-3: var(--text-3);
+  --dp-btn-bg: var(--w-05);
+  --dp-btn-fg: var(--text-2);
+  --dp-btn-border: var(--w-12);
+  --dp-btn-hover: var(--w-10);
+}
+:root.light .driver-popover {
+  --dp-bg: #ffffff;
+  --dp-btn-bg: #ffffff;
+  --dp-btn-border: rgba(0, 0, 0, 0.12);
+  --dp-btn-hover: #f5f5f5;
+}
+.driver-popover {
+  background-color: var(--dp-bg);
+  color: var(--dp-fg);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--pop-shadow);
 }
 .driver-popover-title {
-  color: #f2f3f7;
+  color: var(--dp-fg);
 }
 .driver-popover-description {
-  color: #c6c8d2;
+  color: var(--dp-fg-2);
 }
-.driver-popover-progress-text {
-  color: #8b8e9c;
-}
+.driver-popover-progress-text,
 .driver-popover-close-btn {
-  color: #8b8e9c;
+  color: var(--dp-fg-3);
 }
 .driver-popover-close-btn:hover,
 .driver-popover-close-btn:focus {
-  color: #f2f3f7;
+  color: var(--dp-fg);
 }
 .driver-popover-footer-btn {
-  background-color: rgba(255, 255, 255, 0.05);
-  color: #c6c8d2;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
+  background-color: var(--dp-btn-bg);
+  color: var(--dp-btn-fg);
+  border: 1px solid var(--dp-btn-border);
+  border-radius: var(--r-sm);
 }
 .driver-popover-footer-btn:hover,
 .driver-popover-footer-btn:focus {
-  background-color: rgba(255, 255, 255, 0.1);
+  background-color: var(--dp-btn-hover);
 }
 .driver-popover-arrow {
-  border-color: #1a1d24;
+  border-color: var(--dp-bg);
 }
-/* 引导按钮用主题色强调"下一步/完成" */
+/* 引导按钮用主题色强调“下一步 / 完成” */
 .driver-popover-footer-btn:last-child {
   background-color: var(--accent);
   color: #fff;
@@ -551,108 +71,30 @@ a:focus-visible,
 .driver-popover-footer-btn:last-child:hover {
   background-color: var(--accent-hover);
 }
-/* 浅色主题：恢复白底深字 */
-:root.light .driver-popover {
-  background-color: #fff;
-  color: #2d2d2d;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  box-shadow: 0 10px 36px rgba(0, 0, 0, 0.18);
-}
-:root.light .driver-popover-title {
-  color: #1a1d24;
-}
-:root.light .driver-popover-description {
-  color: #4a4d58;
-}
-:root.light .driver-popover-progress-text {
-  color: #55586a;
-}
-:root.light .driver-popover-close-btn {
-  color: #8b8e9c;
-}
-:root.light .driver-popover-close-btn:hover {
-  color: #2d2d2d;
-}
-:root.light .driver-popover-footer-btn {
-  background-color: #fff;
-  color: #4a4d58;
-  border: 1px solid rgba(0, 0, 0, 0.12);
-}
-:root.light .driver-popover-footer-btn:hover {
-  background-color: #f5f5f5;
-}
-:root.light .driver-popover-arrow {
-  border-color: #fff;
-}
-:root.light .driver-popover-footer-btn:last-child {
-  background-color: var(--accent);
-  color: #fff;
-  border-color: var(--accent);
-}
-:root.light .driver-popover-footer-btn:last-child:hover {
-  background-color: var(--accent-hover);
-}
 
 /* ---------------------------------------------------------------------------
-   骨架屏原子（发现页内容分类 / 投影列表共用）
-   只放颜色变量、shimmer 动画与条块尺寸；每处卡片怎么排由各自组件决定，
-   这样两边的加载态看起来是同一套东西。
+   naive-ui message（teleport 到 body 的 .n-message-container--top）
+   整条提示可点击复制；点击后让提示条本身闪一下，不在正文后面追加文字标签。
+   复制逻辑在 composables/notify.ts 的 installMessageCopy()，这里只管外观。
    --------------------------------------------------------------------------- */
-.skel-card {
-  --skel-c: rgba(255, 255, 255, 0.07);
-  --skel-hi: rgba(255, 255, 255, 0.14);
+.n-message-container .n-message {
+  cursor: pointer;
 }
-:root.light .skel-card {
-  --skel-c: rgba(0, 0, 0, 0.06);
-  --skel-hi: rgba(0, 0, 0, 0.1);
+.n-message-container .n-message[data-qx-copy="ok"] {
+  border-color: var(--accent-50);
+  animation: qx-message-copied 0.9s var(--ease-out);
 }
-.skel-icon,
-.skel-cover,
-.skel-line,
-.skel-tag,
-.skel-btn {
-  background: linear-gradient(90deg, var(--skel-c), var(--skel-hi), var(--skel-c));
-  background-size: 200% 100%;
-  animation: skel-shimmer 1.3s ease-in-out infinite;
+.n-message-container .n-message[data-qx-copy="fail"] {
+  border-color: var(--danger-30);
+  animation: qx-message-copy-failed 0.9s var(--ease-out);
 }
-.skel-icon {
-  width: 56px;
-  height: 56px;
-  border-radius: 12px;
-  flex-shrink: 0;
+@keyframes qx-message-copied {
+  0% { box-shadow: 0 0 0 0 var(--accent-50); }
+  45% { box-shadow: 0 0 0 4px var(--accent-22); }
+  100% { box-shadow: var(--n-box-shadow, none); }
 }
-.skel-line {
-  height: 11px;
-  border-radius: 6px;
-}
-.skel-line.w-30 { width: 30%; }
-.skel-line.w-32 { width: 32%; }
-.skel-line.w-40 { width: 40%; }
-.skel-line.w-45 { width: 45%; }
-.skel-line.w-60 { width: 60%; }
-.skel-line.w-70 { width: 70%; }
-.skel-line.w-80 { width: 80%; }
-.skel-line.w-92 { width: 92%; }
-.skel-tag {
-  width: 52px;
-  height: 18px;
-  border-radius: 9px;
-}
-.skel-btn {
-  width: 84px;
-  height: 28px;
-  border-radius: 8px;
-}
-@keyframes skel-shimmer {
-  0% { background-position: 200% 0; }
-  100% { background-position: -200% 0; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .skel-icon,
-  .skel-cover,
-  .skel-line,
-  .skel-tag,
-  .skel-btn {
-    animation: none;
-  }
+@keyframes qx-message-copy-failed {
+  0% { box-shadow: 0 0 0 0 var(--danger-40); }
+  45% { box-shadow: 0 0 0 4px var(--danger-14); }
+  100% { box-shadow: var(--n-box-shadow, none); }
 }

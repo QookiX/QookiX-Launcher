@@ -74,7 +74,7 @@ onBeforeUnmount(() => {
   max-width: 90vw;
   background: var(--panel, #1e2230);
   border: 1px solid var(--border, var(--w-08));
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 14px 18px;
   box-shadow: 0 8px 32px var(--k-40);
   backdrop-filter: blur(var(--glass-blur, 8px));
@@ -84,14 +84,14 @@ onBeforeUnmount(() => {
 .lp-bar {
   height: 4px;
   background: var(--w-08);
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   overflow: hidden;
   margin-bottom: 8px;
 }
 .lp-fill {
   height: 100%;
   background: linear-gradient(90deg, var(--accent, #e89a4b), var(--accent-deep, #d97f33));
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   /* 进度条是按事件跳变的，"ease" 会在每段开头突然加速；
      换成统一的快起缓收曲线后，连续跳数看着像在匀速爬 */
   transition: width 0.32s var(--ease-out);
@@ -103,7 +103,7 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .lp-step {
   color: var(--text-2, #c6c8d2);

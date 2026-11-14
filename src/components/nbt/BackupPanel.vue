@@ -164,7 +164,7 @@ watch(
 }
 .bp-hint {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .bp-list {
@@ -175,7 +175,7 @@ watch(
   gap: 12px;
 }
 .bp-group-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-2);
   margin-bottom: 6px;
@@ -185,7 +185,7 @@ watch(
   align-items: center;
   gap: 10px;
   padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--w-04);
   margin-bottom: 4px;
 }
@@ -198,15 +198,15 @@ watch(
   flex-wrap: wrap;
 }
 .bp-time {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .bp-size {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .bp-name {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-family: ui-monospace, Consolas, monospace;
   word-break: break-all;
@@ -221,29 +221,6 @@ watch(
   padding: 32px;
   text-align: center;
   color: var(--text-3);
-  font-size: 12px;
-}
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 9px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-}
-.mini-btn.danger {
-  color: var(--danger);
-}
-.mini-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
+  font-size: var(--fs-xs);
 }
 </style>

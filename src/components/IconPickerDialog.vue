@@ -176,7 +176,7 @@ function save() {
 .ip-preview-box {
   width: 72px;
   height: 72px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: transparent;
   border: 1px solid var(--w-10);
   overflow: hidden;
@@ -189,7 +189,7 @@ function save() {
   inset: 0;
 }
 .ip-preview-label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: #8b8e9c;
 }
 .ip-section {
@@ -198,7 +198,7 @@ function save() {
   gap: 8px;
 }
 .ip-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: #8b8e9c;
 }
@@ -214,21 +214,21 @@ function save() {
   border: 1px solid var(--w-10);
   background: var(--w-04);
   color: #c6c8d2;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   font-family: inherit;
 }
 .ip-bg.active {
-  border-color: #e89a4b;
+  border-color: var(--accent-50);
   background: var(--accent-14);
-  color: #e89a4b;
+  color: var(--accent);
 }
 .ip-swatch {
   width: 16px;
   height: 16px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   background: #2a2e3a;
   display: inline-block;
 }
@@ -242,7 +242,7 @@ function save() {
 .ip-swatch.bg-none { background: var(--w-08); }
 .ip-loading,
 .ip-empty {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: #8b8e9c;
   padding: 16px 0;
   text-align: center;
@@ -258,7 +258,7 @@ function save() {
   aspect-ratio: 1;
   border: 1px solid var(--w-10);
   background: var(--w-04);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -270,7 +270,7 @@ function save() {
   background: var(--w-09);
 }
 .ip-icon.active {
-  border-color: #e89a4b;
+  border-color: var(--accent-50);
   background: var(--accent-16);
 }
 .ip-icon-img {
@@ -284,9 +284,9 @@ function save() {
   border: 1px solid var(--w-10);
   background: var(--w-05);
   color: #f2f3f7;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 8px 16px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -298,7 +298,7 @@ function save() {
   opacity: 0.5;
 }
 .ip-img-ok {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--success);
 }
 .ip-footer {
@@ -313,9 +313,9 @@ function save() {
   border: 1px solid var(--w-10);
   background: var(--w-05);
   color: #f2f3f7;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 8px 18px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;

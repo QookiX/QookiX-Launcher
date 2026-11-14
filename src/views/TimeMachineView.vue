@@ -1066,8 +1066,8 @@ onBeforeUnmount(() => {
         <IconUploadCloud />
         {{ t("timemachine.pendingN", { n: pending }) }}
       </button>
-      <div ref="segRef" class="seg">
-        <div class="indicator" :style="segStyle"></div>
+      <div ref="segRef" class="seg qx-seg">
+        <div class="qx-seg__indicator" :style="segStyle"></div>
         <button
           v-for="v in viewOptions"
           :key="v.value"
@@ -1325,7 +1325,7 @@ onBeforeUnmount(() => {
   <NModal
     v-model:show="ctlOpen"
     preset="card"
-    style="width: 620px; max-width: 92vw"
+    style="width: 680px; max-width: 92vw"
     :title="t('timemachine.console')"
   >
     <div class="ctl-repo">
@@ -1508,7 +1508,7 @@ onBeforeUnmount(() => {
   </TimeMachineLightbox>
 
   <!-- 添加自定义规则 -->
-  <NModal v-model:show="adding" preset="card" style="width: 520px" :title="t('timemachine.addRule')">
+  <NModal v-model:show="adding" preset="card" style="width: 560px" :title="t('timemachine.addRule')">
     <div class="form">
       <label>{{ t("timemachine.ruleName") }}</label>
       <NInput v-model:value="draft.label" :placeholder="t('timemachine.ruleNamePh')" />
@@ -1553,9 +1553,9 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 6px;
   min-height: 38px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   padding: 9px 18px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--panel);
   backdrop-filter: blur(var(--glass-blur, 8px));
@@ -1605,38 +1605,7 @@ onBeforeUnmount(() => {
 }
 
 /* 视图切换胶囊 */
-.seg {
-  position: relative;
-  display: flex;
-  background: var(--panel);
-  backdrop-filter: blur(var(--glass-blur, 8px));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-  border-radius: 9px;
-  padding: 3px;
-  min-height: 38px;
-}
-.seg .indicator {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  border-radius: 7px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.seg button {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  padding: 6px 18px;
-  border-radius: 7px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.seg button.active {
-  color: var(--accent);
-}
+/* 视图切换：外观走全局 .qx-seg */
 
 /* ---------------- 未授权引导 / 空态 ---------------- */
 .gate,
@@ -1645,7 +1614,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   align-items: center;
   text-align: center;
-  gap: 10px;
+  gap: var(--sp-4);
   padding: 48px 24px;
   animation: rise 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -1653,7 +1622,7 @@ onBeforeUnmount(() => {
 .empty-icon {
   width: 52px;
   height: 52px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: var(--accent-soft);
   color: var(--accent);
   display: grid;
@@ -1662,18 +1631,18 @@ onBeforeUnmount(() => {
 }
 .gate-t {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-1);
 }
 .empty > p {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-1);
 }
 .gate-p {
   max-width: 460px;
   margin: 0;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.75;
   color: var(--text-3);
 }
@@ -1689,10 +1658,10 @@ onBeforeUnmount(() => {
   justify-content: center;
 }
 .steps > span {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   padding: 5px 12px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--panel);
   border: 1px solid var(--border);
 }
@@ -1761,9 +1730,9 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: rgba(255, 255, 255, 0.18);
   color: #fff;
 }
@@ -1773,7 +1742,7 @@ onBeforeUnmount(() => {
 }
 .hero-h {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: #fff;
   text-shadow: 0 1px 10px rgba(0, 0, 0, 0.45);
@@ -1788,9 +1757,9 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 .hero-chip {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   padding: 3px 9px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: rgba(255, 255, 255, 0.16);
   color: #f2f3f7;
 }
@@ -1798,7 +1767,7 @@ onBeforeUnmount(() => {
   background: rgba(229, 83, 75, 0.88);
 }
 .hero-chip.gold {
-  background: rgba(232, 154, 75, 0.92);
+  background: var(--accent-60);
 }
 .hero-actions {
   margin-top: 2px;
@@ -1815,9 +1784,9 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 .chip {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 5px 12px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-3);
@@ -1860,7 +1829,7 @@ onBeforeUnmount(() => {
 }
 .filters-count {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .chip.dens {
@@ -1912,25 +1881,25 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 .tl-h {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
   color: var(--text-1);
 }
 .tl-range,
 .tl-dur {
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .tl-inst {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--panel);
   color: var(--text-2);
 }
 .tl-stats {
   margin-left: auto;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 /* 时间轴上的世界快照行（存档时间点 → 回到那一刻） */
@@ -1945,8 +1914,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 6px 10px;
-  border-radius: 9px;
-  font-size: 12px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
   color: var(--text-2);
   background: var(--w-04);
   border: 1px solid var(--border);
@@ -1956,9 +1925,9 @@ onBeforeUnmount(() => {
   border-left-color: #6aa9ff;
 }
 .snap-kind {
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--w-08);
   color: var(--text-3);
   flex-shrink: 0;
@@ -1972,7 +1941,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .snap-meta {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   flex-shrink: 0;
 }
@@ -1988,11 +1957,11 @@ onBeforeUnmount(() => {
 /* 紧凑密度：卡片更小、间距更紧 */
 .stream.compact {
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 9px;
+  gap: var(--sp-3);
 }
 .timeline.compact .shots {
   grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
-  gap: 9px;
+  gap: var(--sp-3);
 }
 
 .day-div {
@@ -2000,7 +1969,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-3);
   margin-top: 4px;
@@ -2020,7 +1989,7 @@ onBeforeUnmount(() => {
 }
 .shot-pic {
   position: relative;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--panel);
   backdrop-filter: blur(var(--glass-blur, 8px));
@@ -2061,9 +2030,9 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 8px;
   top: 8px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   color: #fff;
   background: rgba(0, 0, 0, 0.45);
 }
@@ -2083,9 +2052,9 @@ onBeforeUnmount(() => {
   position: absolute;
   left: 8px;
   bottom: 8px;
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--accent);
   color: #fff;
 }
@@ -2093,9 +2062,9 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 8px;
   bottom: 8px;
-  font-size: 10.5px;
+  font-size: var(--fs-2xs);
   padding: 2px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: rgba(0, 0, 0, 0.5);
   color: #e8e9ee;
 }
@@ -2105,7 +2074,7 @@ onBeforeUnmount(() => {
   top: 6px;
   width: 26px;
   height: 26px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 0;
   background: rgba(0, 0, 0, 0.45);
   color: #fff;
@@ -2125,7 +2094,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .shot-inst {
@@ -2184,9 +2153,9 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 8px 14px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text-2);
@@ -2209,7 +2178,7 @@ onBeforeUnmount(() => {
 /* ---------------- 控制台弹窗 ---------------- */
 .ctl-repo {
   margin-bottom: 10px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   word-break: break-all;
 }
@@ -2230,7 +2199,7 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   padding: 5px 0;
 }
 .row-label {
@@ -2242,7 +2211,7 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .sub-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-3);
   display: flex;
@@ -2259,7 +2228,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: default;
 }
@@ -2273,7 +2242,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 6px 8px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--panel);
 }
 .c-info {
@@ -2281,19 +2250,19 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .c-name {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .c-pattern {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   word-break: break-all;
 }
 .c-cool {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -2309,9 +2278,9 @@ onBeforeUnmount(() => {
   color: #9a9daa;
 }
 .lbs-badge {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: rgba(255, 255, 255, 0.14);
 }
 .lbs-badge.red {
@@ -2330,7 +2299,7 @@ onBeforeUnmount(() => {
 }
 .lbs-title {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: #9a9daa;
 }
@@ -2339,11 +2308,11 @@ onBeforeUnmount(() => {
   max-height: 300px;
   overflow: auto;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid rgba(255, 255, 255, 0.07);
   background: rgba(0, 0, 0, 0.42);
   font-family: "Cascadia Code", Consolas, "Courier New", monospace;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.6;
   color: #b9e6c8;
   white-space: pre-wrap;
@@ -2351,7 +2320,7 @@ onBeforeUnmount(() => {
 }
 .lbs-nolog {
   margin: 0;
-  font-size: 11.5px;
+  font-size: var(--fs-xs);
   color: #9a9daa;
 }
 .lb-locate {
@@ -2363,10 +2332,10 @@ onBeforeUnmount(() => {
   margin-top: 2px;
   padding: 6px 12px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: rgba(255, 255, 255, 0.06);
   color: #d8dae2;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -2378,7 +2347,7 @@ onBeforeUnmount(() => {
 }
 .lb-hint {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.5;
   color: #8b8e9c;
 }
@@ -2390,12 +2359,12 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 .form label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .mono :deep(input) {
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .dlg-foot {
   display: flex;

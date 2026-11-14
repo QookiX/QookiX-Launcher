@@ -170,11 +170,11 @@ watch(() => props.player.uuid, load, { immediate: true });
   color: var(--accent);
 }
 .p-name {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
 }
 .p-uuid {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .p-body {
@@ -197,7 +197,7 @@ watch(() => props.player.uuid, load, { immediate: true });
   min-width: 120px;
 }
 .field label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   font-weight: 600;
 }
@@ -209,18 +209,18 @@ watch(() => props.player.uuid, load, { immediate: true });
 }
 .input {
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
 }
 .input.num {
   width: 100px;
 }
 .hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .center {

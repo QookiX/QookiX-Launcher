@@ -164,12 +164,17 @@ const paid = computed(() => {
 .p-card {
   display: flex;
   flex-direction: column;
-  padding: 14px;
-  gap: 12px;
+  padding: 18px;
+  gap: 14px;
   cursor: pointer;
-  transition: transform 0.1s ease;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.1s ease, box-shadow var(--dur-md) var(--ease-out);
   position: relative;
   overflow: hidden;
+}
+/* 与 ProjectCard 同一套悬停反馈（深色 accent 细环 / 浅色浅投影 + 细环） */
+.p-card:hover {
+  box-shadow: var(--card-shadow-hover);
 }
 .p-card:active {
   transform: scale(0.97);
@@ -215,7 +220,7 @@ const paid = computed(() => {
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 3;
   overflow: hidden;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   line-height: 1.5;
   text-align: center;
@@ -247,7 +252,7 @@ const paid = computed(() => {
 .p-icon {
   width: 56px;
   height: 56px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   object-fit: cover;
   background: var(--panel);
   display: block;
@@ -257,7 +262,7 @@ const paid = computed(() => {
   align-items: center;
   justify-content: center;
   color: var(--text-3);
-  font-size: 20px;
+  font-size: var(--fs-lg);
   border: 1px solid var(--border);
 }
 .paid-badge {
@@ -266,8 +271,8 @@ const paid = computed(() => {
   top: 8px;
   z-index: 1;
   padding: 1px 5px;
-  border-radius: 6px;
-  font-size: 10px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   line-height: 1.5;
   color: var(--accent-contrast);
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
@@ -295,7 +300,7 @@ const paid = computed(() => {
   min-width: 0;
 }
 .p-title {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -308,7 +313,7 @@ const paid = computed(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .p-updated,
@@ -316,7 +321,7 @@ const paid = computed(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   white-space: nowrap;
 }
@@ -327,8 +332,8 @@ const paid = computed(() => {
 }
 .cat {
   padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 10px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   background: var(--w-06);
   border: 1px solid var(--border);
@@ -346,7 +351,7 @@ const paid = computed(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .p-stats .dl,
@@ -380,11 +385,11 @@ const paid = computed(() => {
 .p-card.view-compact .p-icon {
   width: 30px;
   height: 30px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
 }
 .p-card.view-compact .paid-badge { display: none; }
-.p-card.view-compact .p-title { font-size: 13px; }
-.p-card.view-compact .p-author { font-size: 10px; }
+.p-card.view-compact .p-title { font-size: var(--fs-sm); }
+.p-card.view-compact .p-author { font-size: var(--fs-2xs); }
 .p-card.view-compact .p-cats { display: none; }
 .p-side {
   display: flex;
@@ -400,7 +405,7 @@ const paid = computed(() => {
 }
 .p-card.view-compact .p-stats {
   gap: 6px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 .p-card.view-compact .p-stats .up { display: none; }
 .p-side-actions {
@@ -416,9 +421,9 @@ const paid = computed(() => {
   border: none;
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   color: var(--accent-contrast);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 6px 13px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
@@ -432,9 +437,9 @@ const paid = computed(() => {
   border: 1px solid var(--border);
   background: var(--w-06);
   color: var(--text-1);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -459,12 +464,12 @@ const paid = computed(() => {
 }
 .p-card.view-compact .install-btn {
   padding: 4px 9px;
-  font-size: 11px;
-  border-radius: 6px;
+  font-size: var(--fs-2xs);
+  border-radius: var(--r-xs);
 }
 .p-card.view-compact .preview-btn {
   padding: 4px 9px;
-  font-size: 11px;
-  border-radius: 6px;
+  font-size: var(--fs-2xs);
+  border-radius: var(--r-xs);
 }
 </style>

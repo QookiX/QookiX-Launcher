@@ -448,8 +448,8 @@ onUnmounted(() => {
       <IconChevronLeft /> {{ t("createInstance.backToInstances") }}
     </button>
 
-    <div ref="modeSegRef" class="mode-tabs glass">
-      <div class="indicator" :style="modeSegStyle"></div>
+    <div ref="modeSegRef" class="mode-tabs qx-seg">
+      <div class="qx-seg__indicator" :style="modeSegStyle"></div>
       <button :class="{ active: mode === 'fresh' }" @click="mode = 'fresh'">{{ t("createInstance.modeFresh") }}</button>
       <button :class="{ active: mode === 'import' }" @click="mode = 'import'">{{ t("createInstance.modeImport") }}</button>
       <button :class="{ active: mode === 'importmc' }" @click="mode = 'importmc'">{{ t("createInstance.modeImportMc") }}</button>
@@ -521,7 +521,7 @@ onUnmounted(() => {
               {{ mcVersion || t("createInstance.noVersionSelected") }} · {{ loaderLabel(loader) }}<template v-if="loader !== 'vanilla'"> · {{ loaderVersion || t("createInstance.latestStable") }}</template>
             </div>
           </div>
-          <button class="btn primary" :disabled="creating || !mcVersion" @click="create">
+          <button class="qx-btn qx-btn--primary" :disabled="creating || !mcVersion" @click="create">
             <IconPlus /> {{ creating ? t("createInstance.creating") : t("createInstance.createInstance") }}
           </button>
         </div>
@@ -568,7 +568,7 @@ onUnmounted(() => {
       <h2>{{ t("createInstance.importModpackTitle") }}</h2>
       <p>{{ t("createInstance.importModpackDesc") }}</p>
       <p class="sub-p">{{ t("createInstance.importModpackSubDesc") }}</p>
-      <button class="btn primary big" :disabled="importing" @click="importPack">
+      <button class="qx-btn qx-btn--primary qx-btn--lg" :disabled="importing" @click="importPack">
         <IconFolder /> {{ importing ? t("createInstance.importing") : t("createInstance.selectModpackFile") }}
       </button>
       <p class="drop-hint">{{ t("createInstance.dropModpackHint") }}</p>
@@ -671,12 +671,12 @@ onUnmounted(() => {
         </div>
         <template #footer>
           <div class="dialog-actions">
-            <button v-if="importStep === 2" class="btn ghost" @click="importStep = 1">{{ t("createInstance.prevStep") }}</button>
-            <button v-if="importStep === 1" class="btn ghost" @click="showVersionDialog = false">{{ t("createInstance.cancel") }}</button>
-            <button v-if="importStep === 1" class="btn primary" :disabled="selectedVersions.length === 0" @click="goStep2">
+            <button v-if="importStep === 2" class="qx-btn" @click="importStep = 1">{{ t("createInstance.prevStep") }}</button>
+            <button v-if="importStep === 1" class="qx-btn" @click="showVersionDialog = false">{{ t("createInstance.cancel") }}</button>
+            <button v-if="importStep === 1" class="qx-btn qx-btn--primary" :disabled="selectedVersions.length === 0" @click="goStep2">
               {{ t("createInstance.nextStep") }}
             </button>
-            <button v-if="importStep === 2" class="btn primary" :disabled="importingMc || calcSize || !scan" @click="importMc">
+            <button v-if="importStep === 2" class="qx-btn qx-btn--primary" :disabled="importingMc || calcSize || !scan" @click="importMc">
               <IconPlus /> {{ importingMc ? t("createInstance.importing") : t("createInstance.migrateNVersions", { count: selectedVersions.length }) }}
             </button>
           </div>
@@ -702,45 +702,19 @@ onUnmounted(() => {
   background: none;
   border: none;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   font-family: inherit;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 .back:hover {
   color: var(--text-1);
   background: var(--w-06);
 }
+/* 外观走全局 .qx-seg，这里只保留对齐 */
 .mode-tabs {
-  position: relative;
-  display: inline-flex;
-  gap: 4px;
-  padding: 5px;
   align-self: flex-start;
-}
-.mode-tabs .indicator {
-  position: absolute;
-  top: 5px;
-  bottom: 5px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.mode-tabs button {
-  position: relative;
-  border: none;
-  background: transparent;
-  color: var(--text-2);
-  padding: 8px 20px;
-  border-radius: 9px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.mode-tabs button.active {
-  color: var(--accent);
 }
 .fresh,
 .import {
@@ -802,7 +776,7 @@ onUnmounted(() => {
 .icon-box {
   width: 64px;
   height: 64px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: transparent;
   border: 1px dashed var(--w-20);
   overflow: hidden;
@@ -826,7 +800,7 @@ onUnmounted(() => {
 }
 .fresh-title p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .field {
@@ -835,7 +809,7 @@ onUnmounted(() => {
   gap: 8px;
 }
 .field label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -848,8 +822,8 @@ onUnmounted(() => {
   background: var(--w-05);
   color: var(--text-2);
   padding: 7px 16px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -865,7 +839,7 @@ onUnmounted(() => {
   max-height: 340px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .ver-dialog-body {
   display: flex;
@@ -879,7 +853,7 @@ onUnmounted(() => {
 }
 .ver-group-title {
   margin: 10px 2px 2px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-2);
   border-bottom: 1px solid var(--w-06);
@@ -889,11 +863,11 @@ onUnmounted(() => {
   margin-top: 2px;
 }
 .ver-group-count {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 400;
   color: var(--text-3);
   background: var(--w-06);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 0 6px;
   margin-left: 4px;
 }
@@ -906,7 +880,7 @@ onUnmounted(() => {
   background: transparent;
   color: var(--text-2);
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
@@ -920,11 +894,11 @@ onUnmounted(() => {
   color: var(--accent);
 }
 .ver-id {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .ver-raw {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -934,13 +908,13 @@ onUnmounted(() => {
   margin-left: 6px;
 }
 .ver-type {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .ver-loader {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 1px 6px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--w-06);
   color: var(--text-2);
   margin-top: 2px;
@@ -954,7 +928,7 @@ onUnmounted(() => {
   grid-column: 1 / -1;
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   padding: 20px 0;
 }
 .loader-row {
@@ -964,11 +938,11 @@ onUnmounted(() => {
 }
 .loader-btn {
   padding: 8px 16px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.13s;
@@ -992,13 +966,13 @@ onUnmounted(() => {
   gap: 12px;
   padding: 12px 14px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--w-03);
 }
 .sum-icon {
   width: 40px;
   height: 40px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   flex-shrink: 0;
   position: relative;
@@ -1013,7 +987,7 @@ onUnmounted(() => {
   min-width: 0;
 }
 .sum-name {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
   color: var(--text-1);
   white-space: nowrap;
@@ -1021,40 +995,12 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .sum-meta {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin-top: 2px;
 }
-.fresh-summary .btn {
+.fresh-summary .qx-btn {
   flex-shrink: 0;
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s;
-}
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-}
-.btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn:disabled {
-  opacity: 0.5;
-}
-.btn.big {
-  padding: 13px 26px;
-  font-size: 15px;
 }
 .import {
   align-items: center;
@@ -1065,7 +1011,7 @@ onUnmounted(() => {
 }
 .import .drop-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .import-icon {
@@ -1075,16 +1021,16 @@ onUnmounted(() => {
 }
 .import h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: var(--fs-lg);
 }
 .import p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   max-width: 420px;
 }
 .import .sub-p {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .folder-btn {
@@ -1096,8 +1042,8 @@ onUnmounted(() => {
   background: var(--w-04);
   color: var(--text-2);
   padding: 9px 16px;
-  border-radius: 9px;
-  font-size: 13px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
   cursor: pointer;
   font-family: inherit;
   max-width: 100%;
@@ -1114,7 +1060,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 10px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 16px 18px;
   background: var(--w-03);
 }
@@ -1126,22 +1072,22 @@ onUnmounted(() => {
   flex-wrap: wrap;
 }
 .scan-label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
 }
 .scan-val {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 .scan-val em {
   color: var(--text-3);
   font-style: normal;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .scan-hint {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .importmc {
@@ -1153,7 +1099,7 @@ onUnmounted(() => {
 .import-progress {
   background: var(--glass-2, var(--w-04));
   border: 1px solid var(--border, var(--w-08));
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 12px 14px;
   display: flex;
   flex-direction: column;
@@ -1166,7 +1112,7 @@ onUnmounted(() => {
   gap: 12px;
 }
 .ip-label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
   overflow: hidden;
@@ -1174,20 +1120,20 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 .ip-count {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--accent);
   font-variant-numeric: tabular-nums;
   flex: none;
 }
 .ip-bar {
   height: 6px;
-  border-radius: 99px;
+  border-radius: var(--r-pill);
   background: var(--w-08);
   overflow: hidden;
 }
 .ip-fill {
   height: 100%;
-  border-radius: 99px;
+  border-radius: var(--r-pill);
   background: var(--accent);
   transition: width 0.25s ease;
 }
@@ -1195,7 +1141,7 @@ onUnmounted(() => {
   background: #57c98a;
 }
 .detected-hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   margin-top: 4px;
 }

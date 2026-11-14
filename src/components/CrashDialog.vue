@@ -124,14 +124,14 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 .crash-badge {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   white-space: nowrap;
 }
 .crash-title {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1, #e8eaf2);
 }
@@ -148,7 +148,7 @@ onBeforeUnmount(() => {
 .crash-body { display: flex; flex-direction: column; gap: 10px; }
 .crash-reason {
   margin: 0;
-  font-size: 13.5px;
+  font-size: var(--fs-base);
   color: var(--text-2, #c6c8d2);
 }
 .crash-mods {
@@ -157,7 +157,7 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 .mods-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-3, #8b8e9c);
   line-height: 24px;
@@ -169,10 +169,10 @@ onBeforeUnmount(() => {
   gap: 6px;
 }
 .mod-chip {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   padding: 3px 10px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: rgba(150, 181, 225, 0.14);
   border: 1px solid rgba(150, 181, 225, 0.35);
   /* 蓝色底/边标识「模组」类别；文字用 --text-2 保证深浅模态都可读
@@ -180,26 +180,26 @@ onBeforeUnmount(() => {
   color: var(--text-2);
 }
 .crash-code {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3, #8b8e9c);
 }
 .crash-advice {
   margin: 0;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--panel-2, var(--w-04));
   border-left: 3px solid var(--accent, #e89a4b);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-main, #e6e8f0);
   line-height: 1.6;
 }
 .crash-excerpt {
   border: 1px solid var(--border, var(--w-08));
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
 }
 .excerpt-head {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   padding: 6px 12px;
   color: var(--text-3, #8b8e9c);
@@ -211,7 +211,7 @@ onBeforeUnmount(() => {
   padding: 10px 12px;
   max-height: 180px;
   overflow: auto;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-2, #c6c8d2);
   white-space: pre-wrap;
@@ -230,7 +230,7 @@ onBeforeUnmount(() => {
   flex-shrink: 0;
 }
 .crash-path {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3, #8b8e9c);
   overflow: hidden;
   text-overflow: ellipsis;

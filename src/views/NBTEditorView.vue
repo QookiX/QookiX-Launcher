@@ -488,9 +488,9 @@ watch(instanceId, () => {
 
     <!-- 世界列表 -->
     <div v-if="!current" class="world-list">
-      <div v-if="noInstance" class="empty glass">{{ t("nbt.needInstance") }}</div>
-      <div v-else-if="loadingWorlds" class="empty glass">{{ t("nbt.scanning") }}</div>
-      <div v-else-if="!worlds.length" class="empty glass">{{ t("nbt.noWorlds") }}</div>
+      <div v-if="noInstance" class="qx-empty glass">{{ t("nbt.needInstance") }}</div>
+      <div v-else-if="loadingWorlds" class="qx-empty glass">{{ t("nbt.scanning") }}</div>
+      <div v-else-if="!worlds.length" class="qx-empty glass">{{ t("nbt.noWorlds") }}</div>
       <div
         v-for="w in worlds"
         :key="w.dir"
@@ -530,8 +530,8 @@ watch(instanceId, () => {
           <IconRestore /> {{ t("nbt.backupTitle") }}
         </button>
         <!-- 表单 / 树形 模式切换 -->
-        <div v-if="tab === 'world'" ref="modeSegRef" class="seg">
-          <div class="indicator" :style="modeSegStyle"></div>
+        <div v-if="tab === 'world'" ref="modeSegRef" class="seg qx-seg qx-seg--sm">
+          <div class="qx-seg__indicator" :style="modeSegStyle"></div>
           <button :class="{ active: mode === 'form' }" @click="setMode('form')">
             {{ t("nbt.formMode") }}
           </button>
@@ -544,8 +544,8 @@ watch(instanceId, () => {
       <div v-if="readonlyReason && !running" class="readonly-bar">{{ readonlyReason }}</div>
 
       <!-- 三大分区 -->
-      <div ref="tabSegRef" class="seg">
-        <div class="indicator" :style="tabSegStyle"></div>
+      <div ref="tabSegRef" class="seg qx-seg">
+        <div class="qx-seg__indicator" :style="tabSegStyle"></div>
         <button :class="{ active: tab === 'world' }" @click="setTab('world')">
           {{ t("nbt.worldProps") }}
         </button>
@@ -822,7 +822,7 @@ watch(instanceId, () => {
   padding: 12px 16px;
 }
 .bar-label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .spacer {
@@ -836,7 +836,7 @@ watch(instanceId, () => {
 .busy-text {
   display: flex;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .busy-detail {
@@ -867,14 +867,14 @@ watch(instanceId, () => {
   min-width: 0;
 }
 .c-name {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
 }
 .c-meta {
   display: flex;
   gap: 10px;
   flex-wrap: wrap;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin-top: 3px;
 }
@@ -891,13 +891,13 @@ watch(instanceId, () => {
   flex-wrap: wrap;
 }
 .world-title {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
 }
 .tag {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   color: var(--text-3);
 }
@@ -911,43 +911,12 @@ watch(instanceId, () => {
 }
 .readonly-bar {
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--w-04);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
-.seg {
-  position: relative;
-  display: flex;
-  background: var(--panel);
-  backdrop-filter: blur(var(--glass-blur, 8px));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-  border-radius: 9px;
-  padding: 3px;
-  min-height: 38px;
-}
-.seg .indicator {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  border-radius: 7px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.seg button {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  padding: 6px 18px;
-  border-radius: 7px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.seg button.active {
-  color: var(--accent);
-}
+/* 分段控件外观走全局 .qx-seg（主标签）/ .qx-seg--sm（表单-树形切换） */
 .form-body {
   display: flex;
   flex-direction: column;
@@ -968,17 +937,17 @@ watch(instanceId, () => {
   min-width: 150px;
 }
 .field label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   font-weight: 600;
 }
 .input {
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
   outline: none;
 }
@@ -995,18 +964,18 @@ watch(instanceId, () => {
   flex-wrap: wrap;
 }
 .hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .sec-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--text-2);
   margin-top: 4px;
 }
 .rules {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: 6px 16px;
 }
 .rule-row {
@@ -1017,7 +986,7 @@ watch(instanceId, () => {
   padding: 3px 0;
 }
 .rule-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   min-width: 0;
   overflow: hidden;
@@ -1027,44 +996,19 @@ watch(instanceId, () => {
 .rule-input {
   width: 120px;
   padding: 4px 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .rules-all {
   margin-top: 2px;
 }
 .rules-all summary {
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   padding: 4px 0;
 }
 .rules-all .rules {
   margin-top: 6px;
-}
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-}
-.mini-btn.active {
-  color: var(--accent);
-  border-color: var(--accent-04);
-  background: var(--accent-soft);
-}
-.mini-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 .actions {
   display: flex;
@@ -1073,11 +1017,11 @@ watch(instanceId, () => {
   margin-top: 6px;
 }
 .dirty {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 .backup-tip {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .tab-body {
@@ -1091,21 +1035,16 @@ watch(instanceId, () => {
   flex-wrap: wrap;
 }
 .player-btn {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .center {
   padding: 40px;
   text-align: center;
   color: var(--text-3);
 }
-.empty {
-  padding: 48px 24px;
-  text-align: center;
-  color: var(--text-3);
-}
 .help-line {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-1);
 }

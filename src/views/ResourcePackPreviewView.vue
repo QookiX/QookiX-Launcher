@@ -646,36 +646,18 @@ function resolutionLabel(widths: number[]): string {
 }
 
 /* —— 通用按钮 / 玻璃条 —— */
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 13px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.mini-btn:hover { background: var(--w-08); color: var(--text-1); }
-.mini-btn:disabled { opacity: 0.5; cursor: default; }
-.mini-btn.primary { border-color: var(--accent); color: var(--accent); }
-.mini-btn.primary:hover { background: var(--accent-soft); }
-.mini-btn svg { font-size: 14px; }
 .param-bar { padding: 10px 14px; display: flex; gap: 8px; align-items: center; flex: none; }
 .param-sep { width: 1px; align-self: stretch; background: var(--border); }
-.link-btn { padding: 0; border: none; background: none; color: var(--text-3); font-size: 12px; cursor: pointer; }
+.link-btn { padding: 0; border: none; background: none; color: var(--text-3); font-size: var(--fs-xs); cursor: pointer; }
 .link-btn:hover { color: var(--accent); }
 
 /* —— 最近打开 —— */
 .recent-panel { display: flex; flex-direction: column; gap: 2px; max-height: 360px; overflow-y: auto; }
-.recent-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-3); padding-bottom: 6px; }
-.recent-item { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px; border: none; border-radius: 6px; background: transparent; cursor: pointer; color: var(--text-1); font: inherit; }
+.recent-head { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-xs); color: var(--text-3); padding-bottom: 6px; }
+.recent-item { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px; border: none; border-radius: var(--r-xs); background: transparent; cursor: pointer; color: var(--text-1); font: inherit; }
 .recent-item:hover { background: var(--panel-hover); }
-.rf-name { font-size: 13px; }
-.rf-meta { font-size: 11px; color: var(--text-3); }
+.rf-name { font-size: var(--fs-sm); }
+.rf-meta { font-size: var(--fs-2xs); color: var(--text-3); }
 
 /* —— 材质包信息 —— */
 .pack-head { display: flex; gap: 14px; padding: 14px 16px; flex: none; }
@@ -683,7 +665,7 @@ function resolutionLabel(widths: number[]): string {
   width: 64px;
   height: 64px;
   flex: none;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--w-06, rgba(255, 255, 255, 0.06));
   display: flex;
@@ -691,7 +673,7 @@ function resolutionLabel(widths: number[]): string {
   justify-content: center;
 }
 .pack-icon img { width: 100%; height: 100%; object-fit: cover; image-rendering: pixelated; }
-.pack-icon-ph { font-size: 26px; color: var(--text-3); }
+.pack-icon-ph { font-size: var(--fs-xl); color: var(--text-3); }
 .pack-meta { min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .pack-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .pack-title h2 {
@@ -705,8 +687,8 @@ function resolutionLabel(widths: number[]): string {
 .tag {
   flex: none;
   padding: 1px 6px;
-  border-radius: 5px;
-  font-size: 10px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--accent);
@@ -715,7 +697,7 @@ function resolutionLabel(widths: number[]): string {
 }
 .pack-desc {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   line-height: 1.55;
   overflow: hidden;
@@ -727,8 +709,8 @@ function resolutionLabel(widths: number[]): string {
 .pack-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip-static {
   padding: 2px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   background: var(--w-04);
   border: 1px solid var(--border);
@@ -743,12 +725,12 @@ function resolutionLabel(widths: number[]): string {
   flex: none;
   width: 220px;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-3);
 }
-.search-box svg { font-size: 14px; flex: none; }
+.search-box svg { font-size: var(--fs-base); flex: none; }
 .search-box input {
   flex: 1;
   min-width: 0;
@@ -757,17 +739,17 @@ function resolutionLabel(widths: number[]): string {
   background: transparent;
   color: var(--text-1);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .chips { display: flex; gap: 6px; overflow-x: auto; flex: 1; min-width: 0; padding-bottom: 2px; }
 .chip {
   flex: none;
   padding: 5px 10px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   cursor: pointer;
   white-space: nowrap;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
@@ -780,7 +762,7 @@ function resolutionLabel(widths: number[]): string {
 .grid-wrap { flex: 1; min-height: 0; overflow-y: auto; padding: 12px; }
 .tex-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
   gap: 10px;
 }
 .tex-cell {
@@ -790,7 +772,7 @@ function resolutionLabel(widths: number[]): string {
   align-items: center;
   gap: 6px;
   padding: 8px 6px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   border: 1px solid transparent;
   background: var(--w-03);
   color: var(--text-2);
@@ -807,7 +789,7 @@ function resolutionLabel(widths: number[]): string {
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   background-image:
     linear-gradient(45deg, var(--w-06) 25%, transparent 25%),
     linear-gradient(-45deg, var(--w-06) 25%, transparent 25%),
@@ -830,7 +812,7 @@ function resolutionLabel(widths: number[]): string {
 }
 .tex-name {
   width: 100%;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 1.3;
   color: var(--text-3);
   text-align: center;
@@ -843,8 +825,8 @@ function resolutionLabel(widths: number[]): string {
   top: 4px;
   right: 4px;
   padding: 0 4px;
-  border-radius: 4px;
-  font-size: 9px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   color: var(--accent);
   background: var(--accent-16);
   border: 1px solid var(--accent-35);
@@ -863,7 +845,7 @@ function resolutionLabel(widths: number[]): string {
 }
 .panel-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -874,7 +856,7 @@ function resolutionLabel(widths: number[]): string {
   align-items: center;
   justify-content: center;
   padding: 10px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   min-height: 120px;
   overflow: hidden;
@@ -901,21 +883,21 @@ function resolutionLabel(widths: number[]): string {
 .zoom-btn { padding: 5px 10px; }
 .side-sep { height: 1px; background: var(--border); }
 .info-item { display: flex; flex-direction: column; gap: 2px; }
-.label { font-size: 11px; color: var(--text-3); }
-.value { font-size: 12px; color: var(--text-1); }
+.label { font-size: var(--fs-2xs); color: var(--text-3); }
+.value { font-size: var(--fs-xs); color: var(--text-1); }
 .break { word-break: break-all; }
 
 /* —— 空 / 加载 —— */
-.empty-state { flex: 1; border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
-.empty-copy h3 { margin: 0 0 8px; font-size: 15px; }
-.empty-copy p { margin: 0; font-size: 12px; line-height: 1.6; }
-.recent-grid h4 { margin: 0 0 10px; font-size: 13px; font-weight: 600; }
-.recent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 10px; }
-.recent-card { display: flex; flex-direction: column; gap: 4px; padding: 12px; border-radius: 10px; border: 1px solid var(--border); cursor: pointer; text-align: left; font: inherit; color: var(--text-1); transition: border-color 0.15s, background 0.15s; }
-.recent-card:hover { border-color: var(--accent); background: var(--accent-soft); }
-.rc-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.rc-meta { font-size: 11px; color: var(--text-3); }
-.loading-state { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: 12px; font-size: 13px; color: var(--text-2); }
+.empty-state { flex: 1; border-radius: var(--r-md); padding: 24px; display: flex; flex-direction: column; gap: 18px; overflow-y: auto; }
+.empty-copy h3 { margin: 0 0 8px; font-size: var(--fs-md); }
+.empty-copy p { margin: 0; font-size: var(--fs-xs); line-height: 1.6; }
+.recent-grid h4 { margin: 0 0 10px; font-size: var(--fs-sm); font-weight: 600; }
+.recent-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 10px; }
+.recent-card { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-5); border-radius: var(--r-md); border: 1px solid var(--border); cursor: pointer; text-align: left; font: inherit; color: var(--text-1); transition: border-color var(--dur-sm) var(--ease-out), background var(--dur-sm) var(--ease-out); }
+.recent-card:hover { border-color: var(--accent-45); background: var(--accent-soft); }
+.rc-name { font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-meta { font-size: var(--fs-2xs); color: var(--text-3); }
+.loading-state { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--text-2); }
 .spinner {
   width: 16px;
   height: 16px;
@@ -925,8 +907,8 @@ function resolutionLabel(widths: number[]): string {
   animation: rp-spin 0.8s linear infinite;
 }
 @keyframes rp-spin { to { transform: rotate(360deg); } }
-.error { padding: 12px 16px; border-radius: 10px; color: var(--danger); font-size: 13px; }
-.muted { color: var(--text-3); font-size: 12px; }
+.error { padding: 12px 16px; border-radius: var(--r-md); color: var(--danger); font-size: var(--fs-sm); }
+.muted { color: var(--text-3); font-size: var(--fs-xs); }
 
 /* —— 实例材质包列表 —— */
 .pack-list { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; max-height: 320px; overflow-y: auto; }
@@ -935,17 +917,17 @@ function resolutionLabel(widths: number[]): string {
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid transparent;
   background: transparent;
   color: var(--text-1);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-align: left;
   cursor: pointer;
 }
 .pack-item:hover { background: var(--panel-hover); border-color: var(--border); }
-.pack-item svg { font-size: 14px; color: var(--text-3); flex: none; }
+.pack-item svg { font-size: var(--fs-base); color: var(--text-3); flex: none; }
 .pi-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pi-size { font-size: 11px; color: var(--text-3); flex: none; }
+.pi-size { font-size: var(--fs-2xs); color: var(--text-3); flex: none; }
 </style>

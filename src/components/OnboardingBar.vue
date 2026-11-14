@@ -144,7 +144,7 @@ function openBrowse() {
   gap: 10px;
   padding: 8px 12px;
   border: 1px solid transparent;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: transparent;
   cursor: pointer;
   text-align: left;
@@ -171,7 +171,7 @@ function openBrowse() {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   flex-shrink: 0;
   background: var(--bg-3);
@@ -191,12 +191,12 @@ function openBrowse() {
   min-width: 0;
 }
 .ob-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .ob-sub {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
@@ -211,7 +211,7 @@ function openBrowse() {
   width: 26px;
   height: 26px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-3);
   cursor: pointer;

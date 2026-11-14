@@ -14,7 +14,7 @@ use super::api::{self, ApiError};
 use crate::state::AppState;
 
 /// 参与同步的字段。新增字段时想让它跟着走，往这里加一行即可。
-const SYNC_KEYS: [&str; 30] = [
+const SYNC_KEYS: [&str; 33] = [
     // 内存 / 启动参数
     "max_memory_mb",
     "min_memory_mb",
@@ -33,6 +33,9 @@ const SYNC_KEYS: [&str; 30] = [
     // 外观
     "theme",
     "theme_color",
+    "background_mode",
+    "background_scene",
+    "background_quality",
     "background_blur",
     "background_dim",
     "glass_blur",

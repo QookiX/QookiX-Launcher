@@ -1,4 +1,4 @@
-import { onBeforeUnmount, onMounted, ref, type Ref } from "vue";
+import { onBeforeUnmount, onMounted, onUpdated, ref, type Ref } from "vue";
 
 interface Options {
   /** Direction the indicator travels along: vertical = top/height, horizontal = left/width */
@@ -79,6 +79,15 @@ export function useSlidingIndicator(
     }
     const r = el.getBoundingClientRect();
     const c = container.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) {
+      // 元素存在但量不到尺寸（祖先被 v-show 藏起来 / 还没完成布局）：
+      // 绝不能把 0×0 写进样式，否则指示器会被永久钉成「看不见」，
+      // 只能等用户点一次选项触发 watch 才复活。这里保持未定位状态，
+      // 由 ResizeObserver 或父组件的 onUpdated 补测。
+      last = null;
+      hide("0s");
+      return;
+    }
     const to = {
       top: r.top - c.top,
       height: r.height,
@@ -120,6 +129,7 @@ export function useSlidingIndicator(
     }
     const r = el.getBoundingClientRect();
     const c = container.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return; // 还没布局好，等下一帧再贴
     const to = {
       top: r.top - c.top,
       height: r.height,
@@ -136,12 +146,45 @@ export function useSlidingIndicator(
     raf = requestAnimationFrame(syncNow);
   }
 
+  // —— 自愈：元素真正出现后自动补测 ——
+  // 这个 composable 注册在「页面组件」上，不是每套 seg 自己的子组件，onMounted 只跑一次。
+  // 而 seg 常常在那一刻正被 v-show 藏起来（display:none → 量到 0×0），
+  // 或在 v-if 分支里还没渲染（例如设置页的「画质」只在背景为动态场景时才存在）。
+  // 没有兜底的话，指示器会一直停在 opacity:0 / 宽 0 的状态，只有用户点一次选项、
+  // 触发 watch 里的 refresh 才会突然冒出来。
+  let ro: ResizeObserver | null = null;
+  let bound: { container: HTMLElement; item: HTMLElement | null } | null = null;
+
+  function bindObserver() {
+    const container = toElement(containerRef.value);
+    if (!container) return;
+    const idx = getActive();
+    const item = toElement(idx >= 0 ? getItems()[idx] : null);
+    if (bound && bound.container === container && bound.item === item) return;
+    // 换了容器（v-show / v-if 重建出的是新元素）：按首次定位处理，不要从旧位置滑过去
+    if (bound?.container !== container) last = null;
+    bound = { container, item };
+    if (!ro) ro = new ResizeObserver(() => refresh());
+    ro.disconnect();
+    ro.observe(container);
+    if (item) ro.observe(item);
+  }
+
   onMounted(() => {
+    bindObserver();
     update();
     window.addEventListener("resize", refresh);
   });
+  // 父组件更新意味着 DOM 可能刚被重建 / 从隐藏变可见：重新绑定并在未定位时补测
+  onUpdated(() => {
+    bindObserver();
+    if (!last) refresh();
+  });
   onBeforeUnmount(() => {
     cancelAnimationFrame(raf);
+    ro?.disconnect();
+    ro = null;
+    bound = null;
     window.removeEventListener("resize", refresh);
   });
 

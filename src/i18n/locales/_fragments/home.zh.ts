@@ -1,5 +1,11 @@
 export default {
   home: {
+    /** 未启用自定义主页时首页的默认内容 */
+    default: {
+      recentTitle: "最近游玩",
+      pinTitle: "快捷启动",
+      viewAll: "全部实例",
+    },
     pin: {
       typeServer: "服务器",
       typeWorld: "存档",
@@ -35,6 +41,22 @@ export default {
       joiningServer: "正在加入服务器「{name}」",
       enteringWorld: "正在进入世界「{name}」",
       launchingInstance: "正在启动实例「{name}」",
+    },
+    /** 自定义主页（home.json）的运行时提示；配置入口在设置页 */
+    layout: {
+      reloaded: "布局已重新加载",
+      parseError: "布局文件有误：{error}",
+      openFailed: "打开失败：{error}",
+      goSettings: "可在「设置 → 外观 → 自定义主页」里编辑或恢复默认。",
+      copied: "已复制到剪贴板",
+      copyFailed: "复制失败",
+      dialogTitle: "提示",
+      guest: "玩家",
+      noInstanceName: "尚未选择实例",
+      launchNoInstance: "还没有可启动的实例",
+      launchNoAccount: "请先在标题栏添加账号（正版或离线）",
+      launched: "已启动 {name}",
+      unknownAction: "不支持的事件类型：{type}",
     },
   },
 };

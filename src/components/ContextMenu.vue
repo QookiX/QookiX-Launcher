@@ -130,10 +130,10 @@ onBeforeUnmount(unbind);
   min-width: 176px;
   max-width: 260px;
   padding: 5px;
-  border-radius: 11px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--bg-2);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.42);
+  box-shadow: var(--pop-shadow);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   /* 出场：从光标那一角（transform-origin 由 place() 下发）微微展开，
@@ -170,10 +170,10 @@ onBeforeUnmount(unbind);
   width: 100%;
   padding: 7px 9px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-1);
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   text-align: left;
   cursor: pointer;
@@ -199,7 +199,7 @@ onBeforeUnmount(unbind);
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .ctx-item.danger .ctx-icon {
@@ -214,7 +214,7 @@ onBeforeUnmount(unbind);
 }
 
 .ctx-key {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   opacity: 0.8;
   margin-left: 10px;

@@ -266,7 +266,7 @@ function confirmDelete() {
 .icon {
   width: 46px;
   height: 46px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: transparent;
   position: relative;
@@ -285,19 +285,19 @@ function confirmDelete() {
 }
 .name {
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-md);
   margin-bottom: 5px;
 }
 .meta {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .badge {
   background: var(--accent-16);
   color: var(--accent);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   padding: 1px 7px;
   font-weight: 600;
 }
@@ -309,10 +309,10 @@ function confirmDelete() {
   color: var(--text-3);
 }
 .state {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   padding: 3px 9px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   flex-shrink: 0;
 }
 .state.ok {
@@ -331,7 +331,7 @@ function confirmDelete() {
   padding-top: 11px;
 }
 .foot-info {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .actions {
@@ -341,7 +341,7 @@ function confirmDelete() {
 .icon-btn {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
@@ -349,17 +349,27 @@ function confirmDelete() {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 14px;
-  transition: all 0.12s;
+  font-size: var(--fs-base);
+  transition:
+    background var(--dur-xs) var(--ease-out),
+    color var(--dur-xs) var(--ease-out),
+    border-color var(--dur-xs) var(--ease-out);
 }
 .icon-btn:hover {
   background: var(--w-08);
   color: var(--text-1);
 }
+/* 启动是卡片上唯一的主动作，给实心主题色。
+   原来是 accent-soft 底 + accent 图标，和旁边两颗带描边的次要按钮放在一起时，
+   主按钮反而最"虚"，读起来像 disabled。 */
 .icon-btn.play {
-  color: var(--accent);
-  border-color: var(--accent-04);
-  background: var(--accent-soft);
+  color: var(--accent-contrast);
+  border-color: transparent;
+  background: var(--accent);
+}
+.icon-btn.play:hover:not(:disabled) {
+  color: var(--accent-contrast);
+  background: var(--accent-hover);
 }
 .icon-btn.active {
   color: var(--accent);
@@ -393,8 +403,8 @@ function confirmDelete() {
      故采用不依赖 backdrop-filter 的 var(--bg-2) 背景，保证任意主题下都可见、跟随主题 */
   background: var(--bg-2);
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 18px 40px -12px rgba(0, 0, 0, 0.55);
+  border-radius: var(--r-md);
+  box-shadow: var(--pop-shadow);
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   backdrop-filter: blur(var(--glass-blur, 8px));
 }
@@ -410,10 +420,10 @@ function confirmDelete() {
   width: 100%;
   padding: 8px 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
   text-align: left;
   white-space: nowrap;

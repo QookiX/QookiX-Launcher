@@ -198,7 +198,7 @@ async function confirm() {
     :show="props.show"
     preset="card"
     :title="t('checklist.title')"
-    style="width: 580px; max-width: 94vw"
+    style="width: 560px; max-width: 94vw"
     :mask-closable="true"
     :close-on-esc="true"
     @update:show="(v: boolean) => emit('update:show', v)"
@@ -295,7 +295,7 @@ async function confirm() {
   gap: 14px;
 }
 .ic-target {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   padding: 0 2px;
 }
@@ -303,14 +303,14 @@ async function confirm() {
   padding: 40px 0;
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .ic-row {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-04, rgba(255, 255, 255, 0.03));
 }
 .ic-main {
@@ -319,7 +319,7 @@ async function confirm() {
 .ic-icon {
   width: 36px;
   height: 36px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -334,7 +334,7 @@ async function confirm() {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -345,28 +345,28 @@ async function confirm() {
 }
 .ic-row-sub {
   margin-top: 2px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-weight: 400;
 }
 .ic-warn {
-  color: #e8a04b;
+  color: var(--warn);
 }
 .ic-tag {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 2px 7px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   line-height: 1.4;
 }
 .ic-main-tag {
-  background: rgba(76, 175, 80, 0.18);
-  color: #4caf50;
+  background: var(--success-12);
+  color: var(--success);
 }
 .ic-dep-tag {
-  background: rgba(232, 154, 75, 0.16);
-  color: #e8a04b;
+  background: var(--accent-16);
+  color: var(--accent);
 }
 .ic-installed-tag {
   background: rgba(33, 150, 243, 0.16);
@@ -378,7 +378,7 @@ async function confirm() {
   gap: 6px;
 }
 .ic-deps-head {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-2);
   padding-left: 2px;
@@ -397,7 +397,7 @@ async function confirm() {
   width: 18px;
   height: 18px;
   border: 1.5px solid var(--border);
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   cursor: pointer;
   color: #fff;
   transition: background 0.12s, border-color 0.12s;
@@ -416,7 +416,7 @@ async function confirm() {
   opacity: 1;
 }
 .ic-no-deps {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   text-align: center;
   padding: 6px 0;

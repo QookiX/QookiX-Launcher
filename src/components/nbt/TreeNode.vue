@@ -98,7 +98,7 @@ const showRawKey = computed(() => label.value !== props.node.name);
   align-items: center;
   gap: 6px;
   padding: 2px 4px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
 }
 .tn-row:hover {
   background: var(--w-04);
@@ -118,26 +118,26 @@ const showRawKey = computed(() => label.value !== props.node.name);
   background: none;
   border: none;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   cursor: pointer;
 }
 .tn-name {
   font-weight: 600;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 .tn-key {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-family: ui-monospace, Consolas, monospace;
   white-space: nowrap;
 }
 .tn-type {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .tn-value {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   max-width: 260px;
   overflow: hidden;
@@ -150,11 +150,11 @@ const showRawKey = computed(() => label.value !== props.node.name);
   background: none;
   border: none;
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   cursor: pointer;
 }
 .tn-act.danger {
   color: var(--danger);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 </style>

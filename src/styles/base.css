@@ -1,0 +1,305 @@
+/* ============================================================================
+   base.css —— 全局基线
+   重置、滚动条、应用外壳背景、页面转场、焦点环、少量通用工具类。
+   这里只放“全站都该一致”的东西；组件外观请去 components.css。
+   ========================================================================== */
+
+* {
+  box-sizing: border-box;
+}
+
+/* 声明配色方案：不写的话 Chromium/WebView2 按「浅色」渲染原生控件，
+   button / input / select 的默认 buttontext 是黑的，原生滚动条、日期控件
+   也是白的 —— 这正是「深色模式里个别按钮黑字 / 控件发白」的根因。
+   主题类由 App.vue 挂在 <html> 上，这里同步切换。 */
+:root {
+  color-scheme: dark;
+}
+:root.light {
+  color-scheme: light;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  /* 表单控件默认不继承文字颜色；给根节点一个全局基准，
+     没挂 .qx-btn 的裸按钮也会跟着主题走，而不是浏览器默认黑字。 */
+  color: var(--text-1);
+  user-select: none;
+}
+
+/* —— 应用外壳 —— */
+.app-bg {
+  position: relative;
+  background:
+    radial-gradient(700px 420px at -10% 110%, rgba(90, 162, 240, 0.08), transparent 55%),
+    linear-gradient(180deg, var(--bg-0), var(--bg-1) 55%, var(--bg-2));
+  color: var(--text-1);
+}
+
+/* 背景层 ::before：无背景图时是装饰纹理（仅首页），有图时是图片（所有页面）。
+   无图纹理（双层叠加）：
+   1. 点阵网格——26px 间距的 1px 细点，工程蓝图的秩序感颗粒；
+   2. 斜向光带——从右上划下一道极淡主题色渐变，打破点阵的均匀。
+   深浅色分别用白/黑点适配底色。其他页面无图时 ::before 留空，只剩底色渐变。 */
+.app-bg::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: var(--z-bg);
+  pointer-events: none;
+}
+.app-bg.show-texture::before {
+  background-image:
+    radial-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1.4px),
+    linear-gradient(115deg, transparent 60%, var(--accent-04) 82%, transparent 96%);
+  background-size:
+    26px 26px,
+    100% 100%;
+}
+:root.light .app-bg.show-texture::before {
+  background-image:
+    radial-gradient(rgba(0, 0, 0, 0.045) 1px, transparent 1.4px),
+    linear-gradient(115deg, transparent 60%, var(--accent-06) 82%, transparent 96%);
+}
+:root.has-bg .app-bg::before {
+  background-image: var(--bg-image, none);
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  filter: blur(var(--bg-blur, 0px));
+  transform: scale(1.08);
+}
+.app-bg::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, var(--bg-dim, 0));
+  z-index: var(--z-bg);
+  pointer-events: none;
+}
+:root.light .app-bg::after {
+  background: rgba(255, 255, 255, var(--bg-dim-light, 0));
+}
+.app-bg > * {
+  position: relative;
+  z-index: var(--z-content);
+}
+/* 动态背景画布：和图片层同一层，压在内容与暗化遮罩之下。
+   新增场景组件时把根元素类名加进这个列表，否则会被 .app-bg > * 抬到内容之上。 */
+.app-bg > :is(.island-scene, .cloud-train-scene) {
+  z-index: var(--z-bg);
+}
+:root.has-bg .content h1,
+:root.has-bg .content h3 {
+  text-shadow: 0 1px 3px var(--k-50);
+}
+:root.has-bg.light .content h1,
+:root.has-bg.light .content h3 {
+  text-shadow: 0 1px 2px rgba(255, 255, 255, 0.65);
+}
+
+/* 无背景图的深色模式：导航栏与抽屉面板加一点黑底。
+   这些悬浮岛平时用 --panel（深色无图时仅 4% 白），在深色渐变底上过于通透、
+   轮廓发虚；叠一层淡黑让导航栏与抽屉更沉得下来。有背景图时 --panel 已是半透
+   深色，无需此处理；浅色模式同理不走这里。 */
+:root:not(.light):not(.has-bg) .dock,
+:root:not(.light):not(.has-bg) .dl-drawer,
+:root:not(.light):not(.has-bg) .acct-drawer {
+  background: rgba(0, 0, 0, 0.2), var(--panel);
+}
+
+/* 深浅色切换过渡：仅在切换瞬间由脚本给 <html> 挂上 .theme-transition，
+   动画结束后立即移除，避免常驻全局 transition 影响性能与按钮 hover。 */
+.theme-transition,
+.theme-transition *,
+.theme-transition *::before,
+.theme-transition *::after {
+  transition:
+    background-color 0.28s ease,
+    border-color 0.28s ease,
+    color 0.28s ease,
+    fill 0.28s ease,
+    box-shadow 0.28s ease !important;
+  transition-delay: 0s !important;
+}
+
+/* —— 滚动条 —— */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: var(--r-sm);
+  transition: background var(--dur-sm) ease;
+}
+::-webkit-scrollbar-thumb:hover,
+::-webkit-scrollbar-thumb:active {
+  background: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* —— 玻璃面板（全站唯一实现） —— */
+.glass {
+  background: var(--panel);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+}
+/* 过渡结束后瞬间摘掉 backdrop-filter 强制 WebView2 重新采样背景 */
+.bf-reset .glass {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+/* —— 交互基线 —— */
+.clickable {
+  cursor: pointer;
+  transition: transform 0.1s ease, background var(--dur-xs) ease, border-color var(--dur-xs) ease;
+}
+.clickable:hover {
+  background: var(--panel-hover);
+  border-color: var(--accent-35);
+}
+.clickable:active {
+  transform: scale(0.97);
+}
+
+/* 表单控件不继承 color，裸 <button> 会落到 UA 的 buttontext（黑）。
+   统一继承祖先的主题文字色；带 .qx-btn / .mini-btn / n-button 等类或组件
+   样式的按钮有自己的 color 规则（优先级更高），不会被这条基线覆盖。 */
+button,
+input,
+select,
+textarea {
+  color: inherit;
+}
+
+button {
+  transition: transform 0.1s ease;
+}
+button:active {
+  transform: scale(0.96);
+}
+
+a {
+  transition: transform 0.1s ease;
+}
+a:active {
+  transform: scale(0.96);
+}
+
+/* 键盘聚焦时给一个清晰的 accent 焦点环（鼠标点击不触发 :focus-visible，不会干扰）。
+   outline 在 Chromium 下跟随 border-radius，所以圆角元素得到圆角环。 */
+button:focus-visible,
+a:focus-visible,
+.clickable:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent-50);
+  outline-offset: 2px;
+}
+
+/* 尊重用户「减少动效」系统偏好：把所有动画/过渡压到近乎瞬时。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* 全局文本选中色：用 accent 半透明底替代浏览器默认蓝，与品牌统一。 */
+::selection {
+  background: var(--accent-25);
+}
+
+/* 模态框 / 抽屉遮罩磨砂化：与全局玻璃风格统一 */
+.n-modal-mask,
+.n-drawer-mask {
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+/* —— 工具类 —— */
+.mono {
+  font-family: "Cascadia Code", Consolas, "Courier New", monospace;
+}
+.text-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— 页面转场 —— */
+.fade-enter-active {
+  transition: opacity var(--dur-sm) var(--ease-out);
+}
+.fade-leave-active {
+  transition: opacity var(--dur-xs) var(--ease-in);
+}
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
+}
+
+/* 路由切换：纯 opacity 淡入淡出（out-in），无 transform，
+   不触发合成层隔离，backdrop-filter 磨砂全程稳定。 */
+.page-fade-enter-active {
+  transition: opacity 0.2s var(--ease-out);
+}
+.page-fade-leave-active {
+  transition: opacity var(--dur-xs) var(--ease-in);
+}
+.page-fade-enter-from,
+.page-fade-leave-to {
+  opacity: 0;
+}
+
+/* 方向转场：位移轴跟导航栏排列方向一致——左右。
+   旧页面用 transform 移出（淡出中磨砂异常不可见，保性能）。
+   新页面用 position:relative + left 位移——left 触发 layout 但不创建合成层，
+   backdrop-filter 采样文档流内容全程有效（transform 会隔离合成层）。 */
+.slide-forward-leave-active,
+.slide-back-leave-active {
+  transition: opacity var(--dur-sm) var(--ease-in), transform 0.2s var(--ease-in);
+  overflow: hidden;
+}
+.slide-forward-enter-active,
+.slide-back-enter-active {
+  transition: opacity var(--dur-md) var(--ease-out), left 0.22s var(--ease-out);
+  overflow: hidden;
+  position: relative;
+  left: 0;
+}
+.slide-forward-leave-to {
+  opacity: 0;
+  transform: translateX(-32px);
+}
+.slide-forward-enter-from {
+  opacity: 0;
+  left: 32px;
+}
+.slide-back-leave-to {
+  opacity: 0;
+  transform: translateX(32px);
+}
+.slide-back-enter-from {
+  opacity: 0;
+  left: -32px;
+}
+
+.n-loading-bar-container {
+  top: 40px !important;
+}

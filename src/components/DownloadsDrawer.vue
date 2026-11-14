@@ -178,8 +178,8 @@ watch(open, (v) => {
           </button>
         </header>
 
-        <div ref="tabBox" class="tabs">
-          <div class="indicator" :style="tabIndicatorStyle"></div>
+        <div ref="tabBox" class="tabs qx-seg qx-seg--sm">
+          <div class="qx-seg__indicator" :style="tabIndicatorStyle"></div>
           <button :class="{ active: activeTab === 'active' }" @click="activeTab = 'active'">
             {{ t('downloads.tab.active') }} <span v-if="activeTasks.length" class="tab-count">{{ activeTasks.length }}</span>
           </button>
@@ -188,7 +188,7 @@ watch(open, (v) => {
           </button>
         </div>
 
-        <div v-if="!visibleTasks.length" class="empty">
+        <div v-if="!visibleTasks.length" class="qx-empty">
           <div class="empty-icon"><IconDownload /></div>
           <p>{{ activeTab === 'active' ? t('downloads.empty.noActive') : t('downloads.empty.noFinished') }}</p>
         </div>
@@ -346,8 +346,8 @@ watch(open, (v) => {
   flex-direction: column;
   padding: 14px 14px 12px;
   border: 1px solid var(--border);
-  border-radius: 18px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  border-radius: var(--r-xl);
+  box-shadow: var(--layer-shadow);
   overflow: hidden;
 }
 .dl-head {
@@ -361,7 +361,7 @@ watch(open, (v) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
   flex: 1;
@@ -383,7 +383,7 @@ watch(open, (v) => {
   border-radius: 50%;
   background: transparent;
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-base);
   cursor: pointer;
   transition: all 0.12s;
 }
@@ -412,65 +412,20 @@ watch(open, (v) => {
 .dl-drawer-slide-leave-to {
   right: -440px;
 }
-/* —— tabs —— */
+/* —— tabs：外观走全局 .qx-seg--sm，这里只留抽屉里的排布 —— */
 .tabs {
-  position: relative;
-  display: inline-flex;
-  gap: 4px;
-  padding: 4px;
-  background: var(--w-05);
-  border-radius: 10px;
   align-self: flex-start;
   flex-shrink: 0;
   margin-bottom: 12px;
 }
-.tabs .indicator {
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  border-radius: 7px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.tabs button {
-  position: relative;
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  padding: 6px 14px;
-  border-radius: 7px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.tabs button:hover {
-  color: var(--text-1);
-}
-.tabs button.active {
-  color: var(--accent);
-}
 .tab-count {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   background: var(--w-10);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   padding: 1px 7px;
   font-weight: 700;
 }
 /* —— 列表 —— */
-.empty {
-  padding: 48px 24px;
-  text-align: center;
-  color: var(--text-3);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
-}
 .empty-icon {
   font-size: 36px;
   color: var(--text-3);
@@ -520,7 +475,7 @@ watch(open, (v) => {
   flex: 1;
 }
 .task-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   margin-bottom: 6px;
   display: flex;
@@ -529,7 +484,7 @@ watch(open, (v) => {
   color: var(--text-1);
 }
 .caret {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
   margin-left: auto;
   flex-shrink: 0;
@@ -542,10 +497,10 @@ watch(open, (v) => {
   color: var(--accent);
 }
 .status {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   padding: 1px 8px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   flex-shrink: 0;
 }
 .status.run {
@@ -564,7 +519,7 @@ watch(open, (v) => {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   flex-wrap: wrap;
 }
@@ -587,10 +542,10 @@ watch(open, (v) => {
   overflow: hidden;
 }
 .pending-tag {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   padding: 0 5px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   color: var(--text-3);
   background: var(--w-08);
 }
@@ -603,13 +558,13 @@ watch(open, (v) => {
   justify-content: center;
 }
 .speed {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
 .stage {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .stage.install {
@@ -619,9 +574,9 @@ watch(open, (v) => {
 .task-error {
   background: var(--danger-10);
   border: 1px solid var(--danger-30);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--danger);
   word-break: break-all;
   user-select: text;
@@ -635,20 +590,20 @@ watch(open, (v) => {
 }
 .bar {
   height: 6px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   background: var(--w-08);
   overflow: hidden;
 }
 .fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   background: linear-gradient(90deg, var(--accent-deep), var(--accent));
   transition: width 0.3s ease;
 }
 .bar-info {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   gap: 12px;
@@ -659,7 +614,7 @@ watch(open, (v) => {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .detail-row {
   display: flex;
@@ -692,9 +647,9 @@ watch(open, (v) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 4px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--w-03);
   font-family: "Consolas", "Segoe UI Mono", monospace;
 }
@@ -709,9 +664,9 @@ watch(open, (v) => {
 }
 .file-current {
   padding: 5px 10px 6px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--accent-08);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: "Consolas", "Segoe UI Mono", monospace;
   display: flex;
   flex-direction: column;
@@ -724,12 +679,12 @@ watch(open, (v) => {
 }
 .file-mini-bar {
   height: 4px;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   background: var(--w-10);
 }
 .file-mini-fill {
   height: 100%;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   background: linear-gradient(90deg, var(--accent-deep, var(--accent)), var(--accent));
   transition: width 0.2s ease;
 }

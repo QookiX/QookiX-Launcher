@@ -104,12 +104,12 @@ onBeforeUnmount(() => {
   gap: 3px;
 }
 .cc-title {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-1);
 }
 .cc-sub {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -125,7 +125,7 @@ onBeforeUnmount(() => {
   text-align: center;
   gap: 7px;
   padding: 16px 14px 14px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   border: 1px solid var(--w-09);
   background: var(--w-04);
   cursor: pointer;
@@ -150,18 +150,18 @@ onBeforeUnmount(() => {
   place-items: center;
   width: 38px;
   height: 38px;
-  border-radius: 11px;
+  border-radius: var(--r-md);
   background: var(--accent-soft);
   color: var(--accent);
   font-size: 18px;
 }
 .cc-option-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .cc-option-hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-3);
 }
@@ -180,7 +180,7 @@ onBeforeUnmount(() => {
   gap: 12px;
 }
 .cc-remember {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 @media (max-width: 480px) {
   .cc-options {

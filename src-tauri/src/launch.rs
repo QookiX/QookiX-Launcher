@@ -1008,24 +1008,22 @@ fn build_args(ctx: &LaunchContext) -> Vec<String> {
         Some("global") | None => settings.memory_mode == "auto",
         _ => false,
     };
-    let max_mem = if auto_mode {
+    // One snapshot reused for both max and min (previously two refreshes).
+    let auto_mem = if auto_mode {
         crate::settings::available_memory_mb()
-            .map(|a| crate::settings::recommended_memory(a, mod_count).0)
-            .unwrap_or(0)
+            .map(|a| crate::settings::recommended_memory(a, mod_count))
     } else {
-        0
+        None
     };
+    let max_mem = auto_mem.map(|(max, _)| max).unwrap_or(0);
     let max_mem = if max_mem > 0 {
         max_mem
     } else {
         instance.max_memory_mb.or(Some(settings.max_memory_mb)).unwrap_or(2048).max(256)
     };
     let min_mem = settings.min_memory_mb.max(64);
-    let (min_mem, _) = if auto_mode {
-        crate::settings::available_memory_mb()
-            .map(|a| crate::settings::recommended_memory(a, mod_count))
-            .map(|(_, m)| (m, 0))
-            .unwrap_or((min_mem, 0))
+    let (min_mem, _) = if let Some((_, min)) = auto_mem {
+        (min, 0)
     } else {
         (min_mem, 0)
     };

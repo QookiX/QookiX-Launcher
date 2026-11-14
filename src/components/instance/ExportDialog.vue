@@ -217,7 +217,7 @@ function toggleCollapsed(g: ExportGroup) {
     v-model:show="show"
     preset="card"
     :title="t('exportDialog.title')"
-    style="width: 640px; max-width: 94vw"
+    style="width: 680px; max-width: 94vw"
     :mask-closable="true"
     :close-on-esc="true"
   >
@@ -367,7 +367,7 @@ function toggleCollapsed(g: ExportGroup) {
 .ex-loading {
   padding: 24px 0;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .ex-meta {
@@ -379,7 +379,7 @@ function toggleCollapsed(g: ExportGroup) {
   flex-direction: column;
   gap: 4px;
   flex: 1;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .ex-ver {
@@ -393,7 +393,7 @@ function toggleCollapsed(g: ExportGroup) {
 }
 .ex-group {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 8px 10px;
   background: var(--panel-sub, var(--w-02));
 }
@@ -406,7 +406,7 @@ function toggleCollapsed(g: ExportGroup) {
   gap: 8px;
   padding: 2px 4px;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
 }
 .ex-group-head:hover {
   background: var(--w-03);
@@ -443,7 +443,7 @@ function toggleCollapsed(g: ExportGroup) {
 .cb {
   width: 15px;
   height: 15px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   border: 1.5px solid var(--text-3);
   display: inline-flex;
   align-items: center;
@@ -485,16 +485,16 @@ function toggleCollapsed(g: ExportGroup) {
 .cb-dash {
   width: 8px;
   height: 2px;
-  border-radius: 1px;
+  border-radius: var(--r-xs);
   background: var(--accent);
 }
 .ex-group-label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .ex-group-hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .ex-group-ops {
@@ -506,7 +506,7 @@ function toggleCollapsed(g: ExportGroup) {
   background: none;
   border: none;
   padding: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--accent);
   cursor: pointer;
 }
@@ -526,11 +526,11 @@ function toggleCollapsed(g: ExportGroup) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   padding: 3px 6px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   user-select: none;
 }
 .ex-item:hover {
@@ -546,9 +546,9 @@ function toggleCollapsed(g: ExportGroup) {
 }
 .ex-badge {
   font-style: normal;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   margin-left: 4px;
   white-space: nowrap;
   vertical-align: 1px;
@@ -572,14 +572,14 @@ function toggleCollapsed(g: ExportGroup) {
 .ex-size {
   width: 62px;
   text-align: right;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }
 .ex-file {
   max-width: 42%;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -588,17 +588,17 @@ function toggleCollapsed(g: ExportGroup) {
 }
 .ex-empty {
   margin-left: 22px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .ex-required {
   margin-left: 22px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .ex-ident-progress {
   margin: 2px 0 2px 22px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -610,18 +610,18 @@ function toggleCollapsed(g: ExportGroup) {
 .ex-ident-warn {
   margin: 4px 0;
   padding: 6px 8px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.6;
   color: var(--text-3);
   background: rgba(224, 164, 75, 0.06);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
 }
 .ex-ident-warn b {
   color: var(--warn);
 }
 .ex-tip {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.7;
   color: var(--text-3);
 }
@@ -638,7 +638,7 @@ function toggleCollapsed(g: ExportGroup) {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   cursor: pointer;
 }
@@ -648,7 +648,7 @@ function toggleCollapsed(g: ExportGroup) {
 }
 .ex-adv-hint {
   margin: 0 0 2px 22px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.6;
   color: var(--text-3);
 }

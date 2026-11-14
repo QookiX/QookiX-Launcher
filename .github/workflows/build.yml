@@ -129,9 +129,25 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      # secret 为空时跳过，代码签名自动成为空操作
+      # `if` cannot read a secret or a step-level env, so resolve availability
+      # into a step output first. Otherwise the decode step was always skipped
+      # even when the certificate secret was configured.
+      - name: Check code signing certificate
+        id: signing
+        if: runner.os == 'Windows'
+        shell: bash
+        env:
+          CERT_B64: ${{ secrets.QOOKIX_CERT_PFX_B64 }}
+        run: |
+          if [ -n "$CERT_B64" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::No QOOKIX_CERT_PFX_B64 secret configured - Windows artifacts will be UNSIGNED (antivirus / SmartScreen false positives are likely)"
+          fi
+
       - name: Decode code signing certificate
-        if: runner.os == 'Windows' && env.QOOKIX_CERT_PFX_B64 != ''
+        if: runner.os == 'Windows' && steps.signing.outputs.available == 'true'
         shell: bash
         env:
           QOOKIX_CERT_PFX_B64: ${{ secrets.QOOKIX_CERT_PFX_B64 }}
@@ -149,7 +165,10 @@ jobs:
           # LittleSkin OAuth2（Yggdrasil Connect）凭证：编译期注入，回调地址 qookix://oauth/littleskin/callback
           LITTLESKIN_CLIENT_ID: ${{ secrets.LITTLESKIN_CLIENT_ID }}
           LITTLESKIN_CLIENT_SECRET: ${{ secrets.LITTLESKIN_CLIENT_SECRET }}
-          QOOKIX_CERT_PFX: ${{ runner.temp }}/qookix.pfx
+          # Only point at a pfx when one was actually decoded; an unconditional
+          # path made run-tauri.mjs think signing was enabled while the file
+          # was missing, so sign-windows.ps1 silently produced unsigned builds.
+          QOOKIX_CERT_PFX: ${{ runner.os == 'Windows' && steps.signing.outputs.available == 'true' && format('{0}/qookix.pfx', runner.temp) || '' }}
           QOOKIX_CERT_PASSWORD: ${{ secrets.QOOKIX_CERT_PASSWORD }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
@@ -265,6 +284,25 @@ jobs:
           QOOKIX_MIN_VERSION: ${{ vars.QOOKIX_MIN_VERSION || secrets.QOOKIX_MIN_VERSION }}
         run: |
           node scripts/fix-update-manifest.mjs
+
+      # Publish SHA256 for every downloadable binary. A stable, verifiable
+      # hash is what AV vendors / enterprise whitelists ask for in a false
+      # positive appeal, and lets users confirm they got the official build.
+      # Only binaries are hashed: latest.json is rewritten by the step above,
+      # so including it would produce a stale checksum.
+      - name: Publish SHA256 checksums
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          cd release
+          find . -maxdepth 1 -type f \( \
+            -name '*.exe' -o -name '*.msi' -o -name '*.zip' \
+            -o -name '*.dmg' -o -name '*.AppImage' -o -name '*.deb' \
+            -o -name '*.rpm' -o -name '*.tar.gz' \) -printf '%f\0' \
+            | sort -z | xargs -0 -r sha256sum > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          gh release upload "${GITHUB_REF_NAME}" SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
 
   # 对象存储同步已迁移到服务器（root@154.36.184.233），
   # 由 /opt/qookix-sync/sync.sh + crontab 每 10 分钟轮询 GitHub Release API

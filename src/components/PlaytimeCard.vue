@@ -58,6 +58,7 @@ function dayLabel(day: number): string {
           v-for="b in bars"
           :key="b.day"
           class="pt-bar"
+          :class="{ 'is-empty': !b.seconds }"
           :style="{ height: b.h + 'px' }"
           :title="b.title"
         ></div>
@@ -85,11 +86,10 @@ function dayLabel(day: number): string {
   align-items: center;
   gap: 32px;
   padding: 14px 20px;
-  margin-bottom: 14px;
   flex-wrap: wrap;
 }
 .pt-label {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin-bottom: 4px;
 }
@@ -97,14 +97,15 @@ function dayLabel(day: number): string {
   min-width: 110px;
 }
 .pt-value {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
   color: var(--accent);
 }
 .pt-chart {
+  /* 不设宽度上限：卡片是整行通栏的，限到 420 会在中间留出一大片空白，
+     柱子也被压成一条细线。让它吃掉剩余宽度，柱距才是正常柱状图的比例。 */
   flex: 1;
   min-width: 220px;
-  max-width: 420px;
 }
 .pt-bars {
   display: flex;
@@ -119,8 +120,15 @@ function dayLabel(day: number): string {
   flex: 1;
   min-width: 4px;
   border-radius: 2px 2px 0 0;
-  background: var(--accent-04);
-  transition: height 0.3s;
+  /* 有记录的日子用实打实可见的柱体，没记录的日子只留一条浅轨道。
+     原来统一用 --accent-04（4% 透明度），在浅色玻璃上几乎等于没画。 */
+  background: var(--accent-35);
+  transition:
+    background var(--dur-xs) var(--ease-out),
+    height var(--dur-md) var(--ease-out);
+}
+.pt-bar.is-empty {
+  background: var(--w-08);
 }
 .pt-bar:hover {
   background: var(--accent);
@@ -128,7 +136,7 @@ function dayLabel(day: number): string {
 .pt-range {
   display: flex;
   justify-content: space-between;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   /* 与柱状图拉开空隙 */
   margin-top: 6px;
@@ -145,7 +153,7 @@ function dayLabel(day: number): string {
   display: flex;
   justify-content: space-between;
   gap: 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .pt-top-name {
   color: var(--text-2);

@@ -345,7 +345,7 @@ watch(() => props.uuid, () => load(), { immediate: true });
   min-width: 280px;
 }
 .sec {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin: 6px 0;
 }
@@ -357,11 +357,11 @@ watch(() => props.uuid, () => load(), { immediate: true });
 .slot {
   position: relative;
   height: 42px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-1);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 4px 4px 2px;
   cursor: pointer;
   overflow: hidden;
@@ -388,7 +388,7 @@ watch(() => props.uuid, () => load(), { immediate: true });
   position: absolute;
   left: 3px;
   top: 1px;
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .slot-name {
@@ -412,7 +412,7 @@ watch(() => props.uuid, () => load(), { immediate: true });
   flex-direction: column;
   gap: 10px;
   padding: 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-04);
 }
 .d-head {
@@ -420,12 +420,12 @@ watch(() => props.uuid, () => load(), { immediate: true });
   flex-direction: column;
 }
 .d-title {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
 }
 .d-id,
 .d-slot {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .field {
@@ -444,22 +444,22 @@ watch(() => props.uuid, () => load(), { immediate: true });
   flex: 0 0 90px;
 }
 .field label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   font-weight: 600;
 }
 .input {
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
 }
 .input.mono {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .input.num {
   width: 72px;
@@ -476,38 +476,13 @@ watch(() => props.uuid, () => load(), { immediate: true });
   gap: 6px;
   align-items: center;
 }
-.mini-btn {
-  padding: 5px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-}
-.mini-btn.active {
-  color: var(--accent);
-  background: var(--accent-soft);
-  border-color: var(--accent-04);
-}
-.mini-btn.danger {
-  color: var(--danger);
-}
-.mini-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
 .d-actions {
   display: flex;
   gap: 8px;
   align-items: center;
 }
 .hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .ie-empty {
@@ -517,7 +492,7 @@ watch(() => props.uuid, () => load(), { immediate: true });
   align-items: center;
   justify-content: center;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .center {
   padding: 24px;

@@ -117,10 +117,10 @@ function pick(v: ProjectVersion) {
   height: 30px;
   padding: 0 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--w-04, rgba(255, 255, 255, 0.03));
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   cursor: pointer;
   max-width: 200px;
@@ -142,15 +142,15 @@ function pick(v: ProjectVersion) {
 }
 .vp-trigger-type {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   line-height: 1.4;
 }
-.vp-trigger-type.release { background: rgba(76, 175, 80, 0.18); color: #4caf50; }
-.vp-trigger-type.beta { background: rgba(232, 154, 75, 0.16); color: #e8a04b; }
-.vp-trigger-type.alpha { background: rgba(244, 67, 54, 0.16); color: #f44336; }
+.vp-trigger-type.release { background: var(--success-12); color: var(--success); }
+.vp-trigger-type.beta { background: var(--accent-16); color: var(--accent); }
+.vp-trigger-type.alpha { background: var(--danger-16); color: var(--danger); }
 .vp-caret {
   flex-shrink: 0;
   color: var(--text-3);
@@ -172,11 +172,11 @@ function pick(v: ProjectVersion) {
   border: none;
   background: transparent;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   font-family: inherit;
   padding: 4px 0;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   cursor: pointer;
   transition: background 0.12s, color 0.12s;
 }
@@ -195,10 +195,10 @@ function pick(v: ProjectVersion) {
   border: none;
   background: transparent;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   padding: 7px 8px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   text-align: left;
   transition: background 0.1s;
@@ -214,19 +214,19 @@ function pick(v: ProjectVersion) {
 }
 .vp-item-type {
   flex-shrink: 0;
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 1px 5px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   line-height: 1.4;
 }
-.vp-item-type.release { background: rgba(76, 175, 80, 0.18); color: #4caf50; }
-.vp-item-type.beta { background: rgba(232, 154, 75, 0.16); color: #e8a04b; }
-.vp-item-type.alpha { background: rgba(244, 67, 54, 0.16); color: #f44336; }
+.vp-item-type.release { background: var(--success-12); color: var(--success); }
+.vp-item-type.beta { background: var(--accent-16); color: var(--accent); }
+.vp-item-type.alpha { background: var(--danger-16); color: var(--danger); }
 .vp-empty {
   padding: 16px 0;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 </style>

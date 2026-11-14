@@ -223,21 +223,21 @@ html.light .cp-overlay {
 .cp-panel {
   width: 232px;
   padding: 14px;
-  border-radius: 16px;
+  border-radius: var(--r-xl);
   background: rgba(24, 27, 36, 0.92);
   color: var(--text-1);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.34);
+  box-shadow: var(--pop-shadow);
   border: 1px solid var(--border);
   backdrop-filter: blur(18px) saturate(1.2);
 }
 html.light .cp-panel {
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
+  box-shadow: var(--pop-shadow);
 }
 .cp-sv {
   width: 100%;
   height: 150px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   position: relative;
   cursor: crosshair;
   touch-action: none;
@@ -257,7 +257,7 @@ html.light .cp-panel {
   width: 100%;
   height: 12px;
   margin-top: 12px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: linear-gradient(
     to right,
     #f00,
@@ -278,7 +278,7 @@ html.light .cp-panel {
   top: 50%;
   width: 6px;
   height: 18px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: #fff;
   border: 1px solid rgba(0, 0, 0, 0.25);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
@@ -294,19 +294,19 @@ html.light .cp-panel {
 .cp-preview {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   flex-shrink: 0;
 }
 .cp-hex {
   flex: 1;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text-1);
   padding: 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   text-transform: lowercase;
   outline: none;

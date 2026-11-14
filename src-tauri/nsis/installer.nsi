@@ -23,6 +23,10 @@ ManifestDPIAware true
 !include "FileAssociation.nsh"
 !include "Win\COM.nsh"
 !include "Win\Propkey.nsh"
+; Required by CheckIfAppIsRunning in Tauri's generated utils.nsh. The upstream
+; Tauri template includes it; our forked template was missing it, which makes
+; makensis abort with "macro named RestartManager_StartSession not found".
+!include "Win\RestartManager.nsh"
 !include "StrFunc.nsh"
 ${StrCase}
 ${StrLoc}
@@ -122,8 +126,13 @@ InstallDir "${PLACEHOLDER_INSTALL_DIR}"
 
 VIProductVersion "${VERSIONWITHBUILD}"
 VIAddVersionKey "ProductName" "${PRODUCTNAME}"
-VIAddVersionKey "FileDescription" "${PRODUCTNAME}"
-VIAddVersionKey "LegalCopyright" "${COPYRIGHT}"
+VIAddVersionKey "FileDescription" "${PRODUCTNAME} Setup"
+VIAddVersionKey "CompanyName" "QookiX"
+VIAddVersionKey "LegalTrademarks" "QookiX"
+VIAddVersionKey "LegalCopyright" "Copyright (C) QookiX"
+VIAddVersionKey "InternalName" "QookiXSetup"
+VIAddVersionKey "OriginalFilename" "QookiX-setup.exe"
+VIAddVersionKey "Comments" "QookiX Launcher installer"
 VIAddVersionKey "FileVersion" "${VERSION}"
 VIAddVersionKey "ProductVersion" "${VERSION}"
 
@@ -279,7 +288,7 @@ Function PageReinstall
     StrCpy $R1 "$(olderOrUnknownVersionInstalled)"
     StrCpy $R2 "$(uninstallBeforeInstalling)"
     StrCpy $R3 "$(dontUninstall)"
-    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
+    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseHowToInstall)"
   ; Downgrading
   ${ElseIf} $R0 = -1
     StrCpy $R1 "$(newerVersionInstalled)"
@@ -289,7 +298,7 @@ Function PageReinstall
     !else
       StrCpy $R3 "$(dontUninstallDowngrade)"
     !endif
-    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(choowHowToInstall)"
+    !insertmacro MUI_HEADER_TEXT "$(alreadyInstalled)" "$(chooseHowToInstall)"
   ${Else}
     Abort
   ${EndIf}
@@ -529,6 +538,49 @@ Function ReportInstallerProgress
   Pop $0
 FunctionEnd
 
+; ---------------------------------------------------------------------------
+; WebView2 prerequisite check - deliberately does NOT download or run anything.
+;
+; The modern installer UI is itself a WebView2 app, so it cannot render when
+; the runtime is missing. The stock Tauri template used to fetch Microsoft's
+; bootstrapper with NSISdl and execute it silently, which makes the whole Edge
+; Update chain (services, scheduled tasks, temp cleanup, process injection)
+; appear under our installer's process tree - a textbook dropper heuristic.
+; See bundle.windows.webviewInstallMode = "skip" in tauri.conf.json.
+; ---------------------------------------------------------------------------
+Function RequireInstallerWebView2
+  Push $0
+  ; Evergreen registers in the 32-bit registry view for both machine-wide and
+  ; per-user installs. Check both views and both hives before giving up.
+  SetRegView 32
+  ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+  ${If} $0 == ""
+    ReadRegStr $0 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+  ${EndIf}
+  ${If} $0 == ""
+  ${AndIf} ${RunningX64}
+    SetRegView 64
+    ReadRegStr $0 HKLM "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+    ${If} $0 == ""
+      ReadRegStr $0 HKCU "SOFTWARE\Microsoft\EdgeUpdate\Clients\${WEBVIEW2APPGUID}" "pv"
+    ${EndIf}
+  ${EndIf}
+  ; Restore the installer's default 32-bit view explicitly instead of
+  ; "lastused" (we may have switched views twice above).
+  SetRegView 32
+  ${If} $0 != ""
+    Pop $0
+    Return
+  ${EndIf}
+  Pop $0
+  MessageBox MB_ICONEXCLAMATION|MB_OKCANCEL "QookiX Launcher requires the Microsoft Edge WebView2 Runtime, which is not installed on this computer.$\r$\n$\r$\nClick OK to open Microsoft's official download page. After installing the runtime, run this setup again." IDOK open_webview2_page IDCANCEL webview2_missing_done
+  open_webview2_page:
+    ExecShell "open" "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+  webview2_missing_done:
+  SetErrorLevel 2
+  Quit
+FunctionEnd
+
 Function .onInit
   ${GetOptions} $CMDLINE "/P" $PassiveMode
   ${IfNot} ${Errors}
@@ -603,15 +655,26 @@ Function .onInit
   ; by re-running this installer with /S and the user's choices, polling the
   ; status file for progress, then exits 0 so we quit. If it exits 2 (or cannot
   ; run at all) we fall through to the classic dark-styled wizard below.
+  ; webviewInstallMode is "skip", so neither the modern UI nor the classic
+  ; wizard can install WebView2. Check before either path, except for silent
+  ; / passive in-app updates where a dialog is not appropriate.
+  ${IfNot} ${Silent}
+  ${AndIf} $PassiveMode <> 1
+    Call RequireInstallerWebView2
+  ${EndIf}
+
   !ifdef QX_HAVE_UI
     ${IfNot} ${Silent}
     ${AndIf} $PassiveMode <> 1
-      InitPluginsDir
-      SetOutPath "$PLUGINSDIR"
-      File "/oname=$PLUGINSDIR\QookiXInstallerUI.exe" "$%QOOKIX_INSTALLER_UI%"
+      ; Keep the UI binary in a stable, product-owned directory. Dropping an
+      ; exe into a random %TEMP%\nsXXXX.tmp folder, executing it and deleting
+      ; the folder on exit is the strongest dropper heuristic. This copy is
+      ; persistent, re-used by later installs and signed like any other binary.
+      CreateDirectory "$LOCALAPPDATA\${PRODUCTNAME}\InstallerUI"
+      File "/oname=$LOCALAPPDATA\${PRODUCTNAME}\InstallerUI\QookiXInstallerUI.exe" "$%QOOKIX_INSTALLER_UI%"
       StrCpy $0 2
       ClearErrors
-      ExecWait '"$PLUGINSDIR\QookiXInstallerUI.exe" --installer "$EXEPATH" --version "${VERSION}" --install-dir "$INSTDIR" --resource-dir "$ResourceDir" --main-binary "${MAINBINARYNAME}.exe" --fresh-install "$FreshInstall" --language "$LANGUAGE"' $0
+      ExecWait '"$LOCALAPPDATA\${PRODUCTNAME}\InstallerUI\QookiXInstallerUI.exe" --installer "$EXEPATH" --version "${VERSION}" --install-dir "$INSTDIR" --resource-dir "$ResourceDir" --main-binary "${MAINBINARYNAME}.exe" --fresh-install "$FreshInstall" --language "$LANGUAGE"' $0
       ${If} $0 <> 2
         Quit
       ${EndIf}

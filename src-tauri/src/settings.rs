@@ -18,10 +18,20 @@ pub fn default_root() -> String {
 }
 
 /// Read (total, used, available) physical memory in MB with a single refresh.
-/// Uses sysinfo: used = total - available, so cache that can be reclaimed
-/// is NOT counted as "used" (more accurate than the old PowerShell approach).
+///
+/// Deliberately uses `System::new()` + `refresh_memory()` instead of
+/// `System::new_all()`: the latter is `RefreshKind::everything()`, which also
+/// enumerates every process, CPU, network adapter, disk and user account. On a
+/// cold start we called it several times, and that full sweep is exactly what
+/// AV sandboxes score as "anti-VM fingerprinting" / "process enumeration"
+/// (a process snapshot naturally contains `lsass.exe`). We only need the three
+/// numbers from `GlobalMemoryStatusEx`, so keep the syscall surface minimal.
+///
+/// used = total - available, so cache that can be reclaimed is NOT counted as
+/// "used" (more accurate than the old PowerShell approach).
 fn memory_mb() -> Option<(u64, u64, u64)> {
-    let sys = System::new_all();
+    let mut sys = System::new();
+    sys.refresh_memory();
     let total = sys.total_memory();
     let used = sys.used_memory();
     let available = sys.available_memory();
@@ -31,14 +41,11 @@ fn memory_mb() -> Option<(u64, u64, u64)> {
     Some((total / 1024 / 1024, used / 1024 / 1024, available / 1024 / 1024))
 }
 
-/// Total physical memory in MB (cross-platform, via sysinfo).
-pub fn total_memory_mb() -> Option<u64> {
-    memory_mb().map(|(t, _, _)| t)
-}
-
-/// Currently used physical memory in MB (total - available, excludes reclaimable cache).
-pub fn used_memory_mb() -> Option<u64> {
-    memory_mb().map(|(_, u, _)| u)
+/// One-shot (total, used, available) snapshot in MB.
+/// Prefer this over calling the three helpers below separately: each of them
+/// performs its own system query.
+pub fn memory_snapshot_mb() -> Option<(u64, u64, u64)> {
+    memory_mb()
 }
 
 /// Currently available physical memory in MB.
@@ -90,11 +97,11 @@ pub fn load_settings(root: &std::path::Path) -> Settings {
     if settings.data_dir.is_empty() {
         settings.data_dir = root.to_string_lossy().to_string();
     }
-    // First launch: auto-detect memory
+    // First launch: auto-detect memory with a single snapshot (previously two
+    // separate full-system refreshes).
     if fresh {
-        if let Some(total) = total_memory_mb() {
-            let avail = crate::settings::available_memory_mb().unwrap_or(total);
-            let (max, min) = recommended_memory(avail, 0);
+        if let Some((_, _, available)) = memory_mb() {
+            let (max, min) = recommended_memory(available, 0);
             settings.max_memory_mb = max;
             settings.min_memory_mb = min;
         }
@@ -294,6 +301,28 @@ pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Set
     }
     if let Some(v) = patch.get("content_mirror_custom").and_then(|v| v.as_str()) {
         settings.content_mirror_custom = v.trim().trim_end_matches('/').to_string();
+    }
+    // 背景类型白名单：未知值一律归零（= 自动：有图用图，无图渐变），
+    // 避免脏配置把前端背景切成一片空白。
+    if let Some(v) = patch.get("background_mode") {
+        settings.background_mode = match v.as_str().unwrap_or("") {
+            m @ ("gradient" | "image" | "scene") => m.to_string(),
+            _ => String::new(),
+        };
+    }
+    // 动态场景 id 白名单：未知值归零（= 默认场景），避免脏配置把背景切成空白
+    if let Some(v) = patch.get("background_scene") {
+        settings.background_scene = match v.as_str().unwrap_or("") {
+            m @ ("island" | "train") => m.to_string(),
+            _ => String::new(),
+        };
+    }
+    // 动态场景画质白名单：未知值归零（= 默认档 medium）
+    if let Some(v) = patch.get("background_quality") {
+        settings.background_quality = match v.as_str().unwrap_or("") {
+            q @ ("low" | "medium" | "high") => q.to_string(),
+            _ => String::new(),
+        };
     }
     if let Some(v) = patch.get("background_image") {
         settings.background_image = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());

@@ -36,7 +36,12 @@ const signScript = path.join(projectRoot, 'scripts', 'sign-windows.ps1')
 // Code signing is enabled only when a certificate is configured. Without it
 // every check below is skipped, so the normal dev/build flow is unaffected.
 function shouldSign() {
-  return process.platform === 'win32' && Boolean(process.env.QOOKIX_CERT_PFX)
+  if (process.platform !== 'win32') return false
+  const pfx = process.env.QOOKIX_CERT_PFX
+  // CI used to set QOOKIX_CERT_PFX to a path unconditionally, so a missing
+  // certificate looked like "signing is enabled" while sign-windows.ps1
+  // silently skipped it. Check the file itself.
+  return Boolean(pfx) && existsSync(pfx)
 }
 
 // Sign a list of files via scripts/sign-windows.ps1 (no-op unless a cert is set).
@@ -44,7 +49,13 @@ function shouldSign() {
 // arguments: Windows PowerShell 5.1's `-File` mode mangles quoted args that
 // contain spaces (e.g. "QookiX Launcher_0.2.0_x64-setup.exe").
 function signFiles(files) {
-  if (!shouldSign()) return
+  if (!shouldSign()) {
+    const pfx = process.env.QOOKIX_CERT_PFX
+    if (process.platform === 'win32' && pfx && !existsSync(pfx)) {
+      console.warn(`[run-tauri] WARNING: certificate ${pfx} is missing - build artifacts will be UNSIGNED`)
+    }
+    return
+  }
   const real = files.filter((f) => f && existsSync(f))
   if (real.length === 0) return
   const r = spawnSync(
@@ -89,6 +100,22 @@ if (existsSync(envLocal)) {
     const val = trimmed.slice(eq + 1).trim().replace(/^["']|["']$/g, '')
     if (key && val && env[key] === undefined) env[key] = val
   }
+}
+
+// `sign_updaters` runs AFTER the installer bundles are produced and requires
+// the minisign private key matching plugins.updater.pubkey. CI supplies it via
+// TAURI_SIGNING_PRIVATE_KEY; a local build does not. Generating a fresh keypair
+// is NOT a workaround: already-shipped clients only trust the published public
+// key, so a new key's .sig would fail verification. Tauri's --no-sign skips
+// exactly this step (tauri-cli/src/bundle.rs::sign_updaters), leaving the full
+// NSIS/MSI installers intact. Authenticode signing below is unaffected - it is
+// done by sign-windows.ps1, not by the Tauri CLI.
+if (isBuild && !env.TAURI_SIGNING_PRIVATE_KEY && !args.includes('--no-sign')) {
+  args.push('--no-sign')
+  console.warn(
+    '[run-tauri] WARNING: TAURI_SIGNING_PRIVATE_KEY is not set - skipping updater signature (.sig).\n' +
+      '            Installers are still built; only CI builds can be published as updater releases.',
+  )
 }
 
 const result = spawnSync('tauri', args, {

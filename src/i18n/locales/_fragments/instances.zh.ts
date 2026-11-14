@@ -1,5 +1,6 @@
 export default {
   loading: "加载中…",
+  totalItems: "共 {count} 个实例",
   filterAll: "全部",
   ungrouped: "未分组",
   importPack: "导入分享包",

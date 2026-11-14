@@ -156,8 +156,8 @@ watch(
   flex-direction: column;
   padding: 14px 14px 12px;
   border: 1px solid var(--border);
-  border-radius: 18px;
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  border-radius: var(--r-xl);
+  box-shadow: var(--layer-shadow);
   overflow: hidden;
 }
 .acct-head {
@@ -171,7 +171,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
   flex: 1;
@@ -192,7 +192,7 @@ watch(
   border-radius: 50%;
   background: transparent;
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-base);
   cursor: pointer;
   transition: all 0.12s;
 }
@@ -208,7 +208,7 @@ watch(
   overflow-y: auto;
 }
 .acct-empty {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
   padding: 12px 0;
   text-align: center;
@@ -223,7 +223,7 @@ watch(
   align-items: center;
   gap: 10px;
   padding: 8px 9px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.12s;
@@ -238,7 +238,7 @@ watch(
 .acct-avatar {
   width: 34px;
   height: 34px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   image-rendering: pixelated;
   background: var(--w-06);
   flex-shrink: 0;
@@ -258,14 +258,14 @@ watch(
   gap: 2px;
 }
 .acct-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .acct-type {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   font-weight: 600;
   align-self: flex-start;
 }
@@ -283,7 +283,7 @@ watch(
 }
 .acct-check {
   color: var(--accent);
-  font-size: 15px;
+  font-size: var(--fs-md);
   flex-shrink: 0;
 }
 .acct-remove {
@@ -292,12 +292,12 @@ watch(
   border: none;
   background: transparent;
   color: var(--text-3);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   opacity: 0;
   transition: all 0.12s;
 }
@@ -323,9 +323,9 @@ watch(
   border: 1px solid var(--accent-45);
   background: var(--accent-14);
   color: var(--accent);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 10px 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;

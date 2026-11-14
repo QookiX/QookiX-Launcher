@@ -140,10 +140,10 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 40px 56px;
   max-width: 520px;
-  border-radius: 18px;
+  border-radius: var(--r-xl);
   border: 2px dashed var(--accent);
   background: color-mix(in srgb, var(--feat-solid) 92%, transparent);
-  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--pop-shadow);
   color: var(--text-1);
   text-align: center;
 }
@@ -163,7 +163,7 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 .drop-name {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--accent);
   max-width: 100%;
@@ -172,7 +172,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .drop-desc {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .drop-fade-enter-active,

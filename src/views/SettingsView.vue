@@ -4,7 +4,8 @@ import { fmtMem, fmtSize, fmtTime } from "../utils/format";
 import { cacheClearPrefix } from "../utils/cache";
 import { useFavoritesStore } from "../stores/favorites";
 import { NModal, NSelect, NSlider, NTooltip, NInput, useMessage, useDialog } from "naive-ui";
-import { openUrl } from "@tauri-apps/plugin-opener";
+// openPath 与下面「打开数据目录」的 openPath() 同名，取别名避免冲突
+import { openPath as openSystemPath, openUrl } from "@tauri-apps/plugin-opener";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { relaunch } from "@tauri-apps/plugin-process";
@@ -16,6 +17,13 @@ import { api } from "../api";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import { openDownloadsDrawer } from "../composables/useDownloadsDrawer";
 import { useOnboarding } from "../composables/useOnboarding";
+import { useHomeLayout } from "../home/useHomeLayout";
+import { BACKGROUND_SCENES, resolveScene } from "../components/background/scenes";
+import {
+  BG_QUALITIES,
+  resolveQuality,
+  type BgQualityId,
+} from "../components/background/quality";
 import {
   IconCpu,
   IconDownload,
@@ -57,7 +65,16 @@ import { shimuErrorMessage, useShimuStore } from "../stores/shimu";
 import { qookixErrorMessage, useQookixStore } from "../stores/qookix";
 // 版本号唯一来源：package.json（发布时由 npm run version 同步）
 import { version as appVersion } from "../../package.json";
-import { titlebarThemeToggle } from "../composables/useDevFlags";
+import {
+  allowDevTools,
+  setAllowDevTools,
+  titlebarThemeToggle,
+  devMode,
+  setDevMode as setDevModeFlag,
+  frpEnabled,
+  setFrpEnabled,
+  showFrpFeatures,
+} from "../composables/useDevFlags";
 
 const settings = useSettingsStore();
 const accounts = useAccountsStore();
@@ -299,7 +316,7 @@ async function logoutQookix() {
 
 /**
  * 微软登录用的 OAuth Client ID：正式包由 CI 的 `MS_CLIENT_ID` 编译期注入
- * （`option_env!`），开发构建没带就只能在这里临时填一个，写进本地设置。
+ * （`option_env!`），开发构建没带就只能在「开发者工具」页临时填一个，写进本地设置。
  */
 const showMsClientId = import.meta.env.DEV;
 const msClientIdDraft = ref("");
@@ -315,13 +332,13 @@ watch(
 async function saveMsClientId() {
   const v = msClientIdDraft.value.trim();
   if (!v) {
-    message.warning("先填一个 Client ID");
+    message.warning(t("settings.dev.msCidEmpty"));
     return;
   }
   msClientIdSaving.value = true;
   try {
     await settings.patch({ ms_client_id: v });
-    message.success("已保存，现在可以登录微软账号了");
+    message.success(t("settings.dev.msCidSaved"));
   } catch (e) {
     message.error(String(e));
   } finally {
@@ -382,9 +399,17 @@ const updateModalVisible = ref(false);
 const changelogReleases = ref<ChangelogRelease[]>([]);
 const changelogLoading = ref(true);
 const expandedVersions = ref<Set<string>>(new Set());
-const devMode = ref(false);
+/**
+ * 退出开发者模式时侧栏不再有「开发者」，把还停在该面板的视图切回「关于」。
+ * 状态本身存在 useDevFlags（跨页共享），内网穿透的可见性也依赖它。
+ */
 let brandClickCount = 0;
 let brandClickTimer: ReturnType<typeof setTimeout> | null = null;
+
+function setDevMode(value: boolean) {
+  setDevModeFlag(value);
+  if (!value && tab.value === "dev") tab.value = "about";
+}
 
 function onBrandClick() {
   brandClickCount++;
@@ -392,8 +417,9 @@ function onBrandClick() {
   brandClickTimer = setTimeout(() => { brandClickCount = 0; }, 1500);
   if (brandClickCount >= 7) {
     brandClickCount = 0;
-    devMode.value = !devMode.value;
-    message.info(devMode.value ? t("settings.dev.enabled") : t("settings.dev.disabled"));
+    const next = !devMode.value;
+    setDevMode(next);
+    message.info(next ? t("settings.dev.enabled") : t("settings.dev.disabled"));
   }
 }
 
@@ -435,8 +461,8 @@ async function saveDevLsCredentials() {
   }
 }
 
-// 进入开发者模式时拉一次凭证回填
-watch(devMode, (on) => { if (on) void loadDevCredentials(); });
+// 进入开发者模式时拉一次凭证回填；immediate 覆盖「上次已持久化开启」的情况
+watch(devMode, (on) => { if (on) void loadDevCredentials(); }, { immediate: true });
 
 /**
  * 「检查更新」弹窗里展示的更新内容：当前版本 → 最新版本之间跨过的所有版本
@@ -802,9 +828,14 @@ const tab = ref("general");
  */
 function refreshCurrentPaneIndicators() {
   const val = tab.value;
+  if (val === "general") refreshCloseSeg();
   if (val === "appearance") {
     refreshThemeSeg();
     refreshLangSeg();
+    // 背景这两套 seg 在首次挂载时正被 v-show 藏在外观页里（量到 0×0），
+    // 画质那套还只在「动态场景」分支渲染，所以必须跟着面板一起补测。
+    refreshBgModeSeg();
+    refreshBgQualitySeg();
   }
   if (val === "java") refreshMemModeSeg();
   if (val === "about") refreshUpdateSourceSeg();
@@ -869,6 +900,7 @@ const settingItemsDef: { id: string; cardId: string; tab: string; labelKey: stri
   { id: "a-iface-nav-skins", cardId: "appearance-interface", tab: "appearance", labelKey: "settings.appearance.nav.skins", cardTitleKey: "settings.appearance.interface" },
   { id: "a-iface-nav-toolbox", cardId: "appearance-interface", tab: "appearance", labelKey: "settings.appearance.nav.toolbox", cardTitleKey: "settings.appearance.interface" },
   { id: "a-iface-nav-timemachine", cardId: "appearance-interface", tab: "appearance", labelKey: "settings.appearance.nav.timemachine", cardTitleKey: "settings.appearance.interface" },
+  { id: "a-home-layout", cardId: "appearance-home-layout", tab: "appearance", labelKey: "settings.appearance.homeLayout.title", cardTitleKey: "settings.appearance.homeLayout.title" },
   { id: "a-bg", cardId: "appearance-background", tab: "appearance", labelKey: "settings.appearance.background", cardTitleKey: "settings.appearance.background" },
   { id: "a-bg-blur", cardId: "appearance-background", tab: "appearance", labelKey: "settings.appearance.backgroundBlur", cardTitleKey: "settings.appearance.background" },
   { id: "a-bg-dim", cardId: "appearance-background", tab: "appearance", labelKey: "settings.appearance.backgroundDim", cardTitleKey: "settings.appearance.background" },
@@ -1013,6 +1045,52 @@ const aboutDeps: Record<
     { name: "cubiomes", version: "", license: "MIT", url: "https://github.com/Cubitect/cubiomes", licenseUrl: "https://github.com/Cubitect/cubiomes/blob/master/LICENSE" },
   ],
 };
+
+// ---- 自定义主页（home.json）----
+// 与首页共用同一份状态：这里改开关 / 重载文件，首页立刻跟着变。
+const {
+  enabled: homeLayoutEnabled,
+  path: homeLayoutPath,
+  error: homeLayoutError,
+  loading: homeLayoutLoading,
+  showRecent: homeShowRecent,
+  setEnabled: setHomeLayoutEnabled,
+  setShowRecent: setHomeShowRecent,
+  ensureLoaded: ensureHomeLayout,
+  reload: reloadHomeLayoutState,
+  reset: resetHomeLayoutState,
+} = useHomeLayout();
+
+async function editHomeLayoutFile() {
+  if (!homeLayoutPath.value) return;
+  try {
+    await openSystemPath(homeLayoutPath.value);
+  } catch (e) {
+    message.error(t("home.layout.openFailed", { error: String(e) }));
+  }
+}
+
+async function reloadHomeLayout() {
+  if (await reloadHomeLayoutState()) message.success(t("home.layout.reloaded"));
+  else message.error(t("home.layout.parseError", { error: homeLayoutError.value }));
+}
+
+/** 删除 home.json 并重新生成模板：有代价，必须二次确认 */
+function resetHomeLayout() {
+  dialog.warning({
+    title: t("settings.appearance.homeLayout.resetTitle"),
+    content: t("settings.appearance.homeLayout.resetConfirm"),
+    positiveText: t("common.confirm"),
+    negativeText: t("common.cancel"),
+    onPositiveClick: async () => {
+      if (await resetHomeLayoutState()) {
+        message.success(t("settings.appearance.homeLayout.resetDone"));
+      } else {
+        message.error(t("home.layout.parseError", { error: homeLayoutError.value }));
+      }
+    },
+  });
+}
 
 // ---- 内容翻译 ----
 const translateOptions = computed(() => [
@@ -1185,6 +1263,67 @@ const bgPreviewUrl = computed(() => {
   return p ? convertFileSrc(p) : "";
 });
 
+// —— 背景类型：渐变 / 图片 / 3D 动态场景 ——
+// 后端 background_mode 为空串表示「自动」（老配置没有该字段）：有图用图，无图渐变。
+const BG_MODES = ["gradient", "image", "scene"] as const;
+type BgMode = (typeof BG_MODES)[number];
+const bgMode = computed<BgMode>(() => {
+  const s = settings.settings;
+  if (!s) return "gradient";
+  const m = s.background_mode;
+  if (m === "gradient" || m === "image" || m === "scene") return m;
+  return s.background_image ? "image" : "gradient";
+});
+const bgModeSegRef = ref<HTMLElement | null>(null);
+const { indicatorStyle: bgModeSegStyle, refresh: refreshBgModeSeg } = useSlidingIndicator(
+  bgModeSegRef,
+  () => Array.from(bgModeSegRef.value?.querySelectorAll<HTMLElement>(".seg button") ?? []),
+  () => Math.max(0, BG_MODES.indexOf(bgMode.value)),
+  { axis: "horizontal" }
+);
+// 换模式会重排卡片（图片模式多出预览、场景模式才渲染场景网格与画质行），
+// 两个 seg 都要重新量：画质那套此前可能根本不在 DOM 里。
+watch(bgMode, () =>
+  nextTick(() => {
+    refreshBgModeSeg();
+    refreshBgQualitySeg();
+  })
+);
+
+// 当前动态场景 id（空值回落默认）；场景清单来自 scenes.ts，新增场景不用改这里
+const bgScene = computed(() => resolveScene(settings.settings?.background_scene).id);
+async function setBgScene(id: string) {
+  await settings.patch({ background_scene: id });
+}
+
+// 动态场景画质档（空值回落均衡档）
+const bgQualityId = computed(() => resolveQuality(settings.settings?.background_quality).id);
+const bgQualitySegRef = ref<HTMLElement | null>(null);
+const { indicatorStyle: bgQualitySegStyle, refresh: refreshBgQualitySeg } = useSlidingIndicator(
+  bgQualitySegRef,
+  () => Array.from(bgQualitySegRef.value?.querySelectorAll<HTMLElement>(".seg button") ?? []),
+  () => Math.max(0, BG_QUALITIES.findIndex((item) => item.id === bgQualityId.value)),
+  { axis: "horizontal" }
+);
+watch(bgQualityId, () => nextTick(() => refreshBgQualitySeg()));
+async function setBgQuality(id: BgQualityId) {
+  await settings.patch({ background_quality: id });
+}
+
+async function setBgMode(mode: BgMode) {
+  // 选「图片」但还没选过图时直接把选择框弹出来，否则点了没有任何反应
+  if (mode === "image" && !settings.settings?.background_image) {
+    await pickBackground();
+    if (!settings.settings?.background_image) return;
+  }
+  await settings.patch({ background_mode: mode });
+}
+
+function clearBackgroundImage() {
+  // 图没了还留在图片模式会只剩底色，顺手退回渐变
+  settings.patch({ background_image: null, background_mode: "gradient" });
+}
+
 // 数据目录迁移
 const migrating = ref(false);
 const migrateModal = ref(false);
@@ -1322,6 +1461,7 @@ onMounted(() => {
   settings.loadJava().then((c) => (javaCandidates.value = c));
   startPolling();
   loadStats();
+  void ensureHomeLayout();
 });
 onUnmounted(() => {
   stopPolling();
@@ -1406,8 +1546,8 @@ onUnmounted(() => {
             <h3>{{ t("settings.general.behavior") }}</h3>
             <div class="choice-row">
               <span>{{ t("settings.general.closeWindow") }}</span>
-              <div ref="closeSegRef" class="seg">
-                <div class="indicator" :style="closeSegStyle"></div>
+              <div ref="closeSegRef" class="seg qx-seg qx-seg--sm">
+                <div class="qx-seg__indicator" :style="closeSegStyle"></div>
                 <button
                   :class="{ active: settings.settings.close_behavior === 'ask' }"
                   @click="settings.patch({ close_behavior: 'ask' })"
@@ -1467,8 +1607,8 @@ onUnmounted(() => {
           <h3>{{ t("settings.theme.label") }}</h3>
           <div class="choice-row">
             <span>{{ t("settings.theme.label") }}</span>
-            <div ref="themeSegRef" class="seg">
-              <div class="indicator" :style="themeSegStyle"></div>
+            <div ref="themeSegRef" class="seg qx-seg qx-seg--sm">
+              <div class="qx-seg__indicator" :style="themeSegStyle"></div>
               <button
                 :class="{ active: settings.settings.theme === 'dark' }"
                 @click="settings.patch({ theme: 'dark' })"
@@ -1523,8 +1663,8 @@ onUnmounted(() => {
               <span class="choice-label">{{ t("settings.language.label") }}</span>
               <p class="choice-hint">{{ t("settings.language.desc") }}</p>
             </div>
-            <div ref="langSegRef" class="seg lang-seg">
-              <div class="indicator" :style="langSegStyle"></div>
+            <div ref="langSegRef" class="seg lang-seg qx-seg qx-seg--sm">
+              <div class="qx-seg__indicator" :style="langSegStyle"></div>
               <button
                 v-for="l in SUPPORTED_LOCALES"
                 :key="l.value"
@@ -1570,50 +1710,209 @@ onUnmounted(() => {
             </button>
           </div>
         </div>
+
+        <div class="card glass" id="appearance-home-layout">
+          <h3>{{ t("settings.appearance.homeLayout.title") }}</h3>
+          <div class="choice-row">
+            <div class="choice-info">
+              <span class="choice-label">{{ t("settings.appearance.homeLayout.recent") }}</span>
+              <p class="choice-hint">{{ t("settings.appearance.homeLayout.recentHint") }}</p>
+            </div>
+            <button
+              class="toggle"
+              :class="{ on: homeShowRecent }"
+              role="switch"
+              :aria-checked="homeShowRecent"
+              @click="setHomeShowRecent(!homeShowRecent)"
+            >
+              <span class="knob"></span>
+            </button>
+          </div>
+          <div class="appearance-divider"></div>
+          <div class="choice-row">
+            <div class="choice-info">
+              <span class="choice-label">{{ t("settings.appearance.homeLayout.enable") }}</span>
+              <p class="choice-hint">{{ t("settings.appearance.homeLayout.enableHint") }}</p>
+            </div>
+            <button
+              class="toggle"
+              :class="{ on: homeLayoutEnabled }"
+              role="switch"
+              :aria-checked="homeLayoutEnabled"
+              @click="setHomeLayoutEnabled(!homeLayoutEnabled)"
+            >
+              <span class="knob"></span>
+            </button>
+          </div>
+          <div class="appearance-divider"></div>
+          <div class="dir-row">
+            <code class="mono dir">{{ homeLayoutPath || "home.json" }}</code>
+          </div>
+          <div class="settings-actions">
+            <button class="qx-btn qx-btn--sm" :disabled="!homeLayoutPath" @click="editHomeLayoutFile">
+              <IconExternal /> {{ t("settings.appearance.homeLayout.edit") }}
+            </button>
+            <button class="qx-btn qx-btn--sm" :disabled="homeLayoutLoading" @click="reloadHomeLayout">
+              <IconRefresh /> {{ t("settings.appearance.homeLayout.reload") }}
+            </button>
+            <button class="qx-btn qx-btn--sm qx-btn--danger" :disabled="homeLayoutLoading" @click="resetHomeLayout">
+              {{ t("settings.appearance.homeLayout.reset") }}
+            </button>
+          </div>
+          <div v-if="homeLayoutError" class="qx-hint qx-hint--red home-layout-error">
+            {{ t("home.layout.parseError", { error: homeLayoutError }) }}
+          </div>
+          <p class="hint">{{ t("settings.appearance.homeLayout.fileHint") }}</p>
+        </div>
+
         <div class="card glass" id="appearance-background">
           <h3>{{ t("settings.appearance.background") }}</h3>
-          <div v-if="settings.settings.background_image" class="bg-preview">
-            <img :src="bgPreviewUrl" :alt="t('settings.appearance.backgroundPreview')" />
-          </div>
-          <div class="choice-row">
-            <span>{{ t("settings.appearance.background") }}</span>
-            <div class="bg-actions">
-              <button class="mini-btn" @click="pickBackground">{{ t("settings.appearance.selectImage") }}</button>
+          <div class="bg-mode-row">
+            <div ref="bgModeSegRef" class="seg qx-seg qx-seg--sm">
+              <div class="qx-seg__indicator" :style="bgModeSegStyle"></div>
               <button
-                v-if="settings.settings.background_image"
-                class="mini-btn"
-                @click="settings.patch({ background_image: null })"
+                :class="{ active: bgMode === 'gradient' }"
+                @click="setBgMode('gradient')"
               >
-                {{ t("settings.appearance.clear") }}
+                {{ t("settings.appearance.bgGradient") }}
+              </button>
+              <button :class="{ active: bgMode === 'image' }" @click="setBgMode('image')">
+                {{ t("settings.appearance.bgImage") }}
+              </button>
+              <button :class="{ active: bgMode === 'scene' }" @click="setBgMode('scene')">
+                {{ t("settings.appearance.bgScene") }}
               </button>
             </div>
           </div>
-          <div v-if="settings.settings.background_image" class="tune-block">
-            <div class="tune-row">
-              <label>{{ t("settings.appearance.backgroundBlur") }}</label>
-              <NSlider
-                v-model:value="settings.settings.background_blur"
-                class="tune-slider"
-                :min="0"
-                :max="50"
-                :step="1"
-                :tooltip="false"
-              />
-              <span class="tune-val">{{ settings.settings.background_blur }} px</span>
+
+          <!-- 图片模式 -->
+          <template v-if="bgMode === 'image'">
+            <div v-if="settings.settings.background_image" class="bg-preview">
+              <img :src="bgPreviewUrl" :alt="t('settings.appearance.backgroundPreview')" />
             </div>
-            <div class="tune-row">
-              <label>{{ t("settings.appearance.backgroundDim") }}</label>
-              <NSlider
-                v-model:value="settings.settings.background_dim"
-                class="tune-slider"
-                :min="0"
-                :max="100"
-                :step="5"
-                :tooltip="false"
-              />
-              <span class="tune-val">{{ settings.settings.background_dim }}%</span>
+            <div class="choice-row">
+              <span class="hint-inline">
+                {{
+                  settings.settings.background_image
+                    ? t("settings.appearance.imageSelected")
+                    : t("settings.appearance.imageNone")
+                }}
+              </span>
+              <div class="bg-actions">
+                <button class="mini-btn" @click="pickBackground">
+                  {{
+                    settings.settings.background_image
+                      ? t("settings.appearance.changeImage")
+                      : t("settings.appearance.selectImage")
+                  }}
+                </button>
+                <button
+                  v-if="settings.settings.background_image"
+                  class="mini-btn"
+                  @click="clearBackgroundImage"
+                >
+                  {{ t("settings.appearance.clear") }}
+                </button>
+              </div>
             </div>
-          </div>
+            <div v-if="settings.settings.background_image" class="tune-block">
+              <div class="tune-row">
+                <label>{{ t("settings.appearance.backgroundBlur") }}</label>
+                <NSlider
+                  v-model:value="settings.settings.background_blur"
+                  class="tune-slider"
+                  :min="0"
+                  :max="50"
+                  :step="1"
+                  :tooltip="false"
+                />
+                <span class="tune-val">{{ settings.settings.background_blur }} px</span>
+              </div>
+              <div class="tune-row">
+                <label>{{ t("settings.appearance.backgroundDim") }}</label>
+                <NSlider
+                  v-model:value="settings.settings.background_dim"
+                  class="tune-slider"
+                  :min="0"
+                  :max="100"
+                  :step="5"
+                  :tooltip="false"
+                />
+                <span class="tune-val">{{ settings.settings.background_dim }}%</span>
+              </div>
+            </div>
+          </template>
+
+          <!-- 动态场景模式：先选场景，再调遮罩 -->
+          <template v-else-if="bgMode === 'scene'">
+            <div class="scene-grid" role="radiogroup" :aria-label="t('settings.appearance.bgScene')">
+              <button
+                v-for="s in BACKGROUND_SCENES"
+                :key="s.id"
+                type="button"
+                role="radio"
+                :aria-checked="bgScene === s.id"
+                class="scene-card"
+                :class="{ active: bgScene === s.id }"
+                @click="setBgScene(s.id)"
+              >
+                <!-- 缩略图是手绘剪影，不跑真实渲染：开设置页就为几张预览图初始化 WebGL 不划算 -->
+                <span class="scene-thumb" :class="`scene-thumb--${s.thumb}`">
+                  <svg v-if="s.thumb === 'island'" viewBox="0 0 128 72" aria-hidden="true">
+                    <circle class="sc-sun" cx="96" cy="25" r="10" />
+                    <rect class="sc-sea" y="46" width="128" height="26" />
+                    <path class="sc-land" d="M26 47c9-17 18-23 26-23s18 9 27 23z" />
+                    <path class="sc-tree" d="M86 47l5-10 5 10z" />
+                  </svg>
+                  <svg v-else viewBox="0 0 128 72" aria-hidden="true">
+                    <circle class="sc-sun sc-sun--warm" cx="34" cy="27" r="9" />
+                    <path class="sc-cloud" d="M74 26c4-7 13-7 16 0 5-1 9 2 9 6H66c0-4 4-6 8-6z" />
+                    <path class="sc-cloud sc-cloud--far" d="M16 41c4-6 12-6 15 0 5-1 8 2 8 5H8c0-4 4-5 8-5z" />
+                    <path class="sc-tower" d="M22 26h3v21h-3zM103 26h3v21h-3z" />
+                    <path class="sc-cable" d="M23.5 27c18 11 63 11 81 0" fill="none" />
+                    <rect class="sc-deck" y="46" width="128" height="2.4" />
+                    <rect class="sc-train" x="50" y="39" width="27" height="6.4" rx="1" />
+                  </svg>
+                </span>
+                <span class="scene-meta">
+                  <span class="scene-label">{{ t(s.labelKey) }}</span>
+                  <span class="scene-desc">{{ t(s.descKey) }}</span>
+                </span>
+              </button>
+            </div>
+            <div class="tune-block">
+              <div class="tune-row">
+                <label>{{ t("settings.appearance.backgroundDim") }}</label>
+                <NSlider
+                  v-model:value="settings.settings.background_dim"
+                  class="tune-slider"
+                  :min="0"
+                  :max="100"
+                  :step="5"
+                  :tooltip="false"
+                />
+                <span class="tune-val">{{ settings.settings.background_dim }}%</span>
+              </div>
+              <div class="tune-row">
+                <label>{{ t("settings.appearance.bgQuality") }}</label>
+                <div ref="bgQualitySegRef" class="seg qx-seg qx-seg--sm bg-quality-seg">
+                  <div class="qx-seg__indicator" :style="bgQualitySegStyle"></div>
+                  <button
+                    v-for="item in BG_QUALITIES"
+                    :key="item.id"
+                    :class="{ active: bgQualityId === item.id }"
+                    @click="setBgQuality(item.id)"
+                  >
+                    {{ t(item.labelKey) }}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <p class="hint">{{ t("settings.appearance.bgQualityHint") }}</p>
+            <p class="hint">{{ t("settings.appearance.bgSceneHint") }}</p>
+          </template>
+
+          <p v-else class="hint">{{ t("settings.appearance.bgGradientHint") }}</p>
         </div>
         <div class="card glass" id="appearance-glass">
           <h3>{{ t("settings.appearance.glassCard") }}</h3>
@@ -1657,8 +1956,8 @@ onUnmounted(() => {
           <div class="card glass" id="java-memory">
             <h3>{{ t("settings.java.memory") }}</h3>
             <div class="mem-mode-row">
-              <div ref="memModeSegRef" class="seg">
-                <div class="indicator" :style="memModeSegStyle"></div>
+              <div ref="memModeSegRef" class="seg qx-seg qx-seg--sm">
+                <div class="qx-seg__indicator" :style="memModeSegStyle"></div>
                 <button
                   :class="{ active: settings.settings.memory_mode === 'auto' }"
                   @click="selectMemoryMode('auto')"
@@ -1918,8 +2217,8 @@ onUnmounted(() => {
           <div class="card glass" id="content-proxy">
             <h3>{{ t("settings.content.proxy") }}</h3>
             <div class="proxy-row">
-              <div ref="proxyModeSegRef" class="seg">
-                <div class="indicator" :style="proxyModeSegStyle"></div>
+              <div ref="proxyModeSegRef" class="seg qx-seg qx-seg--sm">
+                <div class="qx-seg__indicator" :style="proxyModeSegStyle"></div>
                 <button
                   v-for="m in proxyModes"
                   :key="m.id"
@@ -2058,27 +2357,6 @@ onUnmounted(() => {
       <!-- 账号 -->
       <div v-show="tab === 'accounts'" class="settings-pane">
         <div class="grid storage-grid">
-          <!-- 只出现在开发构建：微软登录需要的 OAuth Client ID（正式包由 CI 编译期注入） -->
-          <div v-if="showMsClientId" class="card glass storage-card">
-            <div class="storage-header">
-              <h3>Microsoft Client ID（开发）</h3>
-            </div>
-            <div class="ms-cid-row">
-              <input
-                v-model="msClientIdDraft"
-                class="ms-cid-input"
-                placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
-                spellcheck="false"
-              />
-              <button class="mini-btn primary" :disabled="msClientIdSaving" @click="saveMsClientId">
-                保存
-              </button>
-            </div>
-            <p class="hint">
-              只写进本地设置，不会打进发布包。正式包由 CI 的 MS_CLIENT_ID 编译期注入。
-            </p>
-          </div>
-
           <div class="card glass storage-card" id="accounts-thirdparty">
             <div class="storage-header">
               <h3>{{ t("settings.accounts.thirdParty") }}</h3>
@@ -2234,8 +2512,9 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <!-- 内网穿透（frp）：第三方面板，用于把本机端口映射到公网 -->
-              <div class="acct-row">
+              <!-- 内网穿透（frp）：第三方面板，用于把本机端口映射到公网。
+                   默认隐藏，只有开发者模式里打开「显示内网穿透」后才出现 -->
+              <div v-if="showFrpFeatures" class="acct-row">
                 <div class="acct-avatar acct-avatar-ph">
                   <IconGlobe v-if="false" />
                   {{ "穿" }}
@@ -2439,8 +2718,8 @@ onUnmounted(() => {
                 <span class="choice-label">{{ t("settings.about.updateSource") }}</span>
                 <p class="choice-hint">{{ t("settings.about.updateSourceHint") }}</p>
               </div>
-              <div ref="updateSourceSegRef" class="seg">
-                <div class="indicator" :style="updateSourceSegStyle"></div>
+              <div ref="updateSourceSegRef" class="seg qx-seg qx-seg--sm">
+                <div class="qx-seg__indicator" :style="updateSourceSegStyle"></div>
                 <button
                   :class="{ active: settings.settings.update_source !== 'github' }"
                   @click="settings.patch({ update_source: 'bucket' })"
@@ -2592,42 +2871,106 @@ onUnmounted(() => {
           </div>
         </div>
       </div>
-      <!-- 开发者 -->
+      <!-- 开发者：结构 / 组件类与其余设置页保持一致 -->
       <div v-show="tab === 'dev'" class="settings-pane">
-        <div class="card glass dev-pane-card">
-          <h3>{{ t("settings.dev.title") }}</h3>
-          <div class="dev-tools">
-            <button class="mini-btn primary" @click="testUpdateModal">{{ t("settings.dev.testUpdateModal") }}</button>
-            <button class="mini-btn" @click="loadChangelog">{{ t("settings.dev.reloadChangelog") }}</button>
-            <button class="mini-btn" @click="devMode = false">{{ t("settings.dev.exit") }}</button>
+        <div class="grid storage-grid">
+          <div class="card glass" id="dev-tools">
+            <h3>
+              {{ t("settings.dev.title") }}
+              <span class="qx-badge qx-badge--danger">{{ t("settings.dev.modeBadge") }}</span>
+            </h3>
+            <div class="qx-hint qx-hint--red dev-mode-warning">
+              <div class="dev-mode-warning__text">
+                <strong>{{ t("settings.dev.warningTitle") }}</strong>
+                <span>{{ t("settings.dev.warningBody") }}</span>
+              </div>
+            </div>
+            <div class="settings-actions">
+              <button class="qx-btn qx-btn--sm" @click="testUpdateModal">{{ t("settings.dev.testUpdateModal") }}</button>
+              <button class="qx-btn qx-btn--sm" @click="loadChangelog">{{ t("settings.dev.reloadChangelog") }}</button>
+              <button class="qx-btn qx-btn--sm qx-btn--danger" @click="setDevMode(false)">{{ t("settings.dev.exit") }}</button>
+            </div>
+            <div class="appearance-divider"></div>
+            <div class="choice-row">
+              <div class="choice-info">
+                <span class="choice-label">{{ t("settings.dev.titlebarThemeToggle") }}</span>
+              </div>
+              <button
+                class="toggle"
+                :class="{ on: titlebarThemeToggle }"
+                role="switch"
+                :aria-checked="titlebarThemeToggle"
+                @click="titlebarThemeToggle = !titlebarThemeToggle"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
+            <div class="choice-row">
+              <div class="choice-info">
+                <span class="choice-label">{{ t("settings.dev.allowDevTools") }}</span>
+                <p class="choice-hint">{{ t("settings.dev.allowDevToolsHint") }}</p>
+              </div>
+              <button
+                class="toggle"
+                :class="{ on: allowDevTools }"
+                role="switch"
+                :aria-checked="allowDevTools"
+                @click="setAllowDevTools(!allowDevTools)"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
+            <div class="choice-row">
+              <div class="choice-info">
+                <span class="choice-label">{{ t("settings.dev.showFrp") }}</span>
+                <p class="choice-hint">{{ t("settings.dev.showFrpHint") }}</p>
+              </div>
+              <button
+                class="toggle"
+                :class="{ on: frpEnabled }"
+                role="switch"
+                :aria-checked="frpEnabled"
+                @click="setFrpEnabled(!frpEnabled)"
+              >
+                <span class="knob"></span>
+              </button>
+            </div>
           </div>
-          <div class="dev-section">
-            <span class="dev-section-label">{{ t("settings.dev.titlebarThemeToggle") }}</span>
-            <button class="mini-btn" :class="{ primary: titlebarThemeToggle }" @click="titlebarThemeToggle = !titlebarThemeToggle">
-              {{ titlebarThemeToggle ? t("common.on") : t("common.off") }}
-            </button>
+
+          <!-- 微软登录 OAuth Client ID（仅开发构建；正式包由 CI 注入） -->
+          <div v-if="showMsClientId" class="card glass" id="dev-ms-client-id">
+            <h3>{{ t("settings.dev.msCidTitle") }}</h3>
+            <div class="dev-cred-row">
+              <n-input v-model:value="msClientIdDraft" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+              <button class="qx-btn qx-btn--sm qx-btn--primary" :disabled="msClientIdSaving" @click="saveMsClientId">
+                {{ t("settings.dev.msCidSave") }}
+              </button>
+            </div>
+            <p class="hint">{{ t("settings.dev.msCidHint") }}</p>
           </div>
 
           <!-- OAuth2 接入凭证（开发期测试用） -->
-          <h4 class="dev-subtitle">{{ t("settings.dev.oauthCredTitle") }}</h4>
-          <p class="dev-hint">{{ t("settings.dev.oauthCredHint") }}</p>
-          <div class="dev-cred-group">
-            <label class="dev-cred-label">{{ t("settings.dev.lsClientId") }}</label>
-            <div class="dev-cred-row">
-              <n-input v-model:value="devLsClientId" :placeholder="t('settings.dev.lsClientIdPh')" />
-              <button class="mini-btn primary" :disabled="devCredSaving" @click="saveDevLsCredentials">{{ t("settings.dev.credSave") }}</button>
+          <div class="card glass" id="dev-oauth">
+            <h3>{{ t("settings.dev.oauthCredTitle") }}</h3>
+            <p class="hint">{{ t("settings.dev.oauthCredHint") }}</p>
+            <div class="dev-cred-group">
+              <span class="choice-label">{{ t("settings.dev.lsClientId") }}</span>
+              <div class="dev-cred-row">
+                <n-input v-model:value="devLsClientId" :placeholder="t('settings.dev.lsClientIdPh')" />
+                <button class="qx-btn qx-btn--sm qx-btn--primary" :disabled="devCredSaving" @click="saveDevLsCredentials">{{ t("settings.dev.credSave") }}</button>
+              </div>
+              <span class="choice-label">{{ t("settings.dev.lsClientSecret") }}</span>
+              <div class="dev-cred-row">
+                <n-input v-model:value="devLsClientSecret" type="password" show-password-on="click" :placeholder="t('settings.dev.lsSecretPh')" />
+              </div>
+              <p class="hint">
+                <span v-if="accounts.yggOauthConfig?.configured" class="dev-cred-ok">{{ t("settings.dev.lsConfigured") }}</span>
+                <span v-else class="dev-cred-no">{{ t("settings.dev.lsNotConfigured") }}</span>
+                <span v-if="accounts.yggOauthConfig?.secretConfigured" class="dev-cred-ok"> · {{ t("settings.dev.lsSecretSet") }}</span>
+                <span v-else class="dev-cred-no"> · {{ t("settings.dev.lsSecretUnset") }}</span>
+              </p>
+              <p class="hint">{{ t("settings.dev.lsRedirect") }}：<code class="mono">{{ accounts.yggOauthConfig?.redirectUri ?? "qookix://oauth/littleskin/callback" }}</code></p>
             </div>
-            <label class="dev-cred-label">{{ t("settings.dev.lsClientSecret") }}</label>
-            <div class="dev-cred-row">
-              <n-input v-model:value="devLsClientSecret" type="password" show-password-on="click" :placeholder="t('settings.dev.lsSecretPh')" />
-            </div>
-            <p class="dev-hint">
-              <span v-if="accounts.yggOauthConfig?.configured" class="dev-cred-ok">{{ t("settings.dev.lsConfigured") }}</span>
-              <span v-else class="dev-cred-no">{{ t("settings.dev.lsNotConfigured") }}</span>
-              <span v-if="accounts.yggOauthConfig?.secretConfigured" class="dev-cred-ok"> · {{ t("settings.dev.lsSecretSet") }}</span>
-              <span v-else class="dev-cred-no"> · {{ t("settings.dev.lsSecretUnset") }}</span>
-            </p>
-            <p class="dev-hint">{{ t("settings.dev.lsRedirect") }}：<code class="mono">{{ accounts.yggOauthConfig?.redirectUri ?? "qookix://oauth/littleskin/callback" }}</code></p>
           </div>
         </div>
       </div>
@@ -2664,8 +3007,8 @@ onUnmounted(() => {
     <!-- QookiX 账号（可选）：好友 / 联机房间目录 -->
     <QookixLoginDialog ref="qookixLoginRef" />
 
-    <!-- 内网穿透（frp）：登录面板 → 启停隧道 -->
-    <FrpDialog ref="frpRef" />
+    <!-- 内网穿透（frp）：登录面板 → 启停隧道；功能隐藏时连弹窗都不挂载 -->
+    <FrpDialog v-if="showFrpFeatures" ref="frpRef" />
 
     <!-- 修改邮箱：验证信发到新邮箱，点开后才会生效 -->
     <n-modal
@@ -2771,7 +3114,7 @@ onUnmounted(() => {
   gap: 7px;
   padding: 8px 11px;
   background: var(--panel);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   transition: box-shadow 0.12s;
@@ -2792,7 +3135,7 @@ onUnmounted(() => {
   background: transparent;
   outline: none;
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
 }
 .nav-search-input::placeholder {
@@ -2800,7 +3143,7 @@ onUnmounted(() => {
 }
 .settings-nav {
   background: var(--panel);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   padding: 8px 6px;
@@ -2823,7 +3166,7 @@ onUnmounted(() => {
   gap: 6px;
   padding: 9px 10px 4px;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   letter-spacing: 0.02em;
 }
@@ -2842,8 +3185,8 @@ onUnmounted(() => {
   background: transparent;
   color: var(--text-2);
   padding: 9px 12px;
-  border-radius: 9px;
-  font-size: 13px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
   font-weight: 500;
   cursor: pointer;
   font-family: inherit;
@@ -2873,8 +3216,8 @@ onUnmounted(() => {
   background: transparent;
   color: var(--text-2);
   padding: 7px 10px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
   font-weight: 500;
   cursor: pointer;
   font-family: inherit;
@@ -2887,7 +3230,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .nav-result-sub {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 400;
   color: var(--text-3);
   white-space: nowrap;
@@ -2906,13 +3249,13 @@ onUnmounted(() => {
 .hl {
   background: var(--accent-soft);
   color: var(--accent);
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   padding: 0 2px;
 }
 .nav-empty {
   padding: 14px 10px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   text-align: center;
 }
 .nav-brand {
@@ -2921,14 +3264,14 @@ onUnmounted(() => {
   gap: 10px;
   padding: 10px 12px;
   background: var(--panel);
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
 }
 .nav-brand-logo {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   object-fit: contain;
   flex-shrink: 0;
 }
@@ -2939,7 +3282,7 @@ onUnmounted(() => {
   min-width: 0;
 }
 .nav-brand-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
   white-space: nowrap;
@@ -2947,7 +3290,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .nav-brand-ver {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .setting-flash {
@@ -3012,35 +3355,12 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 18px;
 }
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s;
-}
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-}
-.btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn:disabled {
-  opacity: 0.5;
-}
 .settings-pane > .grid {
   margin-top: 0;
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
   margin-top: 14px;
 }
@@ -3053,61 +3373,16 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin: 0 0 14px;
-  font-size: 14px;
-}
-.java-row {
-  display: flex;
-  gap: 8px;
+  font-size: var(--fs-base);
 }
 .text-input {
   flex: 1;
   width: 100%;
   min-width: 0;
-  background: var(--w-06);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  color: var(--text-1);
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: inherit;
-  outline: none;
-  transition: border-color 0.12s;
-}
-.text-input:focus {
-  border-color: var(--accent-05);
 }
 textarea.text-input {
   resize: vertical;
   width: 100%;
-}
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 13px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-}
-.mini-btn:disabled {
-  opacity: 0.5;
-}
-.mini-btn.danger {
-  border-color: var(--danger-35);
-  color: var(--danger);
-  background: var(--danger-08);
-}
-.mini-btn.danger:hover {
-  background: var(--danger-16);
 }
 .btn-icon {
   width: 14px;
@@ -3170,13 +3445,13 @@ textarea.text-input {
   pointer-events: none;
 }
 .donut-total {
-  font-size: 20px;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-1);
   line-height: 1.2;
 }
 .donut-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin-top: 2px;
 }
@@ -3194,7 +3469,7 @@ textarea.text-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .legend-dot {
   flex: none;
@@ -3231,7 +3506,7 @@ textarea.text-input {
   align-items: center;
   gap: 8px;
   margin: 0 0 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -3249,7 +3524,7 @@ textarea.text-input {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .instance-name {
   color: var(--text-1);
@@ -3266,7 +3541,7 @@ textarea.text-input {
   margin-bottom: 12px;
 }
 .hint-inline {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .java-list {
@@ -3281,7 +3556,7 @@ textarea.text-input {
   flex-direction: column;
   gap: 2px;
   padding: 7px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-03);
   color: var(--text-2);
@@ -3289,19 +3564,19 @@ textarea.text-input {
   text-align: left;
 }
 .java-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .java-path {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin: 10px 0 0;
 }
@@ -3312,12 +3587,12 @@ textarea.text-input {
 }
 .mem-row label {
   display: block;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   margin-bottom: 8px;
 }
 .mem-val {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--accent);
   font-weight: 600;
   margin-top: 4px;
@@ -3333,7 +3608,7 @@ textarea.text-input {
 .mem-gauge-track {
   position: relative;
   height: 10px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--w-08);
   overflow: hidden;
 }
@@ -3347,17 +3622,17 @@ textarea.text-input {
 }
 .mem-gauge-used {
   left: 0;
-  background: linear-gradient(90deg, #5a8ef0, #8ab4ff);
+  background: linear-gradient(90deg, var(--info), var(--info-22));
 }
 .mem-gauge-alloc {
-  background: linear-gradient(90deg, #e89a4b, #f2c079);
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
 }
 .mem-gauge-labels {
   display: flex;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin-top: 6px;
 }
@@ -3373,17 +3648,17 @@ textarea.text-input {
   display: inline-block;
 }
 .dot.used {
-  background: #8ec4ff;
+  background: var(--info);
 }
 .dot.alloc {
-  background: #e89a4b;
+  background: var(--accent);
 }
 .dot.total {
   background: #9aa4b2;
 }
 .row-label {
   display: block;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   margin-bottom: 10px;
 }
@@ -3397,7 +3672,7 @@ textarea.text-input {
   align-items: center;
   gap: 16px;
   margin-bottom: 14px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .choice-info {
@@ -3411,40 +3686,12 @@ textarea.text-input {
   font-weight: 500;
 }
 .choice-hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin: 0;
   line-height: 1.5;
 }
-.seg {
-  position: relative;
-  display: flex;
-  background: var(--w-05);
-  border-radius: 9px;
-  padding: 3px;
-}
-.seg .indicator {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  border-radius: 7px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.seg button {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  padding: 6px 13px;
-  border-radius: 7px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.seg button.active {
-  color: var(--accent);
-}
+/* 分段控件外观走全局 .qx-seg--sm；下面只保留各行的布局变体 */
 .theme-color-row {
   display: flex;
   align-items: center;
@@ -3499,14 +3746,29 @@ textarea.text-input {
 }
 .dir {
   flex: 1;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   background: var(--w-05);
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+/* 卡片内的按钮行（自定义主页 / 开发者工具共用）：按钮走全局 .qx-btn，这里只排一行 */
+.settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+}
+.settings-actions svg {
+  width: 14px;
+  height: 14px;
+}
+.home-layout-error {
+  margin-top: var(--sp-4);
 }
 .migrate-body {
   display: flex;
@@ -3514,7 +3776,7 @@ textarea.text-input {
   gap: 2px;
 }
 .migrate-label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   margin: 10px 0 2px;
 }
@@ -3531,10 +3793,10 @@ textarea.text-input {
   gap: 6px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   cursor: pointer;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: inherit;
   text-align: left;
   color: var(--text-2);
@@ -3555,16 +3817,16 @@ textarea.text-input {
 }
 .mm-desc {
   width: 100%;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .migrate-warn {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
   margin-top: 10px;
 }
 .migrate-ok {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   margin-bottom: 4px;
 }
@@ -3573,13 +3835,6 @@ textarea.text-input {
   justify-content: flex-end;
   gap: 8px;
   margin-top: 14px;
-}
-.mini-btn.primary {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.mini-btn.primary:hover {
-  background: var(--accent-soft);
 }
 .about-update {
   display: flex;
@@ -3604,31 +3859,31 @@ textarea.text-input {
 }
 .about-coop-card h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
 }
 .about-license-card h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
 }
 .license-text {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-3);
 }
 .legal-privacy-note {
   margin: 0;
   padding: 10px 12px;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.65;
   color: var(--text-2);
   background: var(--accent-soft);
   border-left: 3px solid var(--accent);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
 }
 .license-accent {
   color: var(--accent);
@@ -3642,13 +3897,10 @@ textarea.text-input {
   padding-top: 18px;
   border-top: 1px solid var(--border);
 }
+/* 竖排布局里 seg 默认会被 stretch 拉满整行，只把它拦回内容宽度；
+   别再给按钮加 flex:1 拉宽——按钮一旦比文字宽，右侧就空出一大块。 */
 .update-source .seg {
-  width: 100%;
-  max-width: 280px;
   align-self: flex-start;
-}
-.update-source .seg button {
-  flex: 1;
 }
 .about-grid {
   grid-template-columns: 1fr 1fr;
@@ -3663,7 +3915,7 @@ textarea.text-input {
 }
 .about-showcase .about-show-wrap {
   height: 200px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   border: 1px solid var(--border);
 }
@@ -3675,12 +3927,12 @@ textarea.text-input {
   margin-top: 14px;
 }
 .about-hero-name {
-  font-size: 20px;
+  font-size: var(--fs-lg);
 }
 .about-hero-slogan {
   text-align: center;
   margin: 6px 0 2px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   letter-spacing: 0.2px;
 }
@@ -3693,13 +3945,13 @@ textarea.text-input {
   padding: 18px 20px;
 }
 .about-replay-title {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
   color: var(--text-1);
 }
 .about-replay-desc {
   margin: 4px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   line-height: 1.5;
 }
@@ -3711,7 +3963,7 @@ textarea.text-input {
 }
 .about-deps-card h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
 }
@@ -3727,7 +3979,7 @@ textarea.text-input {
   gap: 6px;
 }
 .deps-group-title {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-3);
   text-transform: uppercase;
@@ -3741,7 +3993,7 @@ textarea.text-input {
   gap: 8px;
   padding: 7px 10px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--panel);
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   backdrop-filter: blur(var(--glass-blur, 8px));
@@ -3759,7 +4011,7 @@ textarea.text-input {
   flex: 1;
 }
 .about-dep-row .dep-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-1);
   display: flex;
@@ -3768,16 +4020,16 @@ textarea.text-input {
   white-space: nowrap;
 }
 .dep-ver {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-weight: 400;
 }
 .dep-license {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--accent);
   background: var(--accent-soft);
   padding: 2px 6px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   font-weight: 500;
   white-space: nowrap;
 }
@@ -3787,11 +4039,11 @@ textarea.text-input {
   flex-shrink: 0;
 }
 .dep-link {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-family: inherit;
   padding: 3px 8px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
@@ -3809,26 +4061,21 @@ textarea.text-input {
   color: var(--text-1);
 }
 .about-ver {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-soft);
   padding: 2px 8px;
-  border-radius: 6px;
-}
-.about-desc {
-  font-size: 13px;
-  color: var(--text-3);
-  margin: 0 0 16px;
+  border-radius: var(--r-xs);
 }
 .dev-role {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   line-height: 1.3;
 }
 /* 开发者区块：一人一行，不套卡片 */
 .about-devs-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-3);
   margin: 0 0 10px;
@@ -3865,7 +4112,7 @@ textarea.text-input {
   flex-shrink: 0;
 }
 .dev-name {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -3877,10 +4124,10 @@ textarea.text-input {
   height: 24px;
   padding: 0;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   transition: color 0.14s, border-color 0.14s, background 0.14s;
 }
@@ -3899,7 +4146,7 @@ textarea.text-input {
   justify-content: flex-start;
   padding: 18px 16px;
   min-height: 56px;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .about-link {
   display: flex;
@@ -3907,13 +4154,13 @@ textarea.text-input {
   align-items: center;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   /* 与 .card.glass 一致的磨砂背景，避免和卡片质感不一致 */
   background: var(--panel);
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
   backdrop-filter: blur(var(--glass-blur, 8px));
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   cursor: pointer;
   font-family: inherit;
@@ -3931,13 +4178,13 @@ textarea.text-input {
   gap: 8px;
 }
 .link-left :deep(svg) {
-  font-size: 15px;
+  font-size: var(--fs-md);
   color: var(--accent);
   flex-shrink: 0;
 }
 .link-arrow {
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-base);
   transition: transform 0.15s;
 }
 .about-link:hover .link-arrow {
@@ -3949,9 +4196,107 @@ textarea.text-input {
   background: var(--border);
   margin: 4px 0 14px;
 }
+/* 动态场景选择：缩略图卡片网格 */
+.scene-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.scene-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--w-03);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.scene-card:hover {
+  border-color: var(--w-14);
+  background: var(--w-05);
+}
+.scene-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.scene-thumb {
+  display: block;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.scene-thumb svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* 缩略图用固定配色而不是跟随主题：它是「这个场景长什么样」的图示，不是界面元素 */
+.scene-thumb--island {
+  background: linear-gradient(to bottom, #123a5c 0%, #3f7fa8 56%, #0d4256 100%);
+}
+.scene-thumb--train {
+  background: linear-gradient(to bottom, #2a1b3d 0%, #7a4457 54%, #c07a4a 100%);
+}
+.sc-sun {
+  fill: #ffe0a8;
+}
+.sc-sun--warm {
+  fill: #ffc47a;
+}
+.sc-sea {
+  fill: #0a3346;
+  opacity: 0.6;
+}
+.sc-land {
+  fill: #1f4a34;
+}
+.sc-tree {
+  fill: #16392a;
+}
+.sc-cloud {
+  fill: #efd3cb;
+  opacity: 0.6;
+}
+.sc-cloud--far {
+  opacity: 0.38;
+}
+.sc-deck,
+.sc-tower,
+.sc-train {
+  fill: #17111c;
+}
+.sc-cable {
+  stroke: #17111c;
+  stroke-width: 1.2;
+}
+.scene-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.scene-label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.scene-desc {
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.bg-mode-row {
+  display: flex;
+  margin-bottom: 14px;
+}
 .bg-preview {
   margin-bottom: 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   border: 1px solid var(--border);
 }
@@ -3975,7 +4320,7 @@ textarea.text-input {
   display: flex;
   align-items: center;
   gap: 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .tune-row label {
@@ -3986,11 +4331,16 @@ textarea.text-input {
   flex: 1;
   min-width: 0;
 }
+/* 场景画质分段控件：紧跟 label 之后，靠右对齐到 tune-val 的位置 */
+.bg-quality-seg {
+  flex: none;
+  margin-left: auto;
+}
 .tune-val {
   flex-shrink: 0;
   width: 46px;
   text-align: right;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -3998,7 +4348,7 @@ textarea.text-input {
   position: relative;
   width: 42px;
   height: 24px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   background: var(--w-08);
   cursor: pointer;
@@ -4036,12 +4386,12 @@ textarea.text-input {
   gap: 12px;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-03);
   color: var(--text-2);
   cursor: pointer;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   text-align: left;
   transition: border-color 0.15s, background 0.15s;
 }
@@ -4061,12 +4411,12 @@ textarea.text-input {
   min-width: 0;
 }
 .mirror-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .mirror-base {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4079,7 +4429,7 @@ textarea.text-input {
   flex-shrink: 0;
 }
 .mirror-ms {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
@@ -4087,11 +4437,11 @@ textarea.text-input {
   color: var(--danger);
 }
 .mirror-btn {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   background: transparent;
   padding: 4px 10px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   flex-shrink: 0;
   transition: color 0.15s, border-color 0.15s, background 0.15s;
@@ -4129,19 +4479,19 @@ textarea.text-input {
   justify-content: space-between;
   gap: 12px;
   margin-top: 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 /* 账号页里的隐私开关：夹在账号行之间，靠内边距与行对齐 */
 .acct-switch {
   margin-top: 2px;
   padding: 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .acct-switch-hint {
   margin: 4px 4px 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.6;
   color: var(--text-3);
 }
@@ -4149,7 +4499,7 @@ textarea.text-input {
 .sync-box {
   margin-top: 6px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-04);
 }
 .sync-head {
@@ -4159,7 +4509,7 @@ textarea.text-input {
   gap: 10px;
 }
 .sync-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -4170,7 +4520,7 @@ textarea.text-input {
 }
 .sync-hint {
   margin: 6px 0 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.6;
   color: var(--text-3);
 }
@@ -4190,7 +4540,7 @@ textarea.text-input {
   background: transparent;
   padding: 0;
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: inherit;
   font-weight: 600;
   color: var(--text-1);
@@ -4210,7 +4560,7 @@ textarea.text-input {
   background: transparent;
   padding: 0;
   color: var(--accent);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 500;
   font-family: inherit;
   cursor: pointer;
@@ -4224,25 +4574,20 @@ textarea.text-input {
   align-items: center;
   gap: 8px;
   margin: 10px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
-/* 开发构建：Microsoft Client ID 输入行 */
-.ms-cid-row {
-  display: flex;
-  gap: 8px;
-  margin-top: 10px;
-}
+/* 账号弹窗（改邮箱 / 转移码）的输入行 */
 .ms-cid-input {
   flex: 1;
   min-width: 0;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-06);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: Menlo, Consolas, monospace;
 }
 .ms-cid-input:focus {
@@ -4258,7 +4603,7 @@ textarea.text-input {
 }
 .acct-modal-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-3);
 }
@@ -4283,7 +4628,7 @@ textarea.text-input {
 .qk-avatar img {
   width: 22px;
   height: 22px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   image-rendering: pixelated;
 }
 
@@ -4293,14 +4638,14 @@ textarea.text-input {
   align-items: center;
   gap: 12px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-04);
   flex-wrap: wrap;
 }
 .acct-avatar {
   width: 38px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   object-fit: cover;
   flex: none;
   background: var(--w-06);
@@ -4309,7 +4654,7 @@ textarea.text-input {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: var(--fs-md);
   color: var(--text-3);
 }
 .acct-info {
@@ -4320,16 +4665,16 @@ textarea.text-input {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .acct-badge {
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   background: var(--w-04);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-3);
 }
@@ -4345,7 +4690,7 @@ textarea.text-input {
 }
 .acct-meta {
   margin-top: 3px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.5;
   color: var(--text-3);
 }
@@ -4358,22 +4703,14 @@ textarea.text-input {
 }
 .acct-warn {
   margin: 8px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 /* 贴在对应账号行下面时，间距交给 .acct-list 的 gap */
 .acct-warn.inline {
   margin: 0;
   padding-left: 50px;
-  font-size: 11px;
-}
-.mini-btn.danger {
-  color: var(--danger);
-  border-color: rgba(229, 83, 75, 0.45);
-}
-.mini-btn.danger:hover {
-  color: var(--danger);
-  border-color: var(--danger);
+  font-size: var(--fs-2xs);
 }
 
 .update-modal-body {
@@ -4383,7 +4720,7 @@ textarea.text-input {
 }
 .update-modal-ver {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .update-modal-actions {
@@ -4398,74 +4735,54 @@ textarea.text-input {
   flex-direction: column;
   gap: 10px;
 }
-.dev-pane-card {
+/* 开发者工具页：卡片 / 标题 / 按钮 / 提示条 / 开关全部走设置页通用类，
+   这里只留表单行的布局与状态色。 */
+.dev-mode-warning {
+  align-items: center;
+}
+.dev-mode-warning__text {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--sp-1);
 }
-.dev-pane-card h3 {
-  margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--accent);
+.dev-mode-warning__text strong {
+  color: var(--danger-text);
+  font-weight: var(--fw-semi);
 }
-.dev-tools {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.dev-section {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-.dev-section-label {
-  font-size: 13px;
+.dev-mode-warning__text span {
   color: var(--text-2);
-}
-.dev-subtitle {
-  margin: 4px 0 0;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--text-1);
-}
-.dev-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-3);
-  line-height: 1.6;
 }
 .dev-cred-group {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--sp-2);
 }
-.dev-cred-label {
-  font-size: 13px;
-  color: var(--text-2);
+.dev-cred-group .hint {
+  margin: 0;
 }
 .dev-cred-row {
   display: flex;
-  gap: 8px;
   align-items: center;
+  gap: var(--sp-3);
 }
 .dev-cred-row .n-input {
   flex: 1;
+  min-width: 0;
 }
 .dev-cred-ok {
-  color: var(--success, #18a058);
+  color: var(--success);
 }
 .dev-cred-no {
-  color: var(--error, #d03050);
+  color: var(--danger-text);
 }
 .about-changelog-card h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
 }
 .changelog-loading {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
   padding: 20px 0;
   text-align: center;
@@ -4478,7 +4795,7 @@ textarea.text-input {
 }
 .cl-release {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   transition: border-color 0.15s;
 }
@@ -4506,24 +4823,24 @@ textarea.text-input {
   transform: none;
 }
 .cl-version {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--accent);
 }
 .cl-date {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .cl-count {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   background: var(--bg-3, rgba(128, 128, 128, 0.12));
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 1px 7px;
 }
 .cl-arrow {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   transition: transform 0.2s;
 }
@@ -4540,15 +4857,15 @@ textarea.text-input {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 .cl-tag {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   white-space: nowrap;
 }
 .cl-tag.cat-fix {

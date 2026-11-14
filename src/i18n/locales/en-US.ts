@@ -71,6 +71,9 @@ export default {
     zoomIn: "Zoom in",
     zoomOut: "Zoom out",
     resetZoom: "Reset zoom",
+    clickToCopy: "Click to copy this message",
+    copied: "Copied",
+    copyFailed: "Copy failed",
   },
   nav: {
     home: "Home",

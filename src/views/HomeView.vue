@@ -13,8 +13,19 @@ import { supportsQuickPlay } from "../version";
 import { useMessage } from "naive-ui";
 import AppIcon from "../components/AppIcon.vue";
 import OnboardingBar from "../components/OnboardingBar.vue";
+import HomeLayout from "../components/home/HomeLayout.vue";
+import InstanceCard from "../components/InstanceCard.vue";
+import { useHomeLayout } from "../home/useHomeLayout";
 import type { ServerStatus } from "../types";
-import { IconClose, IconFolder, IconGlobe, IconPlay, IconBookOpen, IconGrid } from "../components/icons";
+import {
+  IconClose,
+  IconFolder,
+  IconGlobe,
+  IconPlay,
+  IconBookOpen,
+  IconGrid,
+  IconChevronRight,
+} from "../components/icons";
 import { useOnboarding } from "../composables/useOnboarding";
 
 const router = useRouter();
@@ -27,6 +38,23 @@ const settingsStore = useSettingsStore();
 const onboarding = useOnboarding();
 const pinLaunching = ref<string>("");
 const pinStatus = ref<Record<string, ServerStatus>>({});
+
+// 自定义主页（home.json）：开关与文件操作都在「设置 → 外观 → 自定义主页」，
+// 这里只消费共享状态并渲染；home.json 里的 reload 事件仍会触发重载。
+const {
+  layout: customLayout,
+  path: customPath,
+  error: customError,
+  enabled: customEnabled,
+  showRecent: showRecentInstances,
+  ensureLoaded: ensureCustomLayout,
+  reload: reloadCustomLayout,
+} = useHomeLayout();
+
+async function reloadCustom() {
+  if (await reloadCustomLayout()) message.success(t("home.layout.reloaded"));
+  else message.error(t("home.layout.parseError", { error: customError.value }));
+}
 
 const STORAGE_KEY = "qookix.home.selected";
 
@@ -89,6 +117,19 @@ async function launchSelected() {
 // 只展示固定到首页的项（侧边栏固定不在此显示）；实例被删除后自动隐藏对应固定项
 const validPins = computed(() =>
   pinsStore.items.filter((p) => p.target === "home" && instances.get(p.instanceId))
+);
+
+/**
+ * 自定义主页（home.json）是否正在接管首页内容。
+ * 关掉时首页必须有兜底内容——否则「有实例、没固定项」的用户进来只看到一张背景图。
+ */
+const hasCustomHome = computed(() => !!(customEnabled.value && customLayout.value));
+
+/** 兜底内容：最近游玩的实例，最多 6 个（多到能填满两行，又不至于像第二个实例页） */
+const recentInstances = computed(() =>
+  [...instances.instances]
+    .sort((a, b) => (b.last_played ?? 0) - (a.last_played ?? 0))
+    .slice(0, 6)
 );
 
 function pinIconSrc(p: PinItem): string | undefined {
@@ -162,6 +203,7 @@ onMounted(() => {
   instances.load();
   accounts.load();
   settingsStore.load();
+  void ensureCustomLayout();
   pinsStore.items.filter((p) => p.type === "server").forEach((p) => pingPin(p));
   // pin-card 逐个进入：每个延迟递增 60ms；section 在最后一个 pin-card 之后
   requestAnimationFrame(() => {
@@ -193,10 +235,48 @@ onBeforeRouteLeave(() => {
 </script>
 
 <template>
-  <div id="home-root" class="home" data-tauri-drag-region>
+  <div
+    id="home-root"
+    class="home qx-page"
+    :class="{
+      'has-custom': customEnabled && customLayout,
+      'is-empty': showRecentInstances && !instances.instances.length,
+    }"
+    data-tauri-drag-region
+  >
     <OnboardingBar @launch="launchSelected" />
 
-    <section v-if="validPins.length" class="pin-block">
+    <div v-if="customEnabled && customError" class="qx-hint qx-hint--red">
+      {{ t("home.layout.parseError", { error: customError }) }}
+      {{ t("home.layout.goSettings") }}
+    </div>
+
+    <HomeLayout
+      v-if="customEnabled && customLayout"
+      :layout="customLayout"
+      :home-path="customPath"
+      @reload="reloadCustom"
+    />
+
+    <!-- 兜底内容：没开自定义主页时，首页要有东西可看。
+         但「有东西」不等于强制——设置页可以把这块关掉，只留背景。 -->
+    <section v-if="!hasCustomHome && showRecentInstances && recentInstances.length" class="home-default">
+      <div class="hd-head">
+        <h2 class="qx-section-title">{{ t("home.default.recentTitle") }}</h2>
+        <button class="hd-all" @click="router.push('/instances')">
+          {{ t("home.default.viewAll") }}
+          <IconChevronRight />
+        </button>
+      </div>
+      <div class="qx-grid qx-grid--card">
+        <InstanceCard v-for="inst in recentInstances" :key="inst.id" :instance="inst" />
+      </div>
+    </section>
+
+    <section v-if="showRecentInstances && validPins.length" class="pin-block">
+      <div class="hd-head">
+        <h2 class="qx-section-title">{{ t("home.default.pinTitle") }}</h2>
+      </div>
       <div class="pin-grid">
         <div v-for="p in validPins" :key="p.id" class="pin-card glass clickable" @click="openInstance(p)">
           <div class="pin-icon">
@@ -237,7 +317,7 @@ onBeforeRouteLeave(() => {
             <button class="pin-unpin" :title="t('home.pin.unpinTitle')" @click.stop="unpin(p)">
               <IconClose />
             </button>
-            <button class="btn primary" :disabled="pinLaunching === p.id" @click.stop="launchPin(p)">
+            <button class="qx-btn qx-btn--primary" :disabled="pinLaunching === p.id" @click.stop="launchPin(p)">
               <IconPlay /> {{ pinLaunching === p.id ? t("home.pin.launching") : t("home.pin.launch") }}
             </button>
           </div>
@@ -245,13 +325,13 @@ onBeforeRouteLeave(() => {
       </div>
     </section>
 
-    <section ref="sectionEl" class="section">
-      <div v-if="!instances.instances.length" class="empty glass">
+    <section v-if="showRecentInstances && !instances.instances.length" ref="sectionEl" class="section">
+      <div class="qx-empty glass">
         <div class="empty-icon"><IconGrid /></div>
         <p>{{ t("home.empty.noInstance") }}</p>
         <div class="home-empty-actions">
-          <button class="btn primary" @click="router.push('/instances')">{{ t("home.empty.createFirst") }}</button>
-          <button class="btn ghost" @click="onboarding.open">
+          <button class="qx-btn qx-btn--primary" @click="router.push('/instances')">{{ t("home.empty.createFirst") }}</button>
+          <button class="qx-btn" @click="onboarding.open">
             <IconBookOpen /> {{ t("home.empty.onboarding") }}
           </button>
         </div>
@@ -262,43 +342,14 @@ onBeforeRouteLeave(() => {
 
 <style scoped>
 .home {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-height: 100%;
+  /* 骨架（纵向间距）来自 .qx-page，这里只补首页专属的定位上下文 */
+  position: relative;
 }
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.15s;
-  font-family: inherit;
-}
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-}
-.btn.primary:hover {
-  filter: brightness(1.08);
-}
-.btn.primary:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.btn.ghost {
-  background: var(--w-06);
-  color: var(--text-1);
-  border: 1px solid var(--border);
-}
-.btn.ghost:hover {
-  background: var(--w-10);
-  transform: none;
+/* 有自定义主页时，底部「常驻实例」不再吸底：内容变长后吸底卡会盖住上面的自定义卡片。
+   无自定义主页时保持原有吸底行为。 */
+.home.has-custom .section {
+  position: static;
+  margin-top: 0;
 }
 /* 常驻实例卡片固定在窗口底部（sticky footer）。
     #app-content 是统一滚动容器，.section 用 sticky bottom:0 贴底，
@@ -307,10 +358,7 @@ onBeforeRouteLeave(() => {
   position: sticky;
   bottom: 0;
   width: 100%;
-  max-width: 1080px;
   margin-top: auto;
-  margin-left: auto;
-  margin-right: auto;
   padding-top: 8px;
   z-index: 1;
 }
@@ -350,13 +398,59 @@ onBeforeRouteLeave(() => {
   transform: translateX(64px);
   opacity: 0;
 }
+/* —— 兜底内容：最近游玩 ——
+   没开自定义主页时首页的默认主体。用 .qx-grid--card 与实例页同一套列宽，
+   卡片直接复用 InstanceCard，交互（启动 / 目录 / 更多菜单）与实例页完全一致。 */
+.home-default {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+}
+.hd-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-5);
+  padding: 0 2px;
+}
+.hd-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  /* 负外边距让文字右缘和卡片右缘对齐 */
+  margin-right: -6px;
+  padding: 4px 6px;
+  border: none;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  font-family: inherit;
+  font-size: var(--fs-xs);
+  cursor: pointer;
+  transition:
+    color var(--dur-sm) var(--ease-out),
+    background var(--dur-sm) var(--ease-out);
+}
+.hd-all:hover {
+  color: var(--accent);
+  background: var(--w-06);
+}
+.hd-all svg {
+  width: 13px;
+  height: 13px;
+}
+/* 空态：没有实例时把「创建第一个实例」放到视觉中心，
+   而不是按 .section 的吸底规则贴在窗口最下面 */
+.home.is-empty .section {
+  position: static;
+  margin: auto 0;
+}
 /* 固定快捷启动 */
 .pin-block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
   margin-top: 8px;
-}
-.pin-sub {
-  color: var(--text-3);
-  font-size: 12px;
 }
 .pin-grid {
   display: grid;
@@ -380,13 +474,13 @@ onBeforeRouteLeave(() => {
 .pin-icon {
   width: 46px;
   height: 46px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   flex-shrink: 0;
   background: linear-gradient(135deg, var(--accent-22), var(--accent-08));
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 20px;
+  font-size: var(--fs-lg);
   color: var(--accent);
   overflow: hidden;
 }
@@ -400,7 +494,7 @@ onBeforeRouteLeave(() => {
   min-width: 0;
 }
 .pin-title {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   margin-bottom: 6px;
 }
@@ -408,10 +502,10 @@ onBeforeRouteLeave(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .pin-type {
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   padding: 0 6px;
   font-weight: 600;
   flex-shrink: 0;
@@ -436,7 +530,7 @@ onBeforeRouteLeave(() => {
   align-items: center;
   gap: 10px;
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .pin-status .latency {
   display: inline-flex;
@@ -450,7 +544,7 @@ onBeforeRouteLeave(() => {
 .pin-status .bars i {
   width: 4px;
   height: 10px;
-  border-radius: 2px;
+  border-radius: var(--r-xs);
   background: var(--w-08);
 }
 .pin-status .bars i.on {
@@ -477,9 +571,9 @@ onBeforeRouteLeave(() => {
   gap: 8px;
   flex-shrink: 0;
 }
-.pin-actions .btn {
-  padding: 8px 14px;
-  font-size: 13px;
+.pin-actions .qx-btn {
+  height: 30px;
+  padding: 0 12px;
 }
 .pin-unpin {
   width: 28px;
@@ -487,7 +581,7 @@ onBeforeRouteLeave(() => {
   border: none;
   background: transparent;
   color: var(--text-3);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -496,38 +590,6 @@ onBeforeRouteLeave(() => {
 .pin-unpin:hover {
   background: var(--w-08);
   color: var(--danger);
-}
-.section-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-.section-head h2 {
-  font-size: 17px;
-  margin: 0;
-}
-.link-btn {
-  background: none;
-  border: none;
-  color: var(--text-3);
-  cursor: pointer;
-  font-size: 13px;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.link-btn:hover {
-  color: var(--accent);
-}
-.empty {
-  padding: 48px 24px;
-  text-align: center;
-  color: var(--text-3);
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  align-items: center;
 }
 .empty-icon {
   font-size: 36px;

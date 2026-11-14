@@ -1,6 +1,6 @@
 [package]
 name = "qookix-launcher"
-version = "0.21.0"
+version = "0.22.0"
 description = "QookiX Launcher - a modern, clean and ad-free Minecraft launcher"
 authors = ["QookiX"]
 edition = "2021"
@@ -22,14 +22,17 @@ tauri-build = { version = "2", features = [] }
 cc = "1.0"
 
 [dependencies]
-tauri = { version = "2", features = ["protocol-asset", "tray-icon", "image-png"] }
-tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
-tauri-plugin-process = "2"
-tauri-plugin-updater = "2"
-tauri-plugin-deep-link = "2"
+# devtools：让「程序化打开 DevTools」在 release 构建也可用。
+# 用户侧的 F12 / 右键「检查」由 tauri.conf.json 的 devtools:false 关掉，
+# 只有开发者页的开关放行时才会走 commands::open_devtools。
+tauri = { version = "2.12", features = ["protocol-asset", "tray-icon", "image-png", "devtools"] }
+tauri-plugin-opener = "2.7"
+tauri-plugin-dialog = "2.8"
+tauri-plugin-process = "2.4"
+tauri-plugin-updater = "2.14"
+tauri-plugin-deep-link = "2.6"
 # 好友申请 / 房间邀请的系统通知（窗口最小化时也能收到）
-tauri-plugin-notification = "2"
+tauri-plugin-notification = "2.8"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "fs", "io-util", "process", "time", "sync", "signal", "net"] }

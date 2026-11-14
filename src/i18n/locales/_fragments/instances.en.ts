@@ -1,5 +1,6 @@
 export default {
   loading: "Loading…",
+  totalItems: "{count} instances",
   filterAll: "All",
   ungrouped: "Ungrouped",
   importPack: "Import pack",

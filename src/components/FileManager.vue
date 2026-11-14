@@ -820,10 +820,10 @@ onBeforeUnmount(() => {
         <h4>{{ confirmState.title }}</h4>
         <p>{{ confirmState.content }}</p>
         <div class="fm-dialog-actions">
-          <button class="btn ghost" :disabled="confirmLoading" @click="confirmState = null">
+          <button class="qx-btn" :disabled="confirmLoading" @click="confirmState = null">
             {{ t("fileManager.cancel") }}
           </button>
-          <button class="btn danger" :disabled="confirmLoading" @click="handleConfirm">
+          <button class="qx-btn qx-btn--danger" :disabled="confirmLoading" @click="handleConfirm">
             {{ confirmState.positiveText }}
           </button>
         </div>
@@ -871,11 +871,11 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border: 1px solid transparent;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   flex-shrink: 0;
 }
 .nav:hover:not(:disabled) {
@@ -902,10 +902,10 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   padding: 3px 5px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   cursor: pointer;
   max-width: 130px;
   overflow: hidden;
@@ -922,7 +922,7 @@ onBeforeUnmount(() => {
 }
 .sep {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   opacity: 0.6;
 }
 
@@ -941,10 +941,10 @@ onBeforeUnmount(() => {
   gap: 6px;
   padding: 5px 9px;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--k-18);
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .fm-search input {
   flex: 1;
@@ -952,7 +952,7 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   outline: none;
   user-select: text;
@@ -965,11 +965,11 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   flex-shrink: 0;
 }
 .tool:hover {
@@ -980,7 +980,7 @@ onBeforeUnmount(() => {
   position: absolute;
   right: -3px;
   bottom: -2px;
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   color: var(--accent);
 }
 
@@ -993,7 +993,7 @@ onBeforeUnmount(() => {
   padding: 40px 12px;
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 
 .fm-row {
@@ -1001,7 +1001,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   padding: 6px 8px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   transition: background 0.1s;
   user-select: none;
@@ -1029,11 +1029,11 @@ onBeforeUnmount(() => {
   width: 30px;
   height: 30px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   letter-spacing: 0.2px;
   background: var(--w-06);
@@ -1042,7 +1042,7 @@ onBeforeUnmount(() => {
 .fm-badge.dir {
   color: var(--accent);
   background: var(--accent-14);
-  font-size: 15px;
+  font-size: var(--fs-md);
 }
 .fm-badge.code {
   color: #7cb8f5;
@@ -1062,14 +1062,14 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .fm-name {
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fm-sub {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin-top: 2px;
 }
@@ -1091,11 +1091,11 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--text-2);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .act:hover {
   color: var(--text-1);
@@ -1110,10 +1110,10 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   border: 1px solid var(--accent-40);
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: var(--k-25);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   padding: 5px 8px;
   outline: none;
@@ -1132,10 +1132,10 @@ onBeforeUnmount(() => {
 .ok,
 .cancel {
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--text-2);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-family: inherit;
   padding: 4px 8px;
   cursor: pointer;
@@ -1177,10 +1177,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   padding: 5px 8px 5px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid transparent;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   max-width: 180px;
   flex-shrink: 0;
@@ -1213,11 +1213,11 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   flex-shrink: 0;
 }
 .x:hover {
@@ -1234,10 +1234,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 6px;
   border: 1px solid var(--accent-35);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--accent-12);
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   font-family: inherit;
   padding: 5px 12px;
@@ -1270,12 +1270,12 @@ onBeforeUnmount(() => {
 }
 .fm-placeholder p {
   margin: 6px 0 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-2);
 }
 .fm-placeholder span {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   opacity: 0.75;
   text-align: center;
 }
@@ -1296,11 +1296,11 @@ onBeforeUnmount(() => {
 }
 .fm-dialog h4 {
   margin: 0 0 10px;
-  font-size: 15px;
+  font-size: var(--fs-md);
 }
 .fm-dialog p {
   margin: 0 0 18px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   line-height: 1.6;
 }
@@ -1308,27 +1308,5 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: flex-end;
   gap: 10px;
-}
-.btn {
-  border-radius: 9px;
-  padding: 7px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  border: 1px solid var(--border);
-}
-.btn.ghost {
-  background: var(--w-06);
-  color: var(--text-1);
-}
-.btn.danger {
-  background: var(--danger-14);
-  color: var(--danger);
-  border-color: var(--danger-45);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 </style>

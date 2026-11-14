@@ -41,7 +41,10 @@ $Files = @($Files) + $stdinFiles
 
 $cert = $env:QOOKIX_CERT_PFX
 if (-not $cert -or -not (Test-Path $cert)) {
-  Write-Host "sign-windows: QOOKIX_CERT_PFX not set or file missing, skipping signing"
+  Write-Warning "sign-windows: QOOKIX_CERT_PFX not set or file missing - Windows artifacts will be UNSIGNED"
+  if ($env:QOOKIX_REQUIRE_SIGNING -eq '1') {
+    throw "sign-windows: signing is required for this build but no certificate is available"
+  }
   exit 0
 }
 if ($Files.Count -eq 0) {

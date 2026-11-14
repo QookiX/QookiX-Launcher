@@ -4,12 +4,13 @@
  * 选中后复用 NbtTreeEditor 改区块 NBT。
  * 区块数据在 `.mca`（region 文件）里，写盘前会自动备份该 region 文件。
  */
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { NSelect, useMessage } from "naive-ui";
 import { api } from "../../api";
 import type { ChunkEntry } from "../../types";
 import { IconRefresh } from "../icons";
+import { useSlidingIndicator } from "../../composables/useSlidingIndicator";
 import ChunkMap from "./ChunkMap.vue";
 import NbtTreeEditor from "./NbtTreeEditor.vue";
 
@@ -34,6 +35,14 @@ const message = useMessage();
 
 const dim = ref("overworld");
 const view = ref<"map" | "list">("map");
+// 地图 / 列表切换的滑动高亮
+const viewSegRef = ref<HTMLElement | null>(null);
+const { indicatorStyle: viewSegStyle, refresh: refreshViewSeg } = useSlidingIndicator(
+  viewSegRef,
+  () => Array.from(viewSegRef.value?.querySelectorAll<HTMLElement>("button") ?? []),
+  () => (view.value === "map" ? 0 : 1),
+);
+watch(view, () => nextTick(() => refreshViewSeg()));
 const chunks = ref<ChunkEntry[]>([]);
 const loading = ref(false);
 const selected = ref<{ cx: number; cz: number } | null>(null);
@@ -83,7 +92,8 @@ watch(dim, loadChunks, { immediate: true });
       <span class="lbl">{{ t("nbt.dimension") }}</span>
       <NSelect v-model:value="dim" :options="dimOptions" size="small" style="width: 132px" />
 
-      <div class="seg-group">
+      <div ref="viewSegRef" class="seg-group qx-seg qx-seg--sm">
+        <div class="qx-seg__indicator" :style="viewSegStyle"></div>
         <button class="seg" :class="{ active: view === 'map' }" @click="view = 'map'">
           {{ t("nbt.mapView") }}
         </button>
@@ -151,60 +161,20 @@ watch(dim, loadChunks, { immediate: true });
   flex-wrap: wrap;
 }
 .lbl {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .count {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
-.seg-group {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 9px;
-  background: var(--w-05);
-}
-.seg {
-  padding: 4px 12px;
-  border: none;
-  border-radius: 7px;
-  background: none;
-  color: var(--text-3);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.seg.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-}
-.mini-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+/* 地图 / 列表切换：外观与滑块走全局 .qx-seg--sm */
 .empty,
 .hint {
   padding: 24px;
   text-align: center;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .hint {
   padding: 8px;

@@ -36,14 +36,14 @@ const { t } = useI18n();
 <style scoped>
 .update-notes {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px 14px;
   max-height: 320px;
   overflow-y: auto;
 }
 .update-notes-title {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--text-1);
 }
@@ -52,7 +52,7 @@ const { t } = useI18n();
   align-items: baseline;
   gap: 8px;
   margin: 12px 0 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-2);
 }
@@ -60,7 +60,7 @@ const { t } = useI18n();
   margin-top: 0;
 }
 .update-notes-date {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -73,15 +73,15 @@ const { t } = useI18n();
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
 }
 .cl-tag {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   padding: 2px 7px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   white-space: nowrap;
 }
 .cl-tag.cat-fix {

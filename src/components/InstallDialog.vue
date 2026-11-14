@@ -553,8 +553,8 @@ async function install() {
         <div class="id-field">
           <div class="id-ver-head">
             <span>{{ t('installDialog.form.selectVersion') }}</span>
-            <div ref="typeTabBox" class="id-type-tabs">
-              <div class="indicator" :style="typeTabIndicatorStyle"></div>
+            <div ref="typeTabBox" class="id-type-tabs qx-seg qx-seg--sm">
+              <div class="qx-seg__indicator" :style="typeTabIndicatorStyle"></div>
               <button :class="{ active: typeFilter === 'all' }" @click="typeFilter = 'all'">{{ t('installDialog.form.typeAll') }}</button>
               <button :class="{ active: typeFilter === 'release' }" @click="typeFilter = 'release'">{{ t('installDialog.versionType.release') }}</button>
               <button :class="{ active: typeFilter === 'beta' }" @click="typeFilter = 'beta'">{{ t('installDialog.versionType.beta') }}</button>
@@ -644,7 +644,7 @@ async function install() {
 .id-icon {
   width: 56px;
   height: 56px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   object-fit: cover;
   flex-shrink: 0;
   background: var(--panel);
@@ -657,19 +657,19 @@ async function install() {
 .id-meta {
   display: flex;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin-bottom: 6px;
 }
 .id-type {
   background: var(--accent-soft);
   color: var(--accent);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   padding: 0 7px;
   font-weight: 600;
 }
 .id-desc {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   line-height: 1.5;
   display: -webkit-box;
@@ -686,11 +686,11 @@ async function install() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   padding: 3px 9px;
   text-decoration: none;
   cursor: pointer;
@@ -708,9 +708,9 @@ async function install() {
   border: 1px solid var(--border);
   background: var(--panel);
   color: var(--text-2);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 6px 11px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -729,22 +729,22 @@ async function install() {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .id-modpack-hint {
   color: var(--accent, #50c878);
   font-weight: 600;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .id-vanilla-hint {
   margin-top: -4px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: color-mix(in srgb, var(--warning, #e0a400) 14%, transparent);
   border: 1px solid color-mix(in srgb, var(--warning, #e0a400) 35%, transparent);
   color: var(--text-1, #ddd);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
 }
 .id-ver-head {
@@ -752,41 +752,12 @@ async function install() {
   justify-content: space-between;
   align-items: center;
 }
-.id-type-tabs {
-  position: relative;
-  display: flex;
-  gap: 3px;
-  background: var(--panel);
-  border-radius: 8px;
-  padding: 2px;
-}
-.id-type-tabs .indicator {
-  position: absolute;
-  top: 2px;
-  bottom: 2px;
-  border-radius: 6px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.id-type-tabs button {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.id-type-tabs button.active {
-  color: var(--accent);
-}
+/* 版本类型切换：外观走全局 .qx-seg--sm */
 .id-loading {
   padding: 20px;
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .id-ver-list {
   display: flex;
@@ -795,7 +766,7 @@ async function install() {
   max-height: 200px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 6px;
   background: var(--panel);
 }
@@ -807,7 +778,7 @@ async function install() {
   background: transparent;
   color: var(--text-2);
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
@@ -820,15 +791,15 @@ async function install() {
   background: var(--accent-soft);
 }
 .id-ver-num {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   min-width: 0;
   flex-shrink: 1;
 }
 .id-ver-type {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   font-weight: 600;
   flex-shrink: 0;
 }
@@ -845,7 +816,7 @@ async function install() {
   color: var(--danger);
 }
 .id-ver-mc {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   flex: 1;
   text-align: right;
@@ -854,14 +825,14 @@ async function install() {
   white-space: nowrap;
 }
 .id-ver-date {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   flex-shrink: 0;
 }
 .id-empty {
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   padding: 16px 0;
 }
 .id-deps {
@@ -876,12 +847,12 @@ async function install() {
   flex-wrap: wrap;
 }
 .id-deps-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-3);
 }
 .id-deps-hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   opacity: 0.85;
 }
@@ -896,9 +867,9 @@ async function install() {
   gap: 10px;
   border: 1px solid var(--border);
   background: var(--panel);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 9px 12px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   font-family: inherit;
   color: var(--text-1);
@@ -917,10 +888,10 @@ async function install() {
 }
 .id-dep-row-tag {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--border);
   color: var(--text-3);
 }
@@ -944,7 +915,7 @@ async function install() {
   flex-shrink: 0;
   width: 18px;
   height: 18px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
   border: 1.5px solid var(--border);
   display: inline-flex;
   align-items: center;
@@ -970,15 +941,15 @@ async function install() {
   color: var(--text-3);
 }
 .id-deps-loading {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .id-msg {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--accent);
 }
 .id-noinst {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .id-noinst a {
@@ -1001,7 +972,7 @@ async function install() {
 }
 .id-desc-en {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--text-3);
 }
@@ -1010,7 +981,7 @@ async function install() {
   background: none;
   border: none;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   padding: 0;
   text-decoration: underline dotted;
@@ -1029,7 +1000,7 @@ async function install() {
   margin-top: 8px;
   padding: 10px 12px;
   border: 1px solid var(--w-10);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1038,9 +1009,9 @@ async function install() {
   text-align: left;
   background: var(--w-04);
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 7px 10px;
   cursor: pointer;
 }
@@ -1056,9 +1027,9 @@ async function install() {
 .id-fb-type {
   background: var(--w-04);
   border: none;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 4px 10px;
   cursor: pointer;
 }
@@ -1069,9 +1040,9 @@ async function install() {
 .id-fb-input {
   background: var(--w-04);
   border: 1px solid var(--w-08);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   padding: 6px 8px;
   resize: none;
@@ -1090,7 +1061,7 @@ async function install() {
   background: none;
   border: none;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   padding: 4px 6px;
 }
@@ -1101,8 +1072,8 @@ async function install() {
   background: var(--accent-14);
   color: var(--accent);
   border: none;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
   padding: 5px 12px;
   cursor: pointer;
 }

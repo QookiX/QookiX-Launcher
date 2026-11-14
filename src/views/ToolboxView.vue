@@ -97,8 +97,9 @@ function cardDelay(i: number): string {
 </template>
 
 <style scoped>
-.toolbox-view { display: flex; flex-direction: column; gap: 16px; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; }
+.toolbox-view { display: flex; flex-direction: column; gap: var(--gap-page); }
+/* 列宽走 §6 的第一档（320），和实例页 / 首页用同一套栅格 */
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--gap-grid); }
 .tool-card {
   overflow: hidden;
   display: flex;
@@ -106,6 +107,12 @@ function cardDelay(i: number): string {
   /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
      未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
   animation: tool-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+  transition: box-shadow var(--dur-md) var(--ease-out);
+}
+/* 与 .inst-card / .pin-card / .server-card 同一套悬停反馈：
+   此前这里没有任何抬升，同屏并排的卡片里只有它是「点下去没反应」的。 */
+.tool-card:hover:not(:active) {
+  box-shadow: var(--card-shadow-hover);
 }
 @keyframes tool-card-enter {
   from {
@@ -139,8 +146,8 @@ function cardDelay(i: number): string {
   top: 10px;
   right: 10px;
   padding: 2px 7px;
-  border-radius: 6px;
-  font-size: 10px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   font-weight: 700;
   letter-spacing: 0.08em;
   line-height: 1.4;
@@ -150,6 +157,6 @@ function cardDelay(i: number): string {
   backdrop-filter: blur(6px);
 }
 .tool-body { padding: 16px 18px 18px; }
-.tool-body h3 { margin: 0 0 10px; font-size: 15px; font-weight: 600; }
-.hint { margin: 0; font-size: 12px; color: var(--text-3); line-height: 1.6; }
+.tool-body h3 { margin: 0 0 10px; font-size: var(--fs-md); font-weight: 600; }
+.hint { margin: 0; font-size: var(--fs-xs); color: var(--text-3); line-height: 1.6; }
 </style>

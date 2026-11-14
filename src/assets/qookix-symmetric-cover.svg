@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="450" viewBox="0 0 720 450" role="img" aria-labelledby="title">
+  <title id="title">QookiX 主题方块封面占位图</title>
+  <defs>
+    <g id="qookix-placeholder-cube">
+      <polygon points="0.00000,-96 83.13844,-48 0.00000,0 -83.13844,-48" fill="var(--accent-08, rgba(232,154,75,.08))"/>
+      <polygon points="-83.13844,-48 0.00000,0 0.00000,96 -83.13844,48" fill="var(--w-02, rgba(255,255,255,.02))"/>
+      <polygon points="0.00000,0 83.13844,-48 83.13844,48 0.00000,96" fill="var(--w-04, rgba(255,255,255,.04))"/>
+      <path d="M 0.00000,-96 83.13844,-48 83.13844,48 0.00000,96 -83.13844,48 -83.13844,-48 0.00000,-96 M -83.13844,-48 0.00000,0 83.13844,-48 M 0.00000,0 0.00000,96" fill="none" stroke="var(--w-08, rgba(255,255,255,.08))" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+    </g>
+  </defs>
+  <rect width="720" height="450" fill="var(--bg-2, #151924)"/>
+  <use href="#qookix-placeholder-cube" x="-96" y="-24"/>
+  <use href="#qookix-placeholder-cube" x="96" y="-24"/>
+  <use href="#qookix-placeholder-cube" x="288" y="-24"/>
+  <use href="#qookix-placeholder-cube" x="480" y="-24"/>
+  <use href="#qookix-placeholder-cube" x="672" y="-24"/>
+  <use href="#qookix-placeholder-cube" x="0" y="140"/>
+  <use href="#qookix-placeholder-cube" x="192" y="140"/>
+  <use href="#qookix-placeholder-cube" x="384" y="140"/>
+  <use href="#qookix-placeholder-cube" x="576" y="140"/>
+  <use href="#qookix-placeholder-cube" x="768" y="140"/>
+  <use href="#qookix-placeholder-cube" x="-96" y="304"/>
+  <use href="#qookix-placeholder-cube" x="96" y="304"/>
+  <use href="#qookix-placeholder-cube" x="288" y="304"/>
+  <use href="#qookix-placeholder-cube" x="480" y="304"/>
+  <use href="#qookix-placeholder-cube" x="672" y="304"/>
+  <use href="#qookix-placeholder-cube" x="0" y="468"/>
+  <use href="#qookix-placeholder-cube" x="192" y="468"/>
+  <use href="#qookix-placeholder-cube" x="384" y="468"/>
+  <use href="#qookix-placeholder-cube" x="576" y="468"/>
+  <use href="#qookix-placeholder-cube" x="768" y="468"/>
+</svg>

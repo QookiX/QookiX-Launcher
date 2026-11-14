@@ -473,12 +473,12 @@ watch(
         </div>
       </div>
       <div class="d-actions">
-        <button class="btn primary" @click="launch">
+        <button class="qx-btn qx-btn--primary" @click="launch">
           <IconPlay />
           {{ t("instanceDetail.launchGame") }}
         </button>
         <button
-          class="btn ghost pin"
+          class="qx-btn pin"
           :class="{ active: pins.isPinned(homePinId) }"
           :title="pins.isPinned(homePinId) ? t('instanceDetail.unpinHome') : t('instanceDetail.pinHome')"
           @click="toggleInstancePin('home')"
@@ -486,23 +486,23 @@ watch(
           <IconMapPin />
         </button>
         <button
-          class="btn ghost pin"
+          class="qx-btn pin"
           :class="{ active: pins.isPinned(sidebarPinId) }"
           :title="pins.isPinned(sidebarPinId) ? t('instanceDetail.unpinSidebar') : t('instanceDetail.pinSidebar')"
           @click="toggleInstancePin('sidebar')"
         >
           <IconLayout />
         </button>
-        <button class="btn ghost" :title="t('instanceDetail.openGameFolder')" @click="openFolder()">
+        <button class="qx-btn" :title="t('instanceDetail.openGameFolder')" @click="openFolder()">
           <IconFolder />
         </button>
-        <button class="btn ghost" :title="t('instanceDetail.exportPack')" @click="showExport = true">
+        <button class="qx-btn" :title="t('instanceDetail.exportPack')" @click="showExport = true">
           <IconExternal />
         </button>
-        <button class="btn ghost" :title="t('instanceDetail.genDiagReport')" @click="showDiag = true">
+        <button class="qx-btn" :title="t('instanceDetail.genDiagReport')" @click="showDiag = true">
           <IconInfo />
         </button>
-        <button class="btn danger" :title="t('instanceDetail.deleteInstance')" @click="removeInstance">
+        <button class="qx-btn qx-btn--danger" :title="t('instanceDetail.deleteInstance')" @click="removeInstance">
           <IconTrash />
         </button>
       </div>
@@ -533,7 +533,7 @@ watch(
         <h3>{{ t("instanceDetail.installFailed") }}</h3>
         <p>{{ installTask.message }}</p>
       </div>
-      <button class="btn primary" :disabled="installingGame" @click="installGame">
+      <button class="qx-btn qx-btn--primary" :disabled="installingGame" @click="installGame">
         <IconPlay /> {{ t("instanceDetail.reinstall") }}
       </button>
     </div>
@@ -544,13 +544,13 @@ watch(
         <h3>{{ t("instanceDetail.gameNotInstalledTitle") }}</h3>
         <p>{{ t("instanceDetail.gameNotInstalledDesc", { version: instance.mc_version }) }}</p>
       </div>
-      <button class="btn primary" :disabled="installingGame" @click="installGame">
+      <button class="qx-btn qx-btn--primary" :disabled="installingGame" @click="installGame">
         <IconPlay /> {{ installingGame ? t("instanceDetail.installing") : t("instanceDetail.installGame") }}
       </button>
     </div>
 
-    <div ref="tabsBox" class="tabs glass">
-      <div class="indicator" :style="tabIndicatorStyle"></div>
+    <div ref="tabsBox" class="tabs qx-seg">
+      <div class="qx-seg__indicator" :style="tabIndicatorStyle"></div>
       <button
         v-for="tabItem in tabs"
         :key="tabItem.key"
@@ -593,9 +593,9 @@ watch(
       <!-- screenshots -->
       <template v-if="tab === 'screenshots'">
         <div v-if="loadingShots" class="center">{{ t("instanceDetail.loading") }}</div>
-        <div v-else-if="!shotFiles.length" class="empty glass">
+        <div v-else-if="!shotFiles.length" class="qx-empty glass">
           <p>{{ t("instanceDetail.noScreenshots") }}</p>
-          <button class="btn ghost" @click="openTabFolder"><IconFolder /> {{ t("instanceDetail.openScreenshotsFolder") }}</button>
+          <button class="qx-btn" @click="openTabFolder"><IconFolder /> {{ t("instanceDetail.openScreenshotsFolder") }}</button>
         </div>
         <div v-else class="shot-grid">
           <div
@@ -716,7 +716,7 @@ watch(
   width: 22px;
   height: 22px;
   margin-left: 8px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   vertical-align: middle;
   color: var(--warn);
   background: rgba(232, 163, 61, 0.14);
@@ -734,23 +734,23 @@ watch(
 .symlink-tip strong {
   display: block;
   margin-bottom: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--warn);
 }
 .symlink-tip p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.7;
   word-break: break-all;
 }
 .d-icon {
   width: 56px;
   height: 56px;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   overflow: hidden;
   background: transparent;
   position: relative;
-  font-size: 26px;
+  font-size: var(--fs-xl);
   color: var(--accent);
   flex-shrink: 0;
   box-sizing: border-box;
@@ -765,18 +765,20 @@ watch(
 }
 .d-info h1 {
   margin: 0 0 6px;
-  font-size: 21px;
+  /* 详情页主标题与 .qx-page-title 同档（20），此前是 21 与其它页差 1px */
+  font-size: var(--fs-lg);
+  line-height: 1.2;
 }
 .d-meta {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .badge {
   background: var(--accent-16);
   color: var(--accent);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   padding: 1px 8px;
   font-weight: 600;
 }
@@ -791,51 +793,10 @@ watch(
   display: flex;
   gap: 8px;
 }
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.14s;
-}
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-}
-.btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn.ghost {
-  background: var(--w-06);
-  color: var(--text-1);
-  border: 1px solid var(--border);
-}
-.btn.ghost:hover {
-  background: var(--w-10);
-}
-.btn.ghost.pin.active {
+.pin.active {
   color: var(--accent);
   border-color: var(--accent-04);
   background: var(--accent-soft);
-}
-.btn.danger {
-  background: var(--w-06);
-  color: var(--text-1);
-  border: 1px solid var(--border);
-}
-.btn.danger:hover {
-  color: var(--danger);
-  border-color: var(--danger-50);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 .not-installed {
   padding: 20px 24px;
@@ -847,13 +808,13 @@ watch(
 }
 .not-installed h3 {
   margin: 0 0 4px;
-  font-size: 15px;
+  font-size: var(--fs-md);
   color: var(--warn);
 }
 .not-installed p {
   margin: 0;
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .not-installed.installing {
   border-color: var(--accent-40);
@@ -879,44 +840,30 @@ watch(
 }
 .bar {
   height: 6px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   background: var(--w-08);
   overflow: hidden;
 }
 .fill {
   height: 100%;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   background: linear-gradient(90deg, var(--accent-deep), var(--accent));
   transition: width 0.3s ease;
 }
 .bar-info {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
   gap: 12px;
   margin-top: 5px;
 }
+/* 页面级标签栏：容器 / 按钮 / 滑块的尺寸与配色全走全局 .qx-seg，
+   这里只保留「占满整行、右侧操作区靠右」这条布局差异 */
 .tabs {
-  position: relative;
   display: flex;
-  flex-wrap: nowrap;
   align-items: center;
-  gap: 4px;
-  padding: 6px;
-}
-.indicator {
-  position: absolute;
-  top: 6px;
-  height: calc(100% - 12px);
-  border-radius: 9px;
-  background: var(--accent-soft);
-  transition:
-    left 0.28s var(--ease-out),
-    width 0.28s var(--ease-out),
-    opacity 0.18s;
-  pointer-events: none;
 }
 /* 切 tab 的内容入场：只做布局位移（padding-top 8px → 0），内容从下方 8px
    抬到位。两个同名关键帧交替触发，见 script 里的 tabSwap。
@@ -945,64 +892,17 @@ watch(
     padding-top: 0;
   }
 }
-.tab {
-  display: flex;
-  align-items: center;
-  gap: 7px;
-  padding: 8px 14px;
-  border-radius: 9px;
-  border: none;
-  background: transparent;
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.12s;
-  flex-shrink: 0;
-  white-space: nowrap;
-}
-.tab:hover {
-  background: var(--w-05);
-}
-.tab.active {
-  color: var(--accent);
-}
 .tab-right {
   margin-left: auto;
   display: flex;
   gap: 6px;
   flex-shrink: 0;
 }
-.mini-btn.icon-only {
-  padding: 7px 9px;
-  position: relative;
-}
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.12s;
-  white-space: nowrap;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-  color: var(--text-1);
-}
 .upd-n {
   background: var(--accent);
   color: var(--accent-contrast);
-  border-radius: 10px;
-  font-size: 11px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-2xs);
   padding: 0 6px;
 }
 .center {
@@ -1035,29 +935,20 @@ watch(
   padding: 8px 10px;
 }
 .shot-name {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   margin-bottom: 3px;
 }
 .shot-meta {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .preview-img {
   width: 100%;
   max-height: 70vh;
   object-fit: contain;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--k-40);
-}
-.empty {
-  padding: 48px 24px;
-  text-align: center;
-  color: var(--text-3);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  align-items: center;
 }
 
 /* —— 拖拽遮罩 —— */
@@ -1076,8 +967,8 @@ watch(
   align-items: center;
   gap: 10px;
   padding: 20px 28px;
-  border-radius: 14px;
-  font-size: 15px;
+  border-radius: var(--r-lg);
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--accent);
   box-shadow: 0 12px 40px var(--k-50);

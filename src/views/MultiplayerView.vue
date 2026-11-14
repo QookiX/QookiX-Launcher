@@ -14,6 +14,7 @@ import { useServersStore } from "../stores/servers";
 import { useInstancesStore } from "../stores/instances";
 import type { ServerCore, TerracottaDownloadProgress, TerracottaInfo } from "../types";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
+import { showFrpFeatures } from "../composables/useDevFlags";
 import {
   IconBox,
   IconCheck,
@@ -228,6 +229,16 @@ const { indicatorStyle: tabSegStyle, refresh: refreshTabSeg } = useSlidingIndica
   () => TAB_INDEX[tab.value],
 );
 watch(tab, () => nextTick(() => refreshTabSeg()));
+
+// 内网穿透默认隐藏（开发者模式里的开关才放行）：功能被藏起来时
+// 不能把用户留在已经消失的页签上，退回到「服务器」。
+watch(
+  showFrpFeatures,
+  (on) => {
+    if (!on && tab.value === "tunnel") tab.value = "servers";
+  },
+  { immediate: true },
+);
 
 // 内网穿透的两个子页签（内容在 FrpPanel，页签本身放在顶栏）
 const frpSub = ref<"panel" | "local">("panel");
@@ -691,40 +702,43 @@ onUnmounted(() => stopTcPoll());
 <template>
   <div id="mp-root" class="mp-view" data-tauri-drag-region>
     <div class="mp-head">
-      <div id="mp-tabs" ref="tabSegRef" class="mode-tabs glass">
-      <div class="indicator" :style="tabSegStyle"></div>
-      <button :class="{ active: tab === 'servers' }" @click="tab = 'servers'">
-        <IconServer /> {{ t('multiplayer.tab.servers') }}
-      </button>
-      <button :class="{ active: tab === 'rooms' }" @click="tab = 'rooms'">
-        <IconUsers /> {{ t('multiplayer.tab.rooms') }}
-      </button>
-      <button :class="{ active: tab === 'friends' }" @click="tab = 'friends'">
-        <IconUser /> {{ t('qookix.tabs.friends') }}
-        <span v-if="qookix.pendingCount" class="tab-badge">{{ qookix.pendingCount }}</span>
-      </button>
-      <button :class="{ active: tab === 'tunnel' }" @click="tab = 'tunnel'">
-        <IconGlobe /> {{ t("frp.title") }}
-      </button>
+      <div id="mp-tabs" ref="tabSegRef" class="qx-seg mode-tabs">
+        <div class="qx-seg__indicator" :style="tabSegStyle"></div>
+        <button :class="{ active: tab === 'servers' }" @click="tab = 'servers'">
+          <IconServer /> {{ t('multiplayer.tab.servers') }}
+        </button>
+        <button :class="{ active: tab === 'rooms' }" @click="tab = 'rooms'">
+          <IconUsers /> {{ t('multiplayer.tab.rooms') }}
+        </button>
+        <button :class="{ active: tab === 'friends' }" @click="tab = 'friends'">
+          <IconUser /> {{ t('qookix.tabs.friends') }}
+          <span v-if="qookix.pendingCount" class="tab-badge">{{ qookix.pendingCount }}</span>
+        </button>
+        <button v-if="showFrpFeatures" :class="{ active: tab === 'tunnel' }" @click="tab = 'tunnel'">
+          <IconGlobe /> {{ t("frp.title") }}
+        </button>
       </div>
 
-      <!-- 内网穿透的子页签：和主标签同一行，靠右 -->
-      <!-- 常驻挂载、只切显隐：v-if 会在每次进页签时重新挂载，
-           一挂载就要重新测量，滑块会有一次可见的定位跳动 -->
+      <!-- 内网穿透的子页签：和主标签同一行，靠右。
+           功能开启时常驻挂载、只切显隐（v-if 每次进页签都重新挂载，
+           一挂载就要重新测量，滑块会有一次可见的定位跳动）；
+           整个功能默认隐藏，靠开发者页的开关整体放行。 -->
       <div
+        v-if="showFrpFeatures"
         ref="frpSubRef"
-        class="glass mp-subtabs"
+        class="qx-seg mp-subtabs"
         :class="{ hidden: tab !== 'tunnel' }"
       >
-        <div class="indicator" :style="frpSubStyle"></div>
-        <button :class="{ on: frpSub === 'panel' }" @click="frpSub = 'panel'">
+        <div class="qx-seg__indicator" :style="frpSubStyle"></div>
+        <button :class="{ active: frpSub === 'panel' }" @click="frpSub = 'panel'">
           {{ t("frp.panelTunnels") }}
-          <!-- 徽标先占位再显示：数量是异步来的，凭空多出个徽标会让按钮变宽、滑块跟着跳一下 -->
-          <span class="mp-sub-count" :class="{ ghost: !frpPanelCount }">{{ frpPanelCount }}</span>
+          <!-- 数量为 0 时直接不渲染：以前用 visibility:hidden 占位会在按钮里
+               留下一整块看不见的空白。数量到位时 watch 会重测滑块并平滑过渡。 -->
+          <span v-if="frpPanelCount" class="qx-badge mp-sub-count">{{ frpPanelCount }}</span>
         </button>
-        <button :class="{ on: frpSub === 'local' }" @click="frpSub = 'local'">
+        <button :class="{ active: frpSub === 'local' }" @click="frpSub = 'local'">
           {{ t("frp.localTunnels") }}
-          <span class="mp-sub-count" :class="{ ghost: !frpLocalCount }">{{ frpLocalCount }}</span>
+          <span v-if="frpLocalCount" class="qx-badge mp-sub-count">{{ frpLocalCount }}</span>
         </button>
       </div>
     </div>
@@ -786,7 +800,7 @@ onUnmounted(() => stopTcPoll());
       <div v-else class="empty glass">
         <div class="empty-icon"><IconServer /></div>
         <p>{{ t('multiplayer.empty.noServers') }}</p>
-        <button class="btn primary" @click="openCreate">{{ t('multiplayer.empty.createFirst') }}</button>
+        <button class="qx-btn qx-btn--primary" @click="openCreate">{{ t('multiplayer.empty.createFirst') }}</button>
       </div>
     </template>
 
@@ -826,10 +840,10 @@ onUnmounted(() => stopTcPoll());
             <span class="tc-dl-text">{{ tcDownloadText }}</span>
           </div>
           <div v-else class="tc-dl-actions">
-            <button class="btn primary" :disabled="tcLoading" @click="downloadTc">
+            <button class="qx-btn qx-btn--primary" :disabled="tcLoading" @click="downloadTc">
               <IconDownload /> {{ t('multiplayer.tc.download') }}
             </button>
-            <button class="btn ghost" :disabled="tcLoading" @click="refreshTc">
+            <button class="qx-btn" :disabled="tcLoading" @click="refreshTc">
               <IconRefresh /> {{ t('multiplayer.tc.recheck') }}
             </button>
           </div>
@@ -881,10 +895,10 @@ onUnmounted(() => stopTcPoll());
           <div class="tc-code-value mono">{{ tcRoomCodeFinal }}</div>
           <p class="tc-code-hint">{{ t('multiplayer.tc.roomCodeHint') }}</p>
           <div class="tc-code-actions">
-            <button class="btn primary" @click="copyRoomCode">
+            <button class="qx-btn qx-btn--primary" @click="copyRoomCode">
               <IconCopy /> {{ tcJoined ? t('multiplayer.tc.copied') : t('multiplayer.tc.copyCode') }}
             </button>
-            <button class="btn ghost" @click="leaveRoom"><IconClose /> {{ t('multiplayer.tc.leaveRoom') }}</button>
+            <button class="qx-btn" @click="leaveRoom"><IconClose /> {{ t('multiplayer.tc.leaveRoom') }}</button>
           </div>
 
           <!-- 分享到目录（可选账号） -->
@@ -951,7 +965,7 @@ onUnmounted(() => stopTcPoll());
             <b class="mono">{{ tcUrl || "127.0.0.1" }}</b>
           </p>
           <div class="tc-code-actions">
-            <button class="btn ghost" @click="leaveRoom"><IconClose /> {{ t('multiplayer.tc.leaveRoom') }}</button>
+            <button class="qx-btn" @click="leaveRoom"><IconClose /> {{ t('multiplayer.tc.leaveRoom') }}</button>
           </div>
         </div>
 
@@ -1037,7 +1051,7 @@ onUnmounted(() => stopTcPoll());
             <div class="tc-col">
               <div class="tc-sub-title"><IconBox /> {{ t('multiplayer.tc.createRoom') }}</div>
               <p class="tc-sub-desc">{{ t('multiplayer.tc.createRoomDesc') }}</p>
-              <button class="btn primary" :disabled="tcBusy" @click="createRoom">
+              <button class="qx-btn qx-btn--primary" :disabled="tcBusy" @click="createRoom">
                 <IconPlus /> {{ t('multiplayer.tc.createRoom') }}
               </button>
             </div>
@@ -1051,7 +1065,7 @@ onUnmounted(() => stopTcPoll());
                   :placeholder="t('multiplayer.tc.roomCodePlaceholder')"
                   @keyup.enter="joinRoom"
                 />
-                <button class="btn primary" :disabled="tcBusy" @click="joinRoom">
+                <button class="qx-btn qx-btn--primary" :disabled="tcBusy" @click="joinRoom">
                   <IconPlay /> {{ t('multiplayer.tc.join') }}
                 </button>
               </div>
@@ -1080,7 +1094,7 @@ onUnmounted(() => stopTcPoll());
     </template>
 
     <!-- 内网穿透（frp）：面板隧道 + 本地自定义隧道 -->
-    <template v-else>
+    <template v-else-if="tab === 'tunnel'">
       <section class="glass frp-tab">
         <FrpPanel :sub="frpSub" @counts="onFrpCounts" />
       </section>
@@ -1093,7 +1107,7 @@ onUnmounted(() => stopTcPoll());
       v-model:show="publishOpen"
       preset="card"
       :title="publishVisibility === 'public' ? t('qookix.rooms.publishTitle') : t('qookix.rooms.shareFriendsTitle')"
-      style="width: 460px; max-width: 92vw"
+      style="width: 420px; max-width: 92vw"
       :bordered="false"
     >
       <div class="dialog-body">
@@ -1146,8 +1160,8 @@ onUnmounted(() => stopTcPoll());
         </div>
 
         <div class="publish-ops">
-          <button class="btn ghost" @click="publishOpen = false">{{ t("common.cancel") }}</button>
-          <button class="btn primary" :disabled="shareBusy" @click="confirmPublish">
+          <button class="qx-btn" @click="publishOpen = false">{{ t("common.cancel") }}</button>
+          <button class="qx-btn qx-btn--primary" :disabled="shareBusy" @click="confirmPublish">
             {{ t("common.confirm") }}
           </button>
         </div>
@@ -1216,8 +1230,8 @@ onUnmounted(() => stopTcPoll());
         </div>
 
         <div class="dialog-foot">
-          <button class="btn ghost" @click="dialog = null">{{ t('multiplayer.dialog.cancel') }}</button>
-          <button class="btn primary" :disabled="!canSave || saving" @click="saveDialog">
+          <button class="qx-btn" @click="dialog = null">{{ t('multiplayer.dialog.cancel') }}</button>
+          <button class="qx-btn qx-btn--primary" :disabled="!canSave || saving" @click="saveDialog">
             <IconPlus /> {{ saving ? t('multiplayer.dialog.creating') : t('multiplayer.dialog.create') }}
           </button>
         </div>
@@ -1235,8 +1249,8 @@ onUnmounted(() => stopTcPoll());
       <div v-if="confirmState" class="confirm-body">
         <p class="confirm-text">{{ t('multiplayer.dialog.confirmDeletePrefix') }}<b>{{ confirmState.name }}</b>{{ t('multiplayer.dialog.confirmDeleteSuffix') }}</p>
         <div class="dialog-foot">
-          <button class="btn ghost" @click="confirmState = null">{{ t('multiplayer.dialog.cancel') }}</button>
-          <button class="btn danger" @click="doDelete">{{ t('multiplayer.dialog.delete') }}</button>
+          <button class="qx-btn" @click="confirmState = null">{{ t('multiplayer.dialog.cancel') }}</button>
+          <button class="qx-btn qx-btn--danger" @click="doDelete">{{ t('multiplayer.dialog.delete') }}</button>
         </div>
       </div>
     </n-modal>
@@ -1246,7 +1260,7 @@ onUnmounted(() => stopTcPoll());
       :show="installing !== null"
       preset="card"
       :title="t('multiplayer.dialog.preparingTitle')"
-      style="width: 460px; max-width: 92vw"
+      style="width: 420px; max-width: 92vw"
       :mask-closable="false"
       :close-on-esc="false"
     >
@@ -1278,83 +1292,15 @@ onUnmounted(() => stopTcPoll());
   flex-direction: column;
   gap: 16px;
 }
+/* 主标签与右上角「内网穿透」子标签都挂全局 .qx-seg（高度 / 内边距 / 配色 /
+   滑块全部由 components.css 提供），这里只留各自的布局差异：主标签靠左，
+   子标签靠右且不参与收缩。改尺寸请改全局类，别在页面里再写一套。 */
 .mode-tabs {
-  position: relative;
-  display: inline-flex;
-  gap: 4px;
-  padding: 5px;
   align-self: flex-start;
-}
-.mode-tabs .indicator {
-  position: absolute;
-  top: 5px;
-  bottom: 5px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.mode-tabs button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: none;
-  background: transparent;
-  color: var(--text-2);
-  padding: 8px 18px;
-  border-radius: 9px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.mode-tabs button.active {
-  color: var(--accent);
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s;
-}
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-}
-.btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn.ghost {
-  background: var(--w-06);
-  color: var(--text-1);
-  border: 1px solid var(--border);
-}
-.btn.ghost:hover {
-  background: var(--w-10);
-}
-.btn.danger {
-  background: var(--danger-16);
-  color: var(--danger-text);
-  border: 1px solid var(--danger-40);
-}
-.btn.danger:hover {
-  background: var(--danger-26);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 16px;
 }
 .server-card {
@@ -1393,7 +1339,7 @@ onUnmounted(() => stopTcPoll());
 .icon {
   width: 46px;
   height: 46px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1407,20 +1353,20 @@ onUnmounted(() => stopTcPoll());
 }
 .name {
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--fs-md);
   margin-bottom: 5px;
 }
 .meta {
   display: flex;
   align-items: center;
   gap: 7px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .core-badge {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   border: 1px solid;
   letter-spacing: 0.02em;
   flex-shrink: 0;
@@ -1432,7 +1378,7 @@ onUnmounted(() => stopTcPoll());
 /* 连接地址：独占一行，不受徽标/版本挤压；数字等宽，换端口时宽度不抖 */
 .addr {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.4;
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
@@ -1440,7 +1386,7 @@ onUnmounted(() => stopTcPoll());
 }
 /* 服务器描述（MOTD）：MC 客户端风格的彩色文本区，支持 § / & 格式化码 */
 .card-motd {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--text-2);
   min-width: 0;
@@ -1456,7 +1402,7 @@ onUnmounted(() => stopTcPoll());
   padding-top: 11px;
 }
 .foot-info {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   display: flex;
   align-items: center;
@@ -1507,7 +1453,7 @@ onUnmounted(() => stopTcPoll());
 .icon-btn {
   width: 32px;
   height: 32px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
@@ -1515,7 +1461,7 @@ onUnmounted(() => stopTcPoll());
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-base);
   transition: all 0.12s;
 }
 .icon-btn:hover {
@@ -1542,7 +1488,7 @@ onUnmounted(() => stopTcPoll());
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
+  gap: var(--sp-4);
   color: var(--text-3);
 }
 .empty-icon {
@@ -1551,14 +1497,11 @@ onUnmounted(() => stopTcPoll());
 }
 .empty p {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .empty .sub {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
-}
-.rooms-empty {
-  margin-top: 40px;
 }
 .dialog-body {
   display: flex;
@@ -1571,7 +1514,7 @@ onUnmounted(() => stopTcPoll());
   gap: 8px;
 }
 .field label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -1586,7 +1529,7 @@ onUnmounted(() => stopTcPoll());
   gap: 2px;
   align-items: flex-start;
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-2);
@@ -1604,11 +1547,11 @@ onUnmounted(() => stopTcPoll());
   color: var(--accent);
 }
 .core-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
 }
 .core-desc {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .core-btn.active .core-desc {
@@ -1623,8 +1566,8 @@ onUnmounted(() => stopTcPoll());
   background: var(--w-05);
   color: var(--text-2);
   padding: 7px 16px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -1640,7 +1583,7 @@ onUnmounted(() => stopTcPoll());
   max-height: 240px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 4px;
 }
 .ver-item {
@@ -1652,7 +1595,7 @@ onUnmounted(() => stopTcPoll());
   background: transparent;
   color: var(--text-2);
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   font-family: inherit;
   text-align: left;
@@ -1666,17 +1609,17 @@ onUnmounted(() => stopTcPoll());
   color: var(--accent);
 }
 .ver-id {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .ver-type {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .ver-empty {
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   padding: 16px 0;
 }
 .dialog-foot {
@@ -1691,7 +1634,7 @@ onUnmounted(() => stopTcPoll());
 }
 .confirm-text {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-2);
   line-height: 1.6;
 }
@@ -1724,13 +1667,13 @@ onUnmounted(() => stopTcPoll());
 }
 .install-name {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-1);
 }
 .install-phase {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .install-progress {
@@ -1742,7 +1685,7 @@ onUnmounted(() => stopTcPoll());
   margin-top: 2px;
 }
 .install-bytes {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   font-variant-numeric: tabular-nums;
 }
@@ -1766,17 +1709,17 @@ onUnmounted(() => stopTcPoll());
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 26px;
+  font-size: var(--fs-xl);
   overflow: hidden;
 }
 .tc-icon-img img {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .tc-hero-text {
   flex: 1;
@@ -1788,7 +1731,7 @@ onUnmounted(() => stopTcPoll());
 }
 .tc-hero-text p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   line-height: 1.5;
 }
@@ -1806,9 +1749,9 @@ onUnmounted(() => stopTcPoll());
   align-items: center;
   gap: 6px;
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-06);
   color: var(--text-1);
@@ -1834,10 +1777,10 @@ onUnmounted(() => stopTcPoll());
   gap: 6px;
   padding: 8px 14px;
   border: 1px solid var(--accent-45);
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -1865,13 +1808,13 @@ onUnmounted(() => stopTcPoll());
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   color: var(--text-1);
 }
 .tc-dl-desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   line-height: 1.6;
 }
@@ -1887,32 +1830,32 @@ onUnmounted(() => stopTcPoll());
 }
 .tc-dl-bar {
   height: 12px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--w-07);
   border: 1px solid var(--border);
   overflow: hidden;
 }
 .tc-dl-fill {
   height: 100%;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: linear-gradient(90deg, var(--accent), var(--accent-2, var(--accent)));
   transition: width 0.2s ease;
 }
 .tc-dl-text {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .tc-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .tc-hint code {
   padding: 2px 6px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--w-06);
   border: 1px solid var(--border);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .tc-license {
   display: flex;
@@ -1925,11 +1868,11 @@ onUnmounted(() => stopTcPoll());
   bottom: 12px;
   z-index: 40;
   padding: 5px 14px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--panel);
   border: 1px solid var(--border);
   backdrop-filter: blur(var(--glass-blur, 8px));
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   text-align: center;
   white-space: nowrap;
@@ -1943,48 +1886,6 @@ onUnmounted(() => stopTcPoll());
   color: var(--accent);
   text-decoration: underline;
 }
-.tc-actions {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px;
-  margin-top: 4px;
-}
-.tc-action {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 20px;
-  text-align: left;
-  color: var(--text-1);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  background: var(--panel);
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s;
-}
-.tc-action:hover:not(:disabled) {
-  background: var(--panel-hover);
-  border-color: var(--accent-45);
-  transform: translateY(-1px);
-}
-.tc-action:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.tc-action-icon {
-  font-size: 22px;
-  color: var(--accent);
-}
-.tc-action-name {
-  font-size: 15px;
-  font-weight: 700;
-}
-.tc-action-desc {
-  font-size: 12px;
-  color: var(--text-3);
-}
 .tc-code-card {
   display: flex;
   flex-direction: column;
@@ -1997,7 +1898,7 @@ onUnmounted(() => stopTcPoll());
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -2008,11 +1909,11 @@ onUnmounted(() => stopTcPoll());
   color: var(--accent);
   background: var(--accent-soft);
   padding: 12px 22px;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
 }
 .tc-code-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .tc-code-hint .mono {
@@ -2028,7 +1929,7 @@ onUnmounted(() => stopTcPoll());
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -2039,8 +1940,8 @@ onUnmounted(() => stopTcPoll());
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
-  font-size: 12px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-soft);
@@ -2056,7 +1957,7 @@ onUnmounted(() => stopTcPoll());
   gap: 10px;
   padding: 8px 10px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--panel);
 }
 .tc-player-avatar {
@@ -2066,7 +1967,7 @@ onUnmounted(() => stopTcPoll());
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-soft);
@@ -2076,7 +1977,7 @@ onUnmounted(() => stopTcPoll());
   min-width: 0;
 }
 .tc-player-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 500;
   color: var(--text-1);
   overflow: hidden;
@@ -2084,7 +1985,7 @@ onUnmounted(() => stopTcPoll());
   white-space: nowrap;
 }
 .tc-player-uuid {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2092,17 +1993,17 @@ onUnmounted(() => stopTcPoll());
 }
 .tc-player-desc {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .tc-player-ping {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 500;
   color: var(--accent);
   background: var(--accent-soft);
   padding: 2px 8px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .tc-scan-card {
   display: flex;
@@ -2130,13 +2031,13 @@ onUnmounted(() => stopTcPoll());
   }
 }
 .tc-scan-title {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-1);
 }
 .tc-scan-sub {
   margin: 2px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .tc-scan-steps {
@@ -2145,14 +2046,14 @@ onUnmounted(() => stopTcPoll());
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--panel);
 }
 .tc-scan-step {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .tc-step-num {
@@ -2163,7 +2064,7 @@ onUnmounted(() => stopTcPoll());
   align-items: center;
   justify-content: center;
   border-radius: 50%;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--accent);
   background: var(--accent-soft);
@@ -2173,7 +2074,7 @@ onUnmounted(() => stopTcPoll());
 }
 .tc-scan-tip {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .tc-code-actions {
@@ -2205,13 +2106,13 @@ onUnmounted(() => stopTcPoll());
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
   color: var(--text-1);
 }
 .tc-sub-desc {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .tc-join-input {
@@ -2228,7 +2129,7 @@ onUnmounted(() => stopTcPoll());
 .tc-field-label {
   display: block;
   margin-bottom: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .tc-divider {
@@ -2239,7 +2140,7 @@ onUnmounted(() => stopTcPoll());
 /* 公开到大厅弹窗 */
 .publish-desc {
   margin: 0 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-3);
 }
@@ -2257,13 +2158,8 @@ onUnmounted(() => stopTcPoll());
   justify-content: space-between;
   gap: 12px;
 }
-/* 和主标签同一套玻璃胶囊：同一个 .glass 底 + 5px 内边距 */
+/* 子标签只留布局差异；按钮 / 指示器规格由全局 .qx-seg 提供 */
 .mp-subtabs {
-  position: relative;
-  display: inline-flex;
-  gap: 4px;
-  padding: 5px;
-  border-radius: 11px;
   flex: none;
 }
 /* 不在穿透页时隐藏但仍占位：宽度保持不变，滑块不用重新测 */
@@ -2271,65 +2167,18 @@ onUnmounted(() => stopTcPoll());
   visibility: hidden;
   pointer-events: none;
 }
-
-/* 和主标签同款滑动指示器（位置由 useSlidingIndicator 内联提供） */
-.mp-subtabs .indicator {
-  position: absolute;
-  top: 5px;
-  bottom: 5px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.mp-subtabs button {
-  position: relative;
-  z-index: 1;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 11px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-3);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: color 0.15s;
-}
-.mp-subtabs button:hover {
-  color: var(--text-1);
-}
-/* 背景交给滑动指示器，这里只负责文字颜色；点完不留焦点描边 */
-.mp-subtabs button.on {
-  color: var(--accent);
-}
-.mp-subtabs button:focus {
-  outline: none;
-}
+/* 数量徽标沿用全局 .qx-badge，这里只压成等宽数字块；
+   数量为 0 时模板直接不渲染，不再用隐藏元素占位留空白 */
 .mp-sub-count {
-  min-width: 16px;
-  height: 16px;
-  padding: 0 4px;
-  border-radius: 999px;
-  background: var(--w-06);
-  font-size: 10px;
-  line-height: 16px;
-  text-align: center;
-  color: var(--text-3);
-  transition: opacity 0.15s ease;
-}
-/* 数量还没回来时只保留占位宽度，不显示内容——避免滑块跟着抖一下 */
-.mp-sub-count.ghost {
-  visibility: hidden;
-  opacity: 0;
+  min-width: var(--sp-6);
+  justify-content: center;
+  padding: 0 var(--sp-1);
 }
 
 /* 内网穿透标签页：与好友/房间面板同一套卡片内边距 */
 .frp-tab {
-  padding: 18px 20px;
-  border-radius: 14px;
+  padding: var(--sp-6) var(--sp-7);
+  border-radius: var(--r-lg);
   min-width: 0;
 }
 
@@ -2339,10 +2188,10 @@ onUnmounted(() => stopTcPoll());
   min-width: 16px;
   height: 16px;
   padding: 0 4px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--danger, #e5534b);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   line-height: 16px;
   text-align: center;
 }
@@ -2371,7 +2220,7 @@ onUnmounted(() => stopTcPoll());
   box-shadow: 0 0 0 3px var(--accent-08, rgba(232, 154, 75, 0.16));
 }
 .tc-share-text {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .tc-share-sep {
@@ -2386,7 +2235,7 @@ onUnmounted(() => stopTcPoll());
   border: none;
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   color: var(--text-2);
   white-space: nowrap;
@@ -2409,7 +2258,7 @@ onUnmounted(() => stopTcPoll());
   color: var(--text-3);
 }
 .tc-lock {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 </style>

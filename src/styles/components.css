@@ -1,0 +1,620 @@
+/* ============================================================================
+   components.css —— 可复用组件类（qx-*）
+   页面里需要「卡片 / 按钮 / 提示条 / 空状态」时直接用这里的类，
+   不要再在 <style scoped> 里重新定义一遍同款外观。
+   规格与 docs/ui-design-guideline.md §5 对齐；新增类先看该文档再动手。
+   ----------------------------------------------------------------------------
+   qx-page                                               页面纵向骨架（无宽度上限）
+   qx-toolbar                                            工具条
+   qx-card (+ __head / __title / __body)                 玻璃卡片
+   qx-btn (--lg/--md/--sm/--xs/--primary/--ghost/--danger/--block)
+   qx-seg (+ __indicator)                                分段控件 / 标签页
+   qx-hint (--blue/--yellow/--red)                       提示条
+   qx-badge                                              小标签
+   qx-listitem                                           两行列表项
+   qx-empty (+ __icon / __title / __desc)                空状态
+   qx-input / qx-divider / qx-section-title
+   ========================================================================== */
+
+/* —— 页面骨架 ——
+   内容区**不设宽度上限**：页面宽度直接跟随窗口，左对齐，不再居中收窄。
+   （2026-11-14 决定：宽屏下把内容锁在 1120 会让右半边空掉一大片，且各页加不加
+   上限全靠自觉，反而更容易不一致——统一为「都不加」。）
+   需要限制的场合是少见的，届时在单个页面里写，不要改回全局。 */
+.qx-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap-page);
+  width: 100%;
+  min-height: 100%;
+}
+/* 页面标题类（.qx-page-head / -title / -sub）已移除：标题不是每页必须的，
+   目前没有任何页面在用。某页真需要时在它自己的样式里写，别再往共享层加。 */
+.qx-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  flex-wrap: wrap;
+  padding: 10px var(--sp-5);
+  border: 1px solid var(--border);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+}
+
+/* —— 网格：4 档列宽，见 docs/ui-design-guideline.md §6 —— */
+.qx-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: var(--gap-grid);
+}
+.qx-grid--card {
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+}
+.qx-grid--tile {
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+}
+.qx-grid--thumb {
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+}
+
+/* —— 卡片 ——
+   与 .glass 保持同一套底：--panel + radius 14 + backdrop 8，**不加描边、不加静止投影**。
+   全站真实卡片（.inst-card / .pin-card / .server-card / .tool-card / .p-card / 设置页
+   .card）本来就是这个样子；早先这里多出一条 border + --card-shadow，导致「按规范用
+   .qx-card 反而和周围不一样」。层次只在悬停时用 accent 细环表达（--card-shadow-hover）。 */
+.qx-card {
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid transparent;
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  transition:
+    box-shadow var(--dur-md) var(--ease-out),
+    border-color var(--dur-sm) var(--ease-out),
+    background var(--dur-sm) var(--ease-out);
+}
+.qx-card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  min-height: 44px;
+  padding: var(--sp-4) 18px;
+}
+.qx-card__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semi);
+  color: var(--text-1);
+}
+.qx-card__body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: 0 18px 18px;
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  line-height: 1.75;
+}
+/* 没有头部时，正文自己补上顶部内边距 */
+.qx-card--plain > .qx-card__body {
+  padding-top: 18px;
+}
+.qx-card__arrow {
+  margin-left: auto;
+  flex: none;
+  display: inline-flex;
+  color: var(--text-3);
+  transition: transform var(--dur-md) var(--ease-out);
+}
+.qx-card__arrow.is-open {
+  transform: rotate(90deg);
+}
+.qx-card--swap > .qx-card__head {
+  cursor: pointer;
+  border-radius: var(--r-lg);
+}
+.qx-card--swap > .qx-card__head:hover {
+  background: var(--w-04);
+}
+.qx-card--hover:hover {
+  box-shadow: var(--card-shadow-hover);
+}
+/* 需要明确边界的场合（拖拽区、可编辑块）才加描边，默认款不要 */
+.qx-card--outline {
+  border-color: var(--border);
+}
+
+/* —— 按钮：4 档尺寸 + 4 种变体 —— */
+.qx-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: var(--ctl-md);
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--w-06);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semi);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-sm) var(--ease-out),
+    border-color var(--dur-sm) var(--ease-out),
+    color var(--dur-sm) var(--ease-out);
+}
+.qx-btn:hover:not(:disabled) {
+  background: var(--panel-hover);
+  border-color: var(--accent-35);
+}
+.qx-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.qx-btn--lg {
+  height: var(--ctl-lg);
+  padding: 0 18px;
+}
+.qx-btn--sm {
+  height: var(--ctl-sm);
+  padding: 0 12px;
+  font-size: var(--fs-xs);
+  border-radius: var(--r-sm);
+}
+.qx-btn--xs {
+  height: var(--ctl-xs);
+  padding: 0 10px;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-medium);
+  border-radius: var(--r-xs);
+}
+.qx-btn--primary {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--accent-contrast);
+}
+.qx-btn--primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent));
+  border-color: transparent;
+}
+.qx-btn--ghost {
+  border-color: transparent;
+  background: transparent;
+  color: var(--text-2);
+}
+.qx-btn--ghost:hover:not(:disabled) {
+  background: var(--w-06);
+  border-color: transparent;
+  color: var(--text-1);
+}
+.qx-btn--danger {
+  background: var(--danger-14);
+  border-color: var(--danger-30);
+  color: var(--danger-text);
+}
+.qx-btn--danger:hover:not(:disabled) {
+  background: var(--danger-26);
+  border-color: var(--danger-40);
+}
+.qx-btn--block {
+  width: 100%;
+}
+
+/* —— 兼容层：历史 `.mini-btn` ——
+   页面里还有 17 个文件在用 `.mini-btn`，历史上各写各的：padding 有 4×8 / 5×9 / 5×10 /
+   6×10 / 7×12 / 7×13 六种，圆角 7/8/9 三种，高度从 24 到 34 不等。并排时按钮高度对不齐，
+   是「同一屏两块 UI」最直接的来源。
+   这里一次性把它定义为 §5.1 的 **sm 档**（= `.qx-btn--sm`），页面内的局部 `.mini-btn`
+   定义必须删掉——scoped 选择器会编译成 `.mini-btn[data-v-x]`，优先级高于本文件，留着就永远
+   盖不住。变体 `.primary` / `.danger` / `.active` / `.icon-only` 也在这里给全，页面里只留
+   纯布局覆写（如 `min-width`）。 */
+.mini-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-1);
+  height: var(--ctl-sm);
+  padding: 0 var(--sp-5);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--w-06);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background var(--dur-sm) var(--ease-out),
+    border-color var(--dur-sm) var(--ease-out),
+    color var(--dur-sm) var(--ease-out);
+}
+.mini-btn:hover:not(:disabled):not(.primary):not(.danger) {
+  background: var(--panel-hover);
+  border-color: var(--accent-35);
+}
+.mini-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* inline 强调：描边款。密集面板 / 列表行里的「这个可以点」用它，
+   整块渐变填充只在 .cta（区块主操作）上出现，避免一屏里到处是亮色块。 */
+.mini-btn.primary {
+  border-color: var(--accent-45);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.mini-btn.primary:hover:not(:disabled) {
+  border-color: var(--accent-60);
+  background: var(--accent-16);
+}
+/* 区块主操作：渐变填充，与 .qx-btn--primary 同色 */
+.mini-btn.cta {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
+  color: var(--accent-contrast);
+}
+.mini-btn.cta:hover:not(:disabled) {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent-hover), var(--accent));
+}
+
+.mini-btn.danger {
+  border-color: var(--danger-30);
+  background: var(--danger-14);
+  color: var(--danger-text);
+}
+.mini-btn.danger:hover:not(:disabled) {
+  border-color: var(--danger-40);
+  background: var(--danger-26);
+}
+.mini-btn.active {
+  border-color: var(--accent-45);
+  background: var(--accent-14);
+  color: var(--accent);
+}
+/* 纯图标：方的一颗，不要被 padding 撑成胶囊 */
+.mini-btn.icon-only {
+  width: var(--ctl-sm);
+  padding: 0;
+}
+/* 压在图片 / 地图 / 画布上的按钮：半透底会被底图冲掉，这里给实底 */
+.mini-btn.solid {
+  background: var(--bg-2);
+}
+.mini-btn svg {
+  flex: none;
+  font-size: var(--fs-base);
+}
+
+/* —— 分段控件 / 标签页：全站唯一实现（规格见 docs/ui-design-guideline.md §5.4）——
+   容器自带玻璃底，项是裸 <button>；滑块位置由 composables/useSlidingIndicator
+   给出 left/width，这里只管外观。页面里别再手写 indicator 或自己定高度。 */
+.qx-seg {
+  position: relative;
+  display: inline-flex;
+  gap: var(--sp-1);
+  padding: var(--sp-1);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+.qx-seg__indicator {
+  position: absolute;
+  top: var(--sp-1);
+  bottom: var(--sp-1);
+  border-radius: var(--r-sm);
+  background: var(--accent-soft);
+  pointer-events: none;
+}
+.qx-seg > button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: var(--ctl-lg);
+  padding: 0 var(--sp-5);
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semi);
+  white-space: nowrap;
+  flex: none;
+  cursor: pointer;
+  transition:
+    color var(--dur-sm) var(--ease-out),
+    background var(--dur-sm) var(--ease-out);
+}
+/* 悬停只铺一层淡底，**不**把文字提到 --text-1：
+   深色主题的 --text-1 是 #f2f3f7，几乎纯白，一悬停整条标签比选中态
+   （--accent）还抢眼，看起来像在发光。未选中项本来就该比选中项暗。 */
+.qx-seg > button:hover:not(:disabled):not(.active) {
+  background: var(--w-06);
+}
+.qx-seg > button.active {
+  color: var(--accent);
+}
+.qx-seg > button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* 紧凑档：面板 / 弹窗 / 表单行里的切换（不是页面级标签栏）。
+   只压尺寸，颜色、滑块、悬停反馈与默认档完全一致。 */
+.qx-seg--sm {
+  gap: 2px;
+  padding: var(--sp-1);
+  border-radius: var(--r-md);
+}
+.qx-seg--sm .qx-seg__indicator {
+  border-radius: var(--r-xs);
+}
+.qx-seg--sm > button {
+  height: var(--ctl-sm);
+  padding: 0 var(--sp-4);
+  font-size: var(--fs-xs);
+  border-radius: var(--r-xs);
+}
+
+/* —— 提示条 —— */
+.qx-hint {
+  display: flex;
+  align-items: stretch;
+  gap: var(--sp-3);
+  padding: 9px var(--sp-5);
+  border-radius: var(--r-md);
+  background: var(--info-14);
+  color: var(--text-2);
+  font-size: var(--fs-xs);
+  line-height: 1.7;
+}
+.qx-hint::before {
+  content: "";
+  flex: none;
+  width: 3px;
+  border-radius: var(--r-xs);
+  background: var(--info);
+}
+.qx-hint--yellow {
+  background: var(--warn-14);
+}
+.qx-hint--yellow::before {
+  background: var(--warn);
+}
+.qx-hint--red {
+  background: var(--danger-14);
+}
+.qx-hint--red::before {
+  background: var(--danger);
+}
+
+/* —— 小标签 —— */
+.qx-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 20px;
+  padding: 0 var(--sp-2);
+  border-radius: var(--r-xs);
+  background: var(--w-08);
+  color: var(--text-2);
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-semi);
+  white-space: nowrap;
+}
+.qx-badge--accent {
+  background: var(--accent-16);
+  color: var(--accent);
+}
+.qx-badge--danger {
+  background: var(--danger-14);
+  color: var(--danger-text);
+}
+
+/* —— 列表项 —— */
+.qx-listitem {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-5);
+  width: 100%;
+  padding: 10px;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+}
+.qx-listitem--clickable {
+  cursor: pointer;
+  transition: background var(--dur-sm) var(--ease-out), border-color var(--dur-sm) var(--ease-out);
+}
+.qx-listitem--clickable:hover {
+  background: var(--w-06);
+  border-color: var(--border);
+}
+.qx-listitem__logo {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  object-fit: cover;
+  background: var(--w-06);
+}
+.qx-listitem__main {
+  flex: 1;
+  min-width: 0;
+}
+.qx-listitem__title {
+  display: block;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semi);
+}
+.qx-listitem__info {
+  display: block;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  line-height: 1.5;
+}
+
+/* —— 空状态 —— */
+.qx-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-4);
+  padding: 48px 24px;
+  color: var(--text-3);
+  text-align: center;
+}
+.qx-empty__icon {
+  opacity: 0.5;
+}
+/* 空状态里的说明文字通常包在 <p> 里，统一去掉浏览器默认外边距 */
+.qx-empty p {
+  margin: 0;
+}
+.qx-empty__title {
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semi);
+  color: var(--text-2);
+}
+
+/* —— 输入框 / 下拉 ——
+   高度与按钮中档一致（32），这样表单行里 input 和 button 底边能对齐。
+   历史上有 4 份 `.text-input`（设置页 / 按键页 ×2 / 实例设置）圆角各不相同（8 / 10），
+   高度靠 padding 撑到 36，和旁边的按钮差 4px。这里收成一份，页面里只留 flex / min-width
+   这类布局覆写。 */
+.qx-input,
+.text-input {
+  height: var(--ctl-md);
+  padding: 0 var(--sp-5);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--w-06);
+  color: var(--text-1);
+  font: inherit;
+  font-size: var(--fs-sm);
+  outline: none;
+  transition:
+    border-color var(--dur-sm) var(--ease-out),
+    box-shadow var(--dur-sm) var(--ease-out);
+}
+.qx-input:focus,
+.text-input:focus {
+  border-color: var(--accent-50);
+  box-shadow: 0 0 0 2px var(--accent-16);
+}
+/* 多行输入不能吃固定高度，否则会被压成一条 32px 的缝 */
+textarea.qx-input,
+textarea.text-input {
+  height: auto;
+  min-height: 72px;
+  padding: var(--sp-3) var(--sp-5);
+  line-height: 1.6;
+  resize: vertical;
+}
+
+/* —— 分割线 / 区块标题 —— */
+.qx-divider {
+  height: 1px;
+  margin: 0;
+  border: 0;
+  background: var(--border);
+}
+.qx-section-title {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semi);
+  color: var(--text-1);
+}
+
+/* —— naive-ui 下拉菜单统一成应用内的玻璃面板风格。
+   菜单是 teleport 到 body 的，scoped 样式够不到，所以放在全局。 —— */
+.qx-select-menu {
+  --n-color: var(--panel) !important;
+  --n-border-radius: var(--r-md) !important;
+  --n-option-text-color: var(--text-1) !important;
+  --n-option-text-color-pending: var(--text-1) !important;
+  --n-option-text-color-active: var(--accent) !important;
+  --n-option-color-pending: var(--w-06) !important;
+  --n-option-color-active: var(--accent-soft) !important;
+  --n-option-check-color: var(--accent) !important;
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+/* ---------------------------------------------------------------------------
+   骨架屏原子（发现页内容分类 / 投影列表共用）
+   只放颜色变量、shimmer 动画与条块尺寸；每处卡片怎么排由各自组件决定，
+   这样两边的加载态看起来是同一套东西。
+   --------------------------------------------------------------------------- */
+.skel-card {
+  --skel-c: rgba(255, 255, 255, 0.07);
+  --skel-hi: rgba(255, 255, 255, 0.14);
+}
+:root.light .skel-card {
+  --skel-c: rgba(0, 0, 0, 0.06);
+  --skel-hi: rgba(0, 0, 0, 0.1);
+}
+.skel-icon,
+.skel-cover,
+.skel-line,
+.skel-tag,
+.skel-btn {
+  background: linear-gradient(90deg, var(--skel-c), var(--skel-hi), var(--skel-c));
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.3s ease-in-out infinite;
+}
+.skel-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--r-lg);
+  flex-shrink: 0;
+}
+.skel-line {
+  height: 11px;
+  border-radius: var(--r-xs);
+}
+.skel-line.w-30 { width: 30%; }
+.skel-line.w-32 { width: 32%; }
+.skel-line.w-40 { width: 40%; }
+.skel-line.w-45 { width: 45%; }
+.skel-line.w-60 { width: 60%; }
+.skel-line.w-70 { width: 70%; }
+.skel-line.w-80 { width: 80%; }
+.skel-line.w-92 { width: 92%; }
+.skel-tag {
+  width: 52px;
+  height: 18px;
+  border-radius: var(--r-sm);
+}
+.skel-btn {
+  width: 84px;
+  height: 28px;
+  border-radius: var(--r-sm);
+}
+@keyframes skel-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-icon,
+  .skel-cover,
+  .skel-line,
+  .skel-tag,
+  .skel-btn {
+    animation: none;
+  }
+}

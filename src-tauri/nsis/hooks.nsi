@@ -10,9 +10,14 @@ Var /GLOBAL QXOldInstallDir
 ;  upgrade, and remember the previous install location to repair shortcuts.
 ; ----------------------------------------------------------------------------
 !macro NSIS_HOOK_PREINSTALL
-  ; Best-effort: terminate a running QookiX before overwriting its binaries.
-  ; taskkill is built into Windows; failure (no process) is non-fatal.
-  ExecWait 'taskkill /im "${MAINBINARYNAME}.exe" /f' $0
+  ; Only terminate a running instance when there IS one to overwrite.
+  ; taskkill enumerates every process (including lsass.exe) and force-kills,
+  ; which scores as process enumeration / HIPS heuristics on a first-time
+  ; install where no previous binary exists. Skip it for fresh installs.
+  ${If} $UpdateMode = 1
+  ${OrIf} ${FileExists} "$INSTDIR\${MAINBINARYNAME}.exe"
+    ExecWait 'taskkill /im "${MAINBINARYNAME}.exe" /f' $0
+  ${EndIf}
   ; Remember previous install location (stored quoted in the registry) so the
   ; post-install step can fix shortcuts that still point to the old path.
   ReadRegStr $QXOldInstallDir SHCTX "${UNINSTKEY}" "InstallLocation"
@@ -109,3 +114,16 @@ Function un.RemoveReparsePoints
     Pop $1
     Pop $0
 FunctionEnd
+
+; ----------------------------------------------------------------------------
+;  POSTUNINSTALL: remove the persistent installer UI binary written by .onInit.
+;  Only our own directory is touched, and only for a real uninstall (updates
+;  re-use this copy on the next install).
+; ----------------------------------------------------------------------------
+!macro NSIS_HOOK_POSTUNINSTALL
+  ${If} $UpdateMode <> 1
+    Delete "$LOCALAPPDATA\${PRODUCTNAME}\InstallerUI\QookiXInstallerUI.exe"
+    RMDir "$LOCALAPPDATA\${PRODUCTNAME}\InstallerUI"
+    RMDir "$LOCALAPPDATA\${PRODUCTNAME}"
+  ${EndIf}
+!macroend

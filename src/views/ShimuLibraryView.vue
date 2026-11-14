@@ -1025,49 +1025,31 @@ function paidDetailLabel(p: ShimuPost): string {
 .search { flex: 1; min-width: 160px; max-width: 320px; }
 .sort { width: 104px; flex: none; }
 .flex-1 { flex: 1; }
-.count { font-size: 11px; color: var(--text-3); white-space: nowrap; }
-.muted { margin: 0; font-size: 12px; color: var(--text-3); }
+.count { font-size: var(--fs-2xs); color: var(--text-3); white-space: nowrap; }
+.muted { margin: 0; font-size: var(--fs-xs); color: var(--text-3); }
 
 /* —— 账号区 —— */
-.account-avatar { width: 26px; height: 26px; border-radius: 8px; object-fit: cover; flex: none; }
+.account-avatar { width: 26px; height: 26px; border-radius: var(--r-sm); object-fit: cover; flex: none; }
 .account-info { display: flex; flex-direction: column; line-height: 1.25; min-width: 0; }
-.account-name { font-size: 12px; color: var(--text-1); }
-.account-meta { font-size: 10px; color: var(--text-3); }
+.account-name { font-size: var(--fs-xs); color: var(--text-1); }
+.account-meta { font-size: var(--fs-2xs); color: var(--text-3); }
 .guest-badge {
   padding: 3px 8px;
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   background: var(--panel);
   border: 1px solid var(--border);
 }
 
 /* —— 通用按钮（与投影工坊一致） —— */
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--text-2);
-  font-family: inherit;
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.mini-btn:hover { background: var(--panel-hover); color: var(--text-1); }
-.mini-btn:disabled { opacity: 0.5; cursor: default; }
-.mini-btn.primary { border-color: var(--accent); color: var(--accent); }
-.mini-btn.primary:hover { background: var(--accent-soft); }
 .link-btn {
   padding: 0;
   border: none;
   background: none;
   color: var(--text-3);
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
 }
 .link-btn:hover { color: var(--accent); }
@@ -1076,7 +1058,7 @@ function paidDetailLabel(p: ShimuPost): string {
 .grid {
   display: grid;
   /* 投影卡片以封面为主，列宽比内容分类的 220px 略宽，图才看得清 */
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: var(--gap-grid, 16px);
   align-content: start;
 }
@@ -1103,7 +1085,7 @@ function paidDetailLabel(p: ShimuPost): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 /* —— 骨架屏布局：颜色变量 / shimmer / 条块尺寸来自 styles.css 公共原子 —— */
@@ -1143,7 +1125,7 @@ function paidDetailLabel(p: ShimuPost): string {
   width: 46px;
   height: 46px;
   aspect-ratio: auto;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   flex: none;
 }
 .skel-card.view-compact {
@@ -1153,7 +1135,7 @@ function paidDetailLabel(p: ShimuPost): string {
 .skel-card.view-compact .skel-cover {
   width: 30px;
   height: 30px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
 }
 .skel-card.view-list .skel-body,
 .skel-card.view-compact .skel-body {
@@ -1179,14 +1161,14 @@ function paidDetailLabel(p: ShimuPost): string {
 .detail { display: flex; flex-direction: column; gap: 8px; padding: var(--pad-panel, 20px 24px); }
 .detail-head { display: flex; align-items: center; justify-content: space-between; flex: none; }
 .detail-title { margin: 0; font-size: 17px; line-height: 1.45; color: var(--text-1); }
-.detail-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11px; color: var(--text-3); }
+.detail-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: var(--fs-2xs); color: var(--text-3); }
 .detail-meta .paid { color: var(--accent); }
 .detail-meta .tags { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 46%; }
 .detail-scroll { display: flex; flex-direction: column; gap: 12px; padding-top: 4px; }
 .gallery { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 2px; }
 .gallery img {
   height: 150px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   flex: none;
   object-fit: cover;
   border: 1px solid var(--border);
@@ -1194,9 +1176,9 @@ function paidDetailLabel(p: ShimuPost): string {
   transition: border-color 0.15s;
 }
 .gallery img:hover { border-color: var(--accent); }
-.detail-body { font-size: 13px; line-height: 1.75; color: var(--text-1); overflow-wrap: anywhere; user-select: text; cursor: text; }
+.detail-body { font-size: var(--fs-sm); line-height: 1.75; color: var(--text-1); overflow-wrap: anywhere; user-select: text; cursor: text; }
 /* —— 富文本排版（帖子正文由站内编辑器生成） —— */
-.detail-body :deep(img) { max-width: 100%; height: auto; border-radius: 8px; display: block; margin: 8px 0; cursor: zoom-in; }
+.detail-body :deep(img) { max-width: 100%; height: auto; border-radius: var(--r-sm); display: block; margin: 8px 0; cursor: zoom-in; }
 .detail-body :deep(a) { color: var(--accent); text-decoration: none; }
 .detail-body :deep(a:hover) { text-decoration: underline; }
 .detail-body :deep(p) { margin: 0 0 10px; }
@@ -1206,8 +1188,8 @@ function paidDetailLabel(p: ShimuPost): string {
 .detail-body :deep(h4) { margin: 14px 0 8px; line-height: 1.4; color: var(--text-1); }
 .detail-body :deep(h1) { font-size: 18px; }
 .detail-body :deep(h2) { font-size: 16px; }
-.detail-body :deep(h3) { font-size: 15px; }
-.detail-body :deep(h4) { font-size: 14px; }
+.detail-body :deep(h3) { font-size: var(--fs-md); }
+.detail-body :deep(h4) { font-size: var(--fs-base); }
 .detail-body :deep(ul),
 .detail-body :deep(ol) { margin: 0 0 10px; padding-left: 22px; }
 .detail-body :deep(li) { margin: 3px 0; }
@@ -1222,26 +1204,26 @@ function paidDetailLabel(p: ShimuPost): string {
 .detail-body :deep(pre) {
   margin: 10px 0;
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--bg-2);
   overflow-x: auto;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 .detail-body :deep(code) {
   font-family: "Cascadia Code", Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   background: var(--panel);
   padding: 1px 5px;
-  border-radius: 5px;
+  border-radius: var(--r-xs);
 }
 .detail-body :deep(pre code) { background: none; padding: 0; }
 .detail-body :deep(table) {
   width: 100%;
   margin: 10px 0;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   display: block;
   overflow-x: auto;
 }
@@ -1250,7 +1232,7 @@ function paidDetailLabel(p: ShimuPost): string {
 .detail-body :deep(th) { background: var(--panel); color: var(--text-1); }
 .detail-body :deep(hr) { border: none; border-top: 1px solid var(--border); margin: 14px 0; }
 .detail-body :deep(video),
-.detail-body :deep(iframe) { max-width: 100%; border-radius: 8px; border: none; }
+.detail-body :deep(iframe) { max-width: 100%; border-radius: var(--r-sm); border: none; }
 /* 正文里的附件卡（.re-file[data-url]，站点编辑器产物）：整块可点，点了就下载 */
 .detail-body :deep(.re-file) {
   display: inline-flex;
@@ -1258,25 +1240,25 @@ function paidDetailLabel(p: ShimuPost): string {
   gap: 6px;
   margin: 6px 0;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--panel);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   transition: border-color 0.15s, background 0.15s;
 }
 .detail-body :deep(.re-file:hover) { border-color: var(--accent); background: var(--panel-hover); }
 .detail-body :deep(.re-file-name) { color: var(--accent); }
 .detail-body :deep(.re-file-size),
-.detail-body :deep(.re-file-tag) { color: var(--text-3); font-size: 11px; }
+.detail-body :deep(.re-file-tag) { color: var(--text-3); font-size: var(--fs-2xs); }
 .detail-body :deep(:first-child) { margin-top: 0; }
 .detail-body :deep(:last-child) { margin-bottom: 0; }
 .locked {
   padding: 10px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--accent-soft);
   border-left: 3px solid var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-1);
 }
@@ -1299,10 +1281,10 @@ function paidDetailLabel(p: ShimuPost): string {
   gap: 8px;
   flex-wrap: wrap;
   padding: 9px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--accent-soft);
   border-left: 3px solid var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-1);
 }
@@ -1311,25 +1293,24 @@ function paidDetailLabel(p: ShimuPost): string {
   min-width: 160px;
 }
 .files { display: flex; flex-direction: column; gap: 8px; }
-.files-head { font-size: 12px; color: var(--text-3); }
+.files-head { font-size: var(--fs-xs); color: var(--text-3); }
 .file {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--panel);
 }
 .file-kind {
   flex: none;
   padding: 2px 8px;
-  border-radius: 5px;
-  font-size: 11px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   background: var(--bg-2);
 }
-.file-size { flex: none; font-size: 11px; color: var(--text-3); }
-.file .mini-btn { padding: 4px 10px; font-size: 11px; }
+.file-size { flex: none; font-size: var(--fs-2xs); color: var(--text-3); }
 
 /* —— 图片放大查看 —— */
 .file-name {
@@ -1338,7 +1319,7 @@ function paidDetailLabel(p: ShimuPost): string {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 .picker-row { display: flex; gap: 8px; align-items: center; }

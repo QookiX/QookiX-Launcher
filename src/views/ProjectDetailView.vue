@@ -398,10 +398,10 @@ watch([provider, projectId], loadProject);
   <div class="pd" data-tauri-drag-region>
     <div class="toolbar glass">
       <div class="toolbar-row">
-        <button class="btn ghost" @click="router.back()">
+        <button class="qx-btn" @click="router.back()">
           <IconChevronLeft /> {{ t("projectDetail.back") }}
         </button>
-        <button v-if="project" class="btn ghost" style="margin-left: auto;" @click="openSite">
+        <button v-if="project" class="qx-btn" style="margin-left: auto;" @click="openSite">
           <IconExternal /> {{ t("projectDetail.viewOnSite") }}
         </button>
       </div>
@@ -433,18 +433,18 @@ watch([provider, projectId], loadProject);
           </div>
         </div>
         <div class="pd-head-actions">
-          <button class="btn ghost fav-btn" :class="{ on: isFav }" @click="toggleFavorite">
+          <button class="qx-btn fav-btn" :class="{ on: isFav }" @click="toggleFavorite">
             <IconStarFilled v-if="isFav" /><IconStar v-else />
             {{ isFav ? t("projectDetail.favorited") : t("projectDetail.favorite") }}
           </button>
-          <button class="btn primary" @click="openInstall">
+          <button class="qx-btn qx-btn--primary" @click="openInstall">
             <IconDownload /> {{ t("projectDetail.install") }}
           </button>
         </div>
       </div>
 
-      <div ref="tabBox" class="type-card glass">
-        <div class="indicator" :style="tabIndicatorStyle"></div>
+      <div ref="tabBox" class="type-card qx-seg">
+        <div class="qx-seg__indicator" :style="tabIndicatorStyle"></div>
         <button
           v-for="k in tabKeys"
           :key="k"
@@ -587,37 +587,6 @@ watch([provider, projectId], loadProject);
 </template>
 
 <style scoped>
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.14s;
-}
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-}
-.btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn.ghost {
-  background: var(--w-06);
-  color: var(--text-1);
-}
-.btn.ghost:hover {
-  background: var(--w-10);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
 .toolbar {
   display: flex;
   flex-direction: column;
@@ -637,7 +606,7 @@ watch([provider, projectId], loadProject);
 }
 .pd-state {
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-base);
   padding: 32px 0;
   text-align: center;
 }
@@ -650,7 +619,7 @@ watch([provider, projectId], loadProject);
 .pd-icon {
   width: 88px;
   height: 88px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   object-fit: cover;
   flex-shrink: 0;
 }
@@ -663,20 +632,20 @@ watch([provider, projectId], loadProject);
 }
 .pd-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 800;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-bold);
   color: var(--text-1);
 }
 .pd-meta {
   display: flex;
   flex-wrap: wrap;
   gap: 6px 14px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .pd-desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   line-height: 1.6;
 }
@@ -686,9 +655,9 @@ watch([provider, projectId], loadProject);
   gap: 6px;
 }
 .pd-cat {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--panel);
   color: var(--text-2);
 }
@@ -723,9 +692,9 @@ watch([provider, projectId], loadProject);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-2);
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 6px 13px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -745,7 +714,7 @@ watch([provider, projectId], loadProject);
   cursor: default;
 }
 .pd-body-note {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin-bottom: 10px;
 }
@@ -757,41 +726,13 @@ watch([provider, projectId], loadProject);
 .pdbodyfade-leave-to {
   opacity: 0;
 }
+/* 外观走全局 .qx-seg，这里只保留对齐 */
 .type-card {
-  position: relative;
-  display: inline-flex;
-  gap: 4px;
-  padding: 5px;
   align-self: flex-start;
-}
-.type-card .indicator {
-  position: absolute;
-  top: 5px;
-  bottom: 5px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.type-card button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  border: none;
-  background: transparent;
-  color: var(--text-2);
-  padding: 8px 18px;
-  border-radius: 9px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.type-card button.active {
-  color: var(--accent);
 }
 .pd-prose {
   color: var(--text-2);
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1.75;
 }
 .pd-prose :deep(h1),
@@ -805,18 +746,18 @@ watch([provider, projectId], loadProject);
 }
 .pd-prose :deep(img) {
   max-width: 100%;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 .pd-prose :deep(code) {
   background: var(--panel);
   padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 12px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
 }
 .pd-prose :deep(pre) {
   background: var(--panel);
   padding: 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow-x: auto;
 }
 .pd-ver-list {
@@ -835,8 +776,8 @@ watch([provider, projectId], loadProject);
   background: var(--w-06);
   color: var(--text-2);
   padding: 5px 14px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -856,7 +797,7 @@ watch([provider, projectId], loadProject);
   margin-top: 16px;
 }
 .pd-pager-total {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .pd-load-more-btn {
@@ -864,8 +805,8 @@ watch([provider, projectId], loadProject);
   background: var(--w-08);
   color: var(--text-1);
   padding: 6px 16px;
-  border-radius: 8px;
-  font-size: 12px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -901,7 +842,7 @@ watch([provider, projectId], loadProject);
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--w-08);
   color: var(--text-2);
   cursor: pointer;
@@ -917,7 +858,7 @@ watch([provider, projectId], loadProject);
   gap: 10px;
 }
 .pd-ver-name {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
   color: var(--text-1);
   overflow: hidden;
@@ -926,10 +867,10 @@ watch([provider, projectId], loadProject);
 }
 .pd-ver-type {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 2px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--border);
   color: var(--text-3);
 }
@@ -946,18 +887,18 @@ watch([provider, projectId], loadProject);
   flex-wrap: wrap;
   gap: 4px 12px;
   margin-top: 4px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 /* ---- 图库页签 ---- */
 .pd-tab-count {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 0 6px;
   height: 16px;
   line-height: 16px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--w-10);
   color: var(--text-3);
 }
@@ -975,7 +916,7 @@ watch([provider, projectId], loadProject);
   padding: 0;
   /* 和其它卡片一致：常驻 1px 边框，悬浮时只换边框色 + 底色，不做位移 */
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   cursor: zoom-in;
   background: var(--panel);
@@ -998,7 +939,7 @@ watch([provider, projectId], loadProject);
   right: 0;
   bottom: 0;
   padding: 14px 10px 7px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   text-align: left;
   color: #fff;

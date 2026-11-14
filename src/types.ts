@@ -55,6 +55,21 @@ export interface Settings {
   content_mirror: string;
   /** 自定义内容 API 镜像根地址（content_mirror === "custom" 时生效） */
   content_mirror_custom: string;
+  /**
+   * 背景类型：`gradient`（渐变底）| `image`（自定义图片）| `scene`（实时渲染的动态场景）。
+   * 空字符串 = 自动：有 background_image 用图片，否则渐变（兼容旧配置）。
+   */
+  background_mode: string;
+  /**
+   * 动态场景 id（`scene` 模式下生效），见 `src/components/background/scenes.ts`。
+   * 空字符串 = 默认场景，兼容没有这个字段的旧配置。
+   */
+  background_scene: string;
+  /**
+   * 动态场景画质：`low`（流畅 / 省电）| `medium`（均衡）| `high`（高清）。
+   * 空字符串 = 默认档，见 `src/components/background/quality.ts`。
+   */
+  background_quality: string;
   background_image: string | null;
   background_blur: number;
   background_dim: number;

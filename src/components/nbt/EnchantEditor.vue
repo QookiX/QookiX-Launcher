@@ -55,7 +55,7 @@ const ENCHANT_IDS = [
   gap: 5px;
 }
 .field label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   font-weight: 600;
 }
@@ -66,16 +66,16 @@ const ENCHANT_IDS = [
 }
 .input {
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
 }
 .input.mono {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .input.num {
   width: 72px;
@@ -83,21 +83,5 @@ const ENCHANT_IDS = [
 .input.flex1 {
   flex: 1;
   min-width: 0;
-}
-.mini-btn {
-  padding: 5px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-}
-.mini-btn.danger {
-  color: var(--danger);
 }
 </style>

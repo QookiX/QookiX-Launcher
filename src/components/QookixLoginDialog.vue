@@ -175,7 +175,7 @@ function goForgot() {
     v-model:show="show"
     preset="card"
     :title="title"
-    style="width: 460px; max-width: 92vw"
+    style="width: 420px; max-width: 92vw"
     :bordered="false"
   >
     <div class="qx-box">
@@ -342,13 +342,13 @@ function goForgot() {
 }
 .qx-intro {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-3);
 }
 .qx-sent-title {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -358,16 +358,17 @@ function goForgot() {
   gap: 6px;
 }
 .qx-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .qx-submit {
   height: 36px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--accent);
-  color: #1a1206;
-  font-size: 13px;
+  /* 跟随全局主题对比色，避免自定义主题色时文字发黑 */
+  color: var(--accent-contrast, #fff);
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   transition: transform var(--dur-sm, 0.15s) var(--ease-out, ease),
@@ -385,7 +386,7 @@ function goForgot() {
 }
 .qx-error {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.5;
   color: var(--danger, #e5534b);
 }
@@ -395,7 +396,7 @@ function goForgot() {
   background: none;
   padding: 0;
   margin-top: -6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
   cursor: pointer;
 }
@@ -407,14 +408,14 @@ function goForgot() {
   align-items: center;
   justify-content: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .qx-link {
   border: none;
   background: none;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
   transition: color var(--dur-sm, 0.15s) var(--ease-out, ease);

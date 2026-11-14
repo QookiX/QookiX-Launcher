@@ -366,12 +366,18 @@ pub fn run() {
             commands::get_settings,
             commands::set_settings,
             commands::resolve_close_request,
+            // 自定义主页布局文件（数据目录下的 home.json）
+            commands::home_layout_read,
+            commands::home_layout_save,
+            commands::home_layout_reset,
             commands::list_mirrors,
             commands::test_mirror,
             commands::list_content_mirrors,
             commands::test_content_mirror,
             commands::test_proxy,
             commands::log_debug,
+            // 开发者工具：程序化打开 DevTools（F12 由前端开关控制是否调用）
+            commands::open_devtools,
             commands::change_data_dir,
             commands::reveal_data_dir,
             commands::auto_detect_memory,
@@ -741,8 +747,17 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app, event| {
+            // Covers every exit path (window close, tray "quit", and the
+            // close-confirmation dialog's resolve_close_request -> app.exit).
+            // The Windows Job Object already kills orphaned frpc processes;
+            // this makes the same guarantee on other platforms too.
+            if let tauri::RunEvent::Exit = event {
+                crate::frp::cleanup();
+            }
+        });
 }
 
 #[cfg(test)]

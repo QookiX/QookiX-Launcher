@@ -3,6 +3,8 @@ import { onMounted, onBeforeUnmount, computed, watch, ref, provide } from "vue";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { darkTheme, lightTheme, NConfigProvider, NDialogProvider, NLoadingBarProvider, NMessageProvider, NNotificationProvider } from "naive-ui";
 import { api } from "./api";
+import { resolveScene } from "./components/background/scenes";
+import { resolveQuality } from "./components/background/quality";
 import TitleBar from "./components/TitleBar.vue";
 import SideBar from "./components/SideBar.vue";
 import DownloadsDrawer from "./components/DownloadsDrawer.vue";
@@ -131,27 +133,63 @@ watch(accentColor, (hex) => {
   }
 }, { immediate: true });
 
-const bgStyle = computed(() => {
+/**
+ * 背景类型：
+ * - `gradient`：纯色渐变（默认）
+ * - `image`：用户选的自定义图片
+ * - `scene`：实时渲染的动态场景，具体是哪一个由 `background_scene` 决定
+ *
+ * 后端 `background_mode` 为空串表示「自动」——老版本配置没有这个字段，
+ * 有图就用图、没图用渐变，升级后外观不会突变。
+ */
+const bgMode = computed<"gradient" | "image" | "scene">(() => {
   const s = settings.settings;
-  if (!s?.background_image) return {} as Record<string, string>;
-  return {
-    "--bg-image": `url("${convertFileSrc(s.background_image)}")`,
-    "--bg-blur": `${s.background_blur}px`,
-    "--bg-dim": String(s.background_dim / 100),
-    "--bg-dim-light": String((s.background_dim / 100) * 0.12),
-  } as Record<string, string>;
+  if (!s) return "gradient";
+  const m = s.background_mode;
+  if (m === "gradient" || m === "image" || m === "scene") return m;
+  return s.background_image ? "image" : "gradient";
 });
 
-// 无背景图时，装饰纹理（点阵 + 光带）只在首页出现；其他页面只留底色渐变。
-const showTexture = computed(() => route.path === "/" && !settings.settings?.background_image);
+const showImageBg = computed(() => bgMode.value === "image" && !!settings.settings?.background_image);
+const showSceneBg = computed(() => bgMode.value === "scene");
+
+// 场景组件一律异步加载：开着渐变或图片背景的用户不会为 three.js 付出任何首屏成本
+const bgScene = computed(() => resolveScene(settings.settings?.background_scene));
+// 画质档位同时决定像素比、帧率与着色器细节，改档要把组件重建一遍才生效
+const bgQuality = computed(() => resolveQuality(settings.settings?.background_quality));
+
+const bgStyle = computed(() => {
+  const s = settings.settings;
+  if (!s) return {} as Record<string, string>;
+  const dim = s.background_dim ?? 0;
+  const out: Record<string, string> = {};
+  if (showSceneBg.value) {
+    // 动态场景复用「遮罩」滑块控制可读性；浅色模式用更轻的白遮罩，
+    // 否则白天场景（蓝天白云）会被压成一片惨白
+    out["--bg-dim"] = String(dim / 100);
+    out["--bg-dim-light"] = String((dim / 100) * 0.22);
+    return out;
+  }
+  if (!showImageBg.value) return out;
+  out["--bg-image"] = `url("${convertFileSrc(s.background_image!)}")`;
+  out["--bg-blur"] = `${s.background_blur}px`;
+  out["--bg-dim"] = String(dim / 100);
+  out["--bg-dim-light"] = String((dim / 100) * 0.12);
+  return out;
+});
+
+// 非渐变背景（图片或 3D 场景）都要：隐藏首页纹理、玻璃面板加实底、标题加阴影
+const hasRichBg = computed(() => showImageBg.value || showSceneBg.value);
+
+// 无背景图 / 无场景时，装饰纹理（点阵 + 光带）只在首页出现；其他页面只留底色渐变。
+const showTexture = computed(() => route.path === "/" && !hasRichBg.value);
 
 watch(() => settings.settings?.glass_blur, (v) => {
   if (v != null) document.documentElement.style.setProperty("--glass-blur", `${v}px`);
 }, { immediate: true });
 
-watch(() => settings.settings?.background_image, (p) => {
-  document.documentElement.classList.toggle("has-bg", !!p);
-}, { immediate: true });
+watch(hasRichBg, (v) => document.documentElement.classList.toggle("has-bg", v), { immediate: true });
+watch(showSceneBg, (v) => document.documentElement.classList.toggle("has-scene", v), { immediate: true });
 
 // 供 TitleBar 的“新建分组”按钮触发实例页的分组对话框
 const groupDialogRequest = ref(0);
@@ -243,7 +281,8 @@ onBeforeUnmount(() => {
     <n-loading-bar-provider>
       <LoadingBarBridge>
         <n-dialog-provider>
-          <n-message-provider>
+          <!-- 悬停时暂停自动消失：长错误信息要能读完、点一下复制 -->
+          <n-message-provider :keep-alive-on-hover="true">
             <MessageBridge />
             <n-notification-provider>
                 <!-- data-tauri-drag-region：让「背景」也能拖动窗口（标题栏之外）。
@@ -254,6 +293,16 @@ onBeforeUnmount(() => {
                      .content（滚动容器）**不带** drag-region：否则滚动条落在拖拽区上，
                      按下滚动条会被 Tauri 拦截成拖窗口而无法滚屏。窗口拖动靠标题栏 + 侧栏留白。 -->
                 <div class="app app-bg" data-tauri-drag-region :class="{ light: !isDark, 'show-texture': showTexture }" :style="bgStyle">
+                <!-- key 里带上画质档：pixelRatio / antialias 这类参数只在初始化时生效，
+                     不重建组件切档就没反应 -->
+                <component
+                  :is="bgScene.component"
+                  v-if="showSceneBg"
+                  :key="`${bgScene.id}-${bgQuality.id}`"
+                  :dark="isDark"
+                  :accent="accentColor"
+                  :quality="bgQuality"
+                />
                 <TitleBar />
                 <div class="body" data-tauri-drag-region>
                   <SideBar />
@@ -269,7 +318,11 @@ onBeforeUnmount(() => {
                         @before-enter="onPageBeforeEnter"
                         @after-enter="onPageAfterEnter"
                       >
-                        <KeepAlive :include="['BrowseView']">
+                        <!-- 缓存的页面：切回来不再重新挂载 + 重新拉一遍数据。
+                             只放「纯 store 驱动 / 无定时器」的页面；MultiplayerView
+                             有内网穿透的 1.5s 轮询，缓存在后台会一直空转，
+                             要缓存得先补 onDeactivated 停表。 -->
+                        <KeepAlive :include="['BrowseView', 'InstancesView', 'ToolboxView']">
                           <component :is="Component" :key="route.path" />
                         </KeepAlive>
                       </Transition>

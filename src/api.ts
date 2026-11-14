@@ -108,6 +108,14 @@ export const api = {
   resolveCloseRequest: (action: "minimize" | "quit", remember: boolean) =>
     invoke<void>("resolve_close_request", { action, remember }),
 
+  // 自定义主页布局（数据目录下的 home.json，用户可直接编辑）
+  homeLayoutRead: () =>
+    invoke<{ path: string; exists: boolean; content: string }>("home_layout_read"),
+  homeLayoutSave: (content: string) => invoke<void>("home_layout_save", { content }),
+  homeLayoutReset: () => invoke<void>("home_layout_reset"),
+  /** 开发者工具：程序化打开浏览器 DevTools（F12 是否放行由前端开关决定） */
+  openDevTools: () => invoke<void>("open_devtools"),
+
   // pinned items (首页 / 侧边栏)
   getPins: () => invoke<PinItem[]>("get_pins"),
   setPins: (items: PinItem[]) => invoke<void>("set_pins", { items }),

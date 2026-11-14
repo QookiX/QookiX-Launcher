@@ -8,6 +8,12 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [vue()],
 
+  // 生产构建：只去掉 debugger，保留 console 以便用户日志排查
+  esbuild: {
+    drop: ["debugger"],
+    legalComments: "none",
+  },
+
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
   // 1. prevent Vite from obscuring rust errors
@@ -30,6 +36,11 @@ export default defineConfig(async () => ({
     },
   },
   build: {
+    // 体积优化：JS 用 esbuild 压缩、CSS 单独压缩、去掉 debugger、不保留 license 注释块。
+    // 不 drop console —— 启动器出问题时用户日志里需要它。
+    minify: "esbuild",
+    cssMinify: "esbuild",
+    reportCompressedSize: true,
     chunkSizeWarningLimit: 650,
     rollupOptions: {
       output: {

@@ -55,5 +55,10 @@ export default {
     statusDisabled: "已停用",
     statusPending: "待审核",
     statusDeleted: "已删除",
+    terms: "服务条款",
+    disclaimer: "免责声明",
+    termsHint: "使用内网穿透功能即表示你已阅读并同意 MohuaFrp 的服务条款",
+    disclaimerText: "本启动器不对用户通过内网穿透功能进行的任何行为承担责任，用户需自行遵守相关法律法规",
+    frpcNotice: "frpc 客户端由 frp 项目提供（Apache-2.0 许可证），需用户自行下载放置到指定路径",
   },
 };

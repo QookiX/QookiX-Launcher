@@ -188,9 +188,9 @@ pub fn reveal_data_dir(app: tauri::AppHandle, state: State<AppState>) -> Result<
 /// Auto-detect system memory and return (total, used, available) + recommended (max, min) in MB.
 #[tauri::command]
 pub fn auto_detect_memory() -> Result<Value, String> {
-    let total = crate::settings::total_memory_mb().ok_or("无法检测系统内存")?;
-    let used = crate::settings::used_memory_mb().unwrap_or(0);
-    let available = crate::settings::available_memory_mb().unwrap_or(total.saturating_sub(used));
+    // One snapshot instead of three separate refreshes.
+    let (total, used, available) = crate::settings::memory_snapshot_mb()
+        .ok_or("无法检测系统内存")?;
     let (max, min) = crate::settings::recommended_memory(available, 0);
     Ok(json!({
         "total_mb": total,

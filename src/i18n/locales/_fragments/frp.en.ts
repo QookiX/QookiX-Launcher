@@ -57,5 +57,10 @@ export default {
     statusDisabled: "Disabled",
     statusPending: "Pending",
     statusDeleted: "Deleted",
+    terms: "Terms of Service",
+    disclaimer: "Disclaimer",
+    termsHint: "By using the port forwarding feature, you agree to MohuaFrp's Terms of Service",
+    disclaimerText: "This launcher does not assume any responsibility for your use of the port forwarding feature. You must comply with applicable laws and regulations.",
+    frpcNotice: "frpc client is provided by the frp project (Apache-2.0 license). You need to download it yourself and place it in the specified path.",
   },
 };

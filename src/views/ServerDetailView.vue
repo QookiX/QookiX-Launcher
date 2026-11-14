@@ -235,6 +235,14 @@ const PROPS_GROUPS = computed(() => {
 });
 
 const propsMode = ref<"form" | "source">("form");
+// 表单 / 源码切换的滑动高亮
+const propsModeSegRef = ref<HTMLElement | null>(null);
+const { indicatorStyle: propsModeSegStyle, refresh: refreshPropsModeSeg } = useSlidingIndicator(
+  propsModeSegRef,
+  () => Array.from(propsModeSegRef.value?.querySelectorAll<HTMLElement>("button") ?? []),
+  () => (propsMode.value === "form" ? 0 : 1),
+);
+watch(propsMode, () => nextTick(() => refreshPropsModeSeg()));
 const propsData = ref<Record<string, string>>({});
 const propsSource = ref("");
 const propsExtra = ref<Record<string, string>>({});
@@ -649,8 +657,8 @@ onBeforeUnmount(() => {
       </div>
     </div>
 
-    <div ref="tabSegRef" class="tabs glass">
-      <div class="indicator" :style="tabSegStyle"></div>
+    <div ref="tabSegRef" class="tabs qx-seg">
+      <div class="qx-seg__indicator" :style="tabSegStyle"></div>
       <button
         v-for="tabItem in tabs"
         :key="tabItem.key"
@@ -734,7 +742,8 @@ onBeforeUnmount(() => {
       <div class="section">
         <div class="section-head">
           <h3 class="section-title">server.properties</h3>
-          <div class="props-mode-tabs">
+          <div ref="propsModeSegRef" class="props-mode-tabs qx-seg qx-seg--sm">
+            <div class="qx-seg__indicator" :style="propsModeSegStyle"></div>
             <button :class="{ active: propsMode === 'form' }" @click="propsMode = 'form'">{{ t('serverDetail.config.formMode') }}</button>
             <button :class="{ active: propsMode === 'source' }" @click="propsMode = 'source'">{{ t('serverDetail.config.sourceMode') }}</button>
           </div>
@@ -976,11 +985,11 @@ onBeforeUnmount(() => {
   background: none;
   border: none;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   font-family: inherit;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 .back:hover {
   color: var(--text-1);
@@ -1001,21 +1010,21 @@ onBeforeUnmount(() => {
 }
 .core-badge {
   align-self: flex-start;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   padding: 3px 9px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid;
   background: var(--w-04);
   letter-spacing: 0.02em;
 }
 .head-info h2 {
   margin: 4px 0 0;
-  font-size: 20px;
+  font-size: var(--fs-lg);
 }
 .head-sub {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .head-ops {
@@ -1029,9 +1038,9 @@ onBeforeUnmount(() => {
   justify-content: center;
   gap: 7px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 9px 18px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -1039,7 +1048,7 @@ onBeforeUnmount(() => {
 }
 .btn.sm {
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .btn.primary {
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
@@ -1076,35 +1085,9 @@ onBeforeUnmount(() => {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* 外观走全局 .qx-seg，这里只保留对齐 */
 .tabs {
-  position: relative;
-  display: inline-flex;
-  gap: 4px;
-  padding: 5px;
   align-self: flex-start;
-}
-.tabs .indicator {
-  position: absolute;
-  top: 5px;
-  bottom: 5px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.tabs button {
-  position: relative;
-  border: none;
-  background: transparent;
-  color: var(--text-2);
-  padding: 8px 18px;
-  border-radius: 9px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.tabs button.active {
-  color: var(--accent);
 }
 .panel {
   padding: 20px 24px;
@@ -1125,12 +1108,12 @@ onBeforeUnmount(() => {
 }
 .section-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
 }
 .section-hint {
   margin: -6px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .panel-head {
@@ -1141,7 +1124,7 @@ onBeforeUnmount(() => {
 }
 .panel-head h3 {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -1152,7 +1135,7 @@ onBeforeUnmount(() => {
   gap: 8px;
 }
 .field label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -1160,8 +1143,8 @@ onBeforeUnmount(() => {
 .prop-motd-preview {
   margin-top: 8px;
   padding: 8px 10px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
   line-height: 1.5;
   color: var(--text-2);
   min-height: 34px;
@@ -1190,16 +1173,16 @@ onBeforeUnmount(() => {
   margin-top: 4px;
 }
 .save-hint {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .empty-inline {
   padding: 24px;
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .empty-inline code {
   font-family: "Cascadia Code", Consolas, monospace;
@@ -1216,7 +1199,7 @@ onBeforeUnmount(() => {
   justify-content: space-between;
   gap: 14px;
   padding: 11px 14px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--w-03);
   cursor: pointer;
@@ -1236,7 +1219,7 @@ onBeforeUnmount(() => {
   flex: 1;
 }
 .config-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
   overflow: hidden;
@@ -1244,7 +1227,7 @@ onBeforeUnmount(() => {
   white-space: nowrap;
 }
 .config-doc {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1254,7 +1237,7 @@ onBeforeUnmount(() => {
   color: var(--accent-60);
 }
 .config-size {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   flex-shrink: 0;
 }
@@ -1265,7 +1248,7 @@ onBeforeUnmount(() => {
   max-height: 420px;
   overflow-y: auto;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 6px;
 }
 .file-row {
@@ -1274,8 +1257,8 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
-  border-radius: 8px;
-  font-size: 13px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
 }
 .file-row:hover {
   background: var(--panel-hover);
@@ -1288,7 +1271,7 @@ onBeforeUnmount(() => {
 }
 .file-size {
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   flex-shrink: 0;
 }
 .log-panel {
@@ -1326,7 +1309,7 @@ onBeforeUnmount(() => {
   .run-dot.on::after { animation: none; opacity: 0; }
 }
 .run-text {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .log-box {
@@ -1334,10 +1317,10 @@ onBeforeUnmount(() => {
   overflow-y: auto;
   background: rgba(0, 0, 0, 0.32);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px 14px;
   font-family: "Cascadia Code", Consolas, "Courier New", monospace;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
 }
 .log-empty {
@@ -1352,31 +1335,6 @@ onBeforeUnmount(() => {
 }
 .log-line.err {
   color: var(--danger-text);
-}
-.file-shortcuts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-}
-.shortcut {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 9px 14px;
-  border-radius: 10px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.13s;
-}
-.shortcut:hover {
-  background: var(--accent-soft);
-  color: var(--accent);
-  border-color: var(--accent-35);
 }
 .loading {
   padding: 60px;
@@ -1406,7 +1364,7 @@ onBeforeUnmount(() => {
 }
 .confirm-card p {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
   line-height: 1.6;
 }
@@ -1426,18 +1384,18 @@ onBeforeUnmount(() => {
 }
 .editor-doc {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   padding: 8px 12px;
   background: var(--accent-soft);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border-left: 3px solid var(--accent);
 }
 .editor-loading,
 .editor-error {
   padding: 30px;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .editor-error {
@@ -1449,12 +1407,12 @@ onBeforeUnmount(() => {
   max-height: 56vh;
   resize: vertical;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px 14px;
   background: rgba(0, 0, 0, 0.28);
   color: var(--text-1);
   font-family: "Cascadia Code", Consolas, "Courier New", monospace;
-  font-size: 12.5px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   outline: none;
   box-sizing: border-box;
@@ -1468,29 +1426,7 @@ onBeforeUnmount(() => {
   justify-content: flex-end;
   gap: 10px;
 }
-.props-mode-tabs {
-  display: inline-flex;
-  gap: 4px;
-  padding: 3px;
-  border-radius: 8px;
-  background: var(--w-05);
-  border: 1px solid var(--border);
-}
-.props-mode-tabs button {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  padding: 5px 14px;
-  border-radius: 6px;
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
-.props-mode-tabs button.active {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
+/* 表单 / 源码切换：外观与滑块走全局 .qx-seg--sm */
 .props-form {
   display: flex;
   flex-direction: column;
@@ -1503,7 +1439,7 @@ onBeforeUnmount(() => {
 }
 .props-group-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--text-2);
   padding-bottom: 6px;
@@ -1519,7 +1455,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-03);
   border: 1px solid var(--border);
 }
@@ -1529,12 +1465,12 @@ onBeforeUnmount(() => {
   gap: 2px;
 }
 .prop-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .prop-desc {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   line-height: 1.4;
 }
@@ -1566,7 +1502,7 @@ onBeforeUnmount(() => {
   flex-direction: column;
   gap: 2px;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-03);
   cursor: pointer;
@@ -1582,7 +1518,7 @@ onBeforeUnmount(() => {
   background: var(--accent-soft);
 }
 .java-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -1590,7 +1526,7 @@ onBeforeUnmount(() => {
   color: var(--accent);
 }
 .java-path {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-family: var(--mono, monospace);
   overflow: hidden;

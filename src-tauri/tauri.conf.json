@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "QookiX Launcher",
-  "version": "0.21.0",
+  "version": "0.22.0",
   "identifier": "cn.swkj1.qookix-launcher",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -19,7 +19,8 @@
         "minHeight": 620,
         "center": true,
         "decorations": false,
-        "transparent": false
+        "transparent": false,
+        "devtools": false
       }
     ],
     "security": {
@@ -42,7 +43,7 @@
         "https://github.com/weimosheng/QookiX-Launcher/releases/latest/download/latest.json"
       ],
       "windows": {
-        "installMode": "quiet"
+        "installMode": "passive"
       }
     }
   },
@@ -58,6 +59,9 @@
       "icons/icon.ico"
     ],
     "windows": {
+      "webviewInstallMode": {
+        "type": "skip"
+      },
       "nsis": {
         "installMode": "currentUser",
         "template": "nsis/installer.nsi",

@@ -264,7 +264,7 @@ async function moveTo(groupId: string | null) {
 </script>
 
 <template>
-  <div id="instances-root" class="instances-view" data-tauri-drag-region>
+  <div id="instances-root" class="instances-view qx-page" data-tauri-drag-region>
     <div v-if="instances.loading" class="loading">{{ t("instances.loading") }}</div>
 
     <template v-else-if="totalCount">
@@ -322,7 +322,7 @@ async function moveTo(groupId: string | null) {
               </button>
             </div>
           </header>
-          <div v-if="!collapsed[s.key]" class="grid">
+          <div v-if="!collapsed[s.key]" class="qx-grid qx-grid--card">
             <InstanceCard
               v-for="inst in s.items"
               :key="inst.id"
@@ -336,7 +336,7 @@ async function moveTo(groupId: string | null) {
       </div>
 
       <!-- 单分组 / 未分组视图 -->
-      <div v-else class="grid">
+      <div v-else class="qx-grid qx-grid--card">
         <InstanceCard
           v-for="inst in filtered"
           :key="inst.id"
@@ -348,10 +348,12 @@ async function moveTo(groupId: string | null) {
       </div>
     </template>
 
-    <div v-else class="empty glass">
+    <div v-else class="qx-empty glass">
       <div class="empty-icon"><IconGrid /></div>
       <p>{{ t("instances.emptyHint") }}</p>
-      <button class="btn primary" @click="router.push('/create')">{{ t("instances.createFirst") }}</button>
+      <button class="qx-btn qx-btn--primary" @click="router.push('/create')">
+        {{ t("instances.createFirst") }}
+      </button>
     </div>
 
     <!-- 新建 / 重命名分组 -->
@@ -398,7 +400,7 @@ async function moveTo(groupId: string | null) {
       :show="movingInstance !== null"
       preset="card"
       :title="t('instances.moveToGroup')"
-      style="width: 380px; max-width: 92vw"
+      style="width: 420px; max-width: 92vw"
       @update:show="(v: boolean) => { if (!v) movingInstance = null; }"
     >
       <div v-if="movingInstance" class="move-list">
@@ -451,9 +453,7 @@ async function moveTo(groupId: string | null) {
 .toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  margin-bottom: 18px;
+  gap: var(--sp-6);
   flex-wrap: wrap;
 }
 .chips {
@@ -467,14 +467,14 @@ async function moveTo(groupId: string | null) {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   /* 用 --panel 而非 --w-04：无背景图时仍是 4% 白（与原观感一致），有背景图时
      自动升为半透深色磨砂底（见 :root.has-bg），配 backdrop-filter 与 .glass
      面板同语言，标签不再被背景图"吃掉"、也不再游离于主题之外。 */
   background: var(--panel);
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   transition: all 0.15s;
@@ -494,8 +494,13 @@ async function moveTo(groupId: string | null) {
   background-image: linear-gradient(var(--accent-soft), var(--accent-soft));
 }
 .chip-count {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   opacity: 0.7;
+}
+/* 导入整合包期间要把按钮置灰：此前只有 disabled 属性、没有任何视觉反馈 */
+.chip:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 .dot {
   width: 9px;
@@ -504,47 +509,10 @@ async function moveTo(groupId: string | null) {
   flex-shrink: 0;
   display: inline-block;
 }
-.toolbar-actions {
-  display: flex;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s;
-}
-.btn.sm {
-  padding: 7px 12px;
-  font-size: 13px;
-}
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-}
-.btn.primary:hover {
-  filter: brightness(1.08);
-}
-.btn.ghost {
-  background: var(--w-06);
-  color: var(--text-1);
-  border: 1px solid var(--border);
-}
-.btn.ghost:hover {
-  background: var(--w-10);
-}
 .groups {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: var(--gap-panel);
 }
 .group-head {
   display: flex;
@@ -561,7 +529,7 @@ async function moveTo(groupId: string | null) {
   border: none;
   padding: 4px 0;
   color: var(--text-1);
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -570,7 +538,7 @@ async function moveTo(groupId: string | null) {
   color: var(--accent);
 }
 .group-count {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-3);
 }
@@ -588,9 +556,9 @@ async function moveTo(groupId: string | null) {
   background: transparent;
   border: 1px solid var(--border);
   color: var(--text-3);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 3px 9px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -604,14 +572,9 @@ async function moveTo(groupId: string | null) {
   color: var(--danger);
   border-color: var(--danger-50);
 }
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 16px;
-}
 /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
    未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
-.grid :deep(.inst-card) {
+.qx-grid :deep(.inst-card) {
   animation: inst-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
 @keyframes inst-card-enter {
@@ -629,22 +592,13 @@ async function moveTo(groupId: string | null) {
   padding: 18px;
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   border: 1px dashed var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
 }
 .loading {
   padding: 60px;
   text-align: center;
-  color: var(--text-3);
-}
-.empty {
-  padding: 48px 24px;
-  text-align: center;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 12px;
   color: var(--text-3);
 }
 .empty-icon {
@@ -660,7 +614,7 @@ async function moveTo(groupId: string | null) {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .palette {
@@ -686,7 +640,7 @@ async function moveTo(groupId: string | null) {
   gap: 10px;
 }
 .confirm-text {
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-2);
   line-height: 1.6;
 }
@@ -697,7 +651,7 @@ async function moveTo(groupId: string | null) {
 }
 .move-hint {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .move-item {
@@ -705,11 +659,11 @@ async function moveTo(groupId: string | null) {
   align-items: center;
   gap: 10px;
   padding: 9px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-1);
-  font-size: 14px;
+  font-size: var(--fs-base);
   cursor: pointer;
   font-family: inherit;
   text-align: left;

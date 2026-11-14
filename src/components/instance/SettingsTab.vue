@@ -256,7 +256,7 @@ onBeforeUnmount(() => {
         </button>
         <button
           v-if="needDownload && requiredJava"
-          class="mini-btn accent"
+          class="mini-btn primary"
           :disabled="downloadingJava"
           @click="downloadJava(requiredJava)"
         >
@@ -409,7 +409,7 @@ onBeforeUnmount(() => {
         <div class="icon-preview">
           <AppIcon :name="edit.icon" />
         </div>
-        <button class="btn" @click="showIconPicker = true">{{ t("instanceSettings.selectIcon") }}</button>
+        <button class="qx-btn" @click="showIconPicker = true">{{ t("instanceSettings.selectIcon") }}</button>
       </div>
     </div>
 
@@ -433,7 +433,7 @@ onBeforeUnmount(() => {
 }
 .set-card h4 {
   margin: 0 0 12px;
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .alias-row {
   display: flex;
@@ -453,7 +453,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 10px;
   margin-bottom: 10px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .req-label {
   color: var(--text-3);
@@ -469,18 +469,6 @@ onBeforeUnmount(() => {
 .text-input {
   flex: 1;
   min-width: 0;
-  background: var(--w-06);
-  border: 1px solid var(--border);
-  border-radius: 9px;
-  color: var(--text-1);
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: inherit;
-  outline: none;
-  transition: border-color 0.12s;
-}
-.text-input:focus {
-  border-color: var(--accent-05);
 }
 textarea.text-input {
   resize: vertical;
@@ -499,7 +487,7 @@ textarea.text-input {
   flex-direction: column;
   gap: 2px;
   padding: 7px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
@@ -508,12 +496,12 @@ textarea.text-input {
   text-align: left;
 }
 .java-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .java-path {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -527,7 +515,7 @@ textarea.text-input {
 .range-labels {
   display: flex;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .mem-modes {
@@ -541,11 +529,11 @@ textarea.text-input {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-04);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: inherit;
   cursor: pointer;
   color: var(--text-2);
@@ -560,13 +548,13 @@ textarea.text-input {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
 }
 .mem-current {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--accent);
   margin-top: 6px;
 }
 .mem-mode-note {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 400;
   color: var(--text-3);
 }
@@ -576,7 +564,7 @@ textarea.text-input {
 .mem-gauge-track {
   position: relative;
   height: 10px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--w-08);
   overflow: hidden;
 }
@@ -592,17 +580,17 @@ textarea.text-input {
 }
 .mem-gauge-used {
   left: 0;
-  background: linear-gradient(90deg, #5a8ef0, #8ab4ff);
+  background: linear-gradient(90deg, var(--info), var(--info-22));
 }
 .mem-gauge-alloc {
-  background: linear-gradient(90deg, #e89a4b, #f2c079);
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
 }
 .mem-gauge-labels {
   display: flex;
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 4px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin-top: 6px;
 }
@@ -618,13 +606,13 @@ textarea.text-input {
   display: inline-block;
 }
 .dot.used {
-  background: #8ec4ff;
+  background: var(--info);
 }
 .dot.alloc {
-  background: #e89a4b;
+  background: var(--accent);
 }
 .dot.total {
-  background: #9aa4b2;
+  background: var(--text-3);
 }
 .res-row {
   display: flex;
@@ -639,7 +627,7 @@ textarea.text-input {
 .icon-preview {
   width: 38px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: transparent;
   position: relative;
@@ -651,50 +639,8 @@ textarea.text-input {
   inset: 0;
   font-size: 18px;
 }
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.12s;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-  color: var(--text-1);
-}
-.mini-btn.accent {
-  color: var(--accent);
-  border-color: var(--accent-04);
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: none;
-  border-radius: 10px;
-  padding: 9px 16px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.14s;
-  background: var(--w-06);
-  color: var(--text-1);
-  border: 1px solid var(--border);
-}
-.btn:hover {
-  background: var(--w-10);
-}
 .hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin-top: 4px;
 }

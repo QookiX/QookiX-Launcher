@@ -71,6 +71,9 @@ export default {
     zoomIn: "放大",
     zoomOut: "缩小",
     resetZoom: "恢复原始大小",
+    clickToCopy: "点击复制提示内容",
+    copied: "已复制",
+    copyFailed: "复制失败",
   },
   nav: {
     home: "首页",

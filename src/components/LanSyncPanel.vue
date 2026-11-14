@@ -220,7 +220,7 @@ onUnmounted(() => {
       </div>
       <button
         v-if="!running"
-        class="ls-btn primary"
+        class="qx-btn qx-btn--sm qx-btn--primary"
         :disabled="loading"
         @click="start"
       >
@@ -228,7 +228,7 @@ onUnmounted(() => {
       </button>
       <button
         v-else
-        class="ls-btn danger"
+        class="qx-btn qx-btn--sm qx-btn--danger"
         :disabled="loading"
         @click="stop"
       >
@@ -381,7 +381,7 @@ onUnmounted(() => {
 }
 .ls-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -389,9 +389,9 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 2px 9px;
-  border-radius: 20px;
+  border-radius: var(--r-xl);
   font-weight: 500;
 }
 .ls-badge.on {
@@ -412,51 +412,23 @@ onUnmounted(() => {
   box-shadow: 0 0 5px currentColor;
 }
 
-/* 按钮 */
-.ls-btn {
-  padding: 6px 16px;
-  font-size: 12px;
-  font-weight: 600;
-  border-radius: 8px;
-  cursor: pointer;
-  border: 1px solid transparent;
-  transition: all 0.12s;
-  font-family: inherit;
-}
-.ls-btn.primary {
-  background: var(--accent);
-  color: var(--bg-0);
-}
-.ls-btn.primary:hover {
-  background: var(--accent-deep);
-}
-.ls-btn.danger {
-  background: var(--danger-12);
-  border-color: var(--danger-30);
-  color: var(--danger-text);
-}
-.ls-btn.danger:hover {
-  background: var(--danger-16);
-}
-.ls-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+/* 按钮：统一走全局 .qx-btn 变体（模板里直接挂 qx-btn qx-btn--sm qx-btn--primary / --danger），
+   这里不要再写按钮外观——尤其是强调色按钮的文字色，只能用 --accent-contrast。 */
 
 .ls-error {
   margin: 0;
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--danger-12);
   border: 1px solid var(--danger-30);
   color: var(--danger-text);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 
 /* 未启动 */
 .ls-desc {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -479,7 +451,7 @@ onUnmounted(() => {
 .ls-qr-box {
   padding: 10px;
   background: #fff;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   box-shadow: 0 0 0 1px var(--border), 0 8px 24px var(--k-30);
 }
 .ls-qr-img {
@@ -488,7 +460,7 @@ onUnmounted(() => {
   display: block;
 }
 .ls-qr-cap {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   text-align: center;
   max-width: 160px;
@@ -503,7 +475,7 @@ onUnmounted(() => {
   gap: 14px;
 }
 .ls-label {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-3);
   text-transform: uppercase;
@@ -519,9 +491,9 @@ onUnmounted(() => {
 }
 .ls-code {
   font-family: var(--mono, "Cascadia Code", Consolas, monospace);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   padding: 4px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--w-08);
   color: var(--text-1);
   border: 1px solid var(--border);
@@ -530,10 +502,10 @@ onUnmounted(() => {
   background: transparent;
   border: none;
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   padding: 2px 4px;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   font-family: inherit;
 }
 .ls-link:hover {
@@ -551,9 +523,9 @@ onUnmounted(() => {
 }
 .ls-ip-chip {
   font-family: var(--mono, "Cascadia Code", Consolas, monospace);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-2);
@@ -570,7 +542,7 @@ onUnmounted(() => {
 }
 .ls-adapter-hint {
   margin: 6px 0 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 
@@ -581,7 +553,7 @@ onUnmounted(() => {
   gap: 8px;
   padding: 14px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--panel);
 }
 .ls-step {
@@ -595,7 +567,7 @@ onUnmounted(() => {
   border-radius: 50%;
   background: var(--w-08);
   color: var(--text-2);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   display: flex;
   align-items: center;
@@ -603,13 +575,13 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 .ls-step > span:last-child {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 
 .ls-security {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   line-height: 1.5;
 }
@@ -628,18 +600,18 @@ onUnmounted(() => {
   justify-content: space-between;
 }
 .ls-transfer-dir {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--accent);
   background: var(--w-08);
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
 }
 .ls-tr-card {
   display: flex;
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--panel);
   border: 1px solid var(--border);
 }
@@ -650,26 +622,26 @@ onUnmounted(() => {
   gap: 8px;
 }
 .ls-tr-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-0);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .ls-tr-phase {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--accent);
   flex-shrink: 0;
 }
 .ls-bar {
   height: 6px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--w-08);
   overflow: hidden;
 }
 .ls-bar-fill {
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: linear-gradient(90deg, var(--accent), var(--success));
   transition: width 0.25s ease;
 }
@@ -678,12 +650,12 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-2);
 }
 .ls-tr-file {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -691,7 +663,7 @@ onUnmounted(() => {
 }
 .ls-tr-idle {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .ls-tr-recent {
@@ -709,7 +681,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .ls-tr-ok.good {

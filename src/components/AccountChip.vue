@@ -124,7 +124,7 @@ function typeLabel(a: Account) {
   padding: 0 10px;
   height: 48px;
   box-sizing: border-box;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background: var(--panel);
   border: 1px solid var(--border);
 }
@@ -138,7 +138,7 @@ function typeLabel(a: Account) {
   gap: 7px;
   background: transparent;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
 }
 .acct-chip.bar .avatar {
   width: 22px;
@@ -146,7 +146,7 @@ function typeLabel(a: Account) {
   border-radius: 50%;
 }
 .acct-chip.bar .acct-name {
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .acct-chip.bar .acct-type {
   display: none;
@@ -157,7 +157,7 @@ function typeLabel(a: Account) {
 .avatar {
   width: 34px;
   height: 34px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--w-08);
   display: flex;
@@ -178,17 +178,17 @@ function typeLabel(a: Account) {
   animation: fade-in 0.2s ease;
 }
 .acct-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .acct-type {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .chev {
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-base);
   flex-shrink: 0;
   animation: fade-in 0.2s ease;
 }
@@ -209,13 +209,13 @@ function typeLabel(a: Account) {
   gap: 8px;
 }
 .acctp-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-3);
   letter-spacing: 0.5px;
 }
 .acctp-empty {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   padding: 6px 0;
 }
@@ -231,7 +231,7 @@ function typeLabel(a: Account) {
   align-items: center;
   gap: 9px;
   padding: 6px 8px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.12s;
@@ -246,7 +246,7 @@ function typeLabel(a: Account) {
 .acctp-avatar {
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   image-rendering: pixelated;
   background: var(--w-06);
   flex-shrink: 0;
@@ -256,7 +256,7 @@ function typeLabel(a: Account) {
   align-items: center;
   justify-content: center;
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .acctp-info {
   flex: 1;
@@ -266,14 +266,14 @@ function typeLabel(a: Account) {
   gap: 1px;
 }
 .acctp-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .acctp-type {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 1px 6px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   font-weight: 600;
   align-self: flex-start;
 }
@@ -291,7 +291,7 @@ function typeLabel(a: Account) {
 }
 .acctp-check {
   color: var(--accent);
-  font-size: 14px;
+  font-size: var(--fs-base);
   flex-shrink: 0;
 }
 .acctp-divider {
@@ -307,9 +307,9 @@ function typeLabel(a: Account) {
   border: 1px solid var(--w-08);
   background: var(--w-05);
   color: var(--text-1);
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 8px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;

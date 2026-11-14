@@ -20,7 +20,7 @@ defineExpose({
     v-model:show="show"
     preset="card"
     :title="t('frp.title')"
-    style="width: 700px; max-width: 94vw"
+    style="width: 680px; max-width: 94vw"
     :bordered="false"
   >
     <FrpPanel />

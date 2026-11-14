@@ -84,7 +84,7 @@ function onLeave() {
   position: relative;
   width: 96px;
   height: 96px;
-  border-radius: 22px;
+  border-radius: var(--r-xl);
   overflow: hidden;
   box-shadow: 0 12px 40px var(--k-45);
 }
@@ -106,14 +106,14 @@ function onLeave() {
 }
 .splash-title {
   margin: 6px 0 0;
-  font-size: 26px;
+  font-size: var(--fs-xl);
   font-weight: 700;
   letter-spacing: 0.6px;
   color: #f2f3f7;
 }
 .splash-sub {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3, #8b8e9c);
   min-height: 18px;
   letter-spacing: 0.3px;
@@ -122,7 +122,7 @@ function onLeave() {
   width: 280px;
   max-width: 72vw;
   height: 4px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   /* 启动屏恒为深色背景（下方硬编码渐变），不随主题变；用固定白色叠加而非 --w-08，
      否则浅色主题下 --w-08 为黑色叠加、在深色启动屏上不可见 */
   background: rgba(255, 255, 255, 0.08);
@@ -131,13 +131,13 @@ function onLeave() {
 }
 .splash-bar-fill {
   height: 100%;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: linear-gradient(90deg, var(--accent, #e89a4b), var(--accent-hover, #f2a860));
   box-shadow: 0 0 12px var(--accent-45, rgba(232, 154, 75, 0.45));
   transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .splash-percent {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3, #8b8e9c);
   font-variant-numeric: tabular-nums;
 }

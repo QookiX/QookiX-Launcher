@@ -177,12 +177,18 @@ async function copyName() {
 .p-card {
   display: flex;
   flex-direction: column;
-  padding: 14px;
-  gap: 12px;
+  padding: 18px;
+  gap: 14px;
   cursor: pointer;
-  transition: transform 0.1s ease;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.1s ease, box-shadow var(--dur-md) var(--ease-out);
   position: relative;
   overflow: hidden;
+}
+/* 悬停与实例卡 / 服务器卡同一套：深色下是 accent 细环（没有黑色投影），
+   浅色下是浅投影 + 细环。卡片本身是 .glass，静止态不额外加边框。 */
+.p-card:hover {
+  box-shadow: var(--card-shadow-hover);
 }
 .p-card:active {
   transform: scale(0.97);
@@ -193,12 +199,12 @@ async function copyName() {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   transition: all 0.12s;
 }
 .copy-btn:hover {
@@ -238,10 +244,10 @@ async function copyName() {
 .p-card.view-compact .p-icon {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 .p-card.view-compact .p-icon.ph {
-  font-size: 15px;
+  font-size: var(--fs-md);
 }
 .p-card.view-compact .p-cats {
   display: none;
@@ -253,7 +259,7 @@ async function copyName() {
   min-width: 0;
 }
 .p-card.view-compact .p-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   margin-bottom: 0;
 }
 .p-card.view-compact .p-title-row {
@@ -261,7 +267,7 @@ async function copyName() {
 }
 /* 紧凑行一屏塞很多条，标签收小一号，不抢标题的位置 */
 .p-card.view-compact .type-chip {
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   padding: 0 5px;
 }
 .p-card.view-compact .p-author {
@@ -270,14 +276,14 @@ async function copyName() {
 }
 .p-card.view-compact .install-btn {
   padding: 4px 9px;
-  font-size: 11px;
-  border-radius: 6px;
+  font-size: var(--fs-2xs);
+  border-radius: var(--r-xs);
 }
 .p-card.view-compact .copy-btn {
   width: 26px;
   height: 26px;
-  border-radius: 6px;
-  font-size: 12px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-xs);
 }
 .p-side {
   display: flex;
@@ -293,7 +299,7 @@ async function copyName() {
 }
 .p-card.view-compact .p-stats {
   gap: 6px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
 }
 .p-main {
   display: flex;
@@ -306,7 +312,7 @@ async function copyName() {
 .p-icon {
   width: 52px;
   height: 52px;
-  border-radius: 11px;
+  border-radius: var(--r-md);
   object-fit: cover;
   background: var(--w-05);
 }
@@ -331,11 +337,11 @@ async function copyName() {
 }
 .p-title {
   font-weight: 700;
-  font-size: 14px;
+  font-size: var(--fs-base);
   min-width: 0;
 }
 .p-author {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin-bottom: 6px;
   display: flex;
@@ -346,10 +352,10 @@ async function copyName() {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .p-desc {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   line-height: 1.5;
   display: -webkit-box;
@@ -364,11 +370,11 @@ async function copyName() {
   flex-wrap: wrap;
 }
 .cat {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   background: var(--w-07);
   color: var(--text-3);
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
 }
 .p-foot {
   display: flex;
@@ -381,11 +387,11 @@ async function copyName() {
   display: flex;
   align-items: center;
   gap: 9px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .p-stats svg {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   vertical-align: -1px;
 }
 .dl,
@@ -396,9 +402,9 @@ async function copyName() {
   gap: 3px;
 }
 .provider-badge {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   font-weight: 600;
 }
 .provider-badge.modrinth {
@@ -412,9 +418,9 @@ async function copyName() {
 /* 资源类型（模组 / 整合包 / …）：跟在标题后面，不参与页脚那排统计的宽度竞争 */
 .type-chip {
   flex-shrink: 0;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   font-weight: 600;
   background: var(--accent-soft);
   color: var(--accent);
@@ -427,9 +433,9 @@ async function copyName() {
   border: none;
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   color: var(--accent-contrast);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 6px 13px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   cursor: pointer;
   font-family: inherit;
@@ -450,24 +456,6 @@ async function copyName() {
   display: flex;
   gap: 6px;
   align-items: center;
-}
-.site-btn {
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-2);
-  border-radius: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-size: 13px;
-  transition: all 0.12s;
-}
-.site-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent-05);
 }
 /* ---- 翻译选择模式 / 描述切换动画 ---- */
 .p-card.in-translate {
@@ -503,7 +491,7 @@ async function copyName() {
   display: block;
   height: 12px;
   width: 72%;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: linear-gradient(90deg, var(--w-04), var(--w-10), var(--w-04));
   background-size: 200% 100%;
   animation: bar-slide 1.2s ease-in-out infinite;

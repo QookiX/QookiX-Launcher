@@ -364,7 +364,7 @@ watch(
       </div>
       <button
         v-if="worldSub === 'sp'"
-        class="mini-btn cloud"
+        class="mini-btn primary cloud"
         :title="t('instanceSaves.cloudBrowseTitle')"
         @click="openCloudBrowse"
       >
@@ -408,7 +408,7 @@ watch(
               <IconCloud /> {{ t("instanceSaves.cloudSync") }}
             </button>
             <button
-              class="mini-btn pin"
+              class="mini-btn icon-only pin"
               :class="{ active: pins.isPinned(worldPinId(f.name)) }"
               :title="pins.isPinned(worldPinId(f.name)) ? t('instanceSaves.unpin') : t('instanceSaves.pinToHome')"
               @click="toggleWorldPin(f)"
@@ -416,7 +416,7 @@ watch(
               <IconMapPin />
             </button>
             <button
-              class="mini-btn play"
+              class="mini-btn primary"
               :disabled="!!launchingWorld"
               @click="launchWorld(f.name)"
             >
@@ -471,7 +471,7 @@ watch(
           </div>
           <div class="c-actions">
             <button
-              class="mini-btn pin"
+              class="mini-btn icon-only pin"
               :class="{ active: pins.isPinned(serverPinId(s.address)) }"
               :title="pins.isPinned(serverPinId(s.address)) ? t('instanceSaves.unpin') : t('instanceSaves.pinToHome')"
               @click="toggleServerPin(s)"
@@ -479,7 +479,7 @@ watch(
               <IconMapPin />
             </button>
             <button
-              class="mini-btn play"
+              class="mini-btn primary"
               :disabled="!!launchingServer || pinging.has(s.address)"
               :title="launchingServer === s.address ? t('instanceSaves.launching') : t('instanceSaves.launchAndJoin')"
               @click="launchServer(s)"
@@ -563,11 +563,11 @@ watch(
   align-items: center;
   gap: 6px;
   padding: 7px 14px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   background: var(--w-06);
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -599,7 +599,7 @@ watch(
 .world-icon {
   width: 44px;
   height: 44px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   image-rendering: pixelated;
   background: var(--w-05);
   flex-shrink: 0;
@@ -624,7 +624,7 @@ watch(
 .server-icon {
   width: 44px;
   height: 44px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   image-rendering: pixelated;
   background: var(--w-05);
   flex-shrink: 0;
@@ -634,7 +634,7 @@ watch(
   min-width: 0;
 }
 .c-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   margin-bottom: 3px;
 }
@@ -642,7 +642,7 @@ watch(
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .c-actions {
   display: flex;
@@ -658,7 +658,7 @@ watch(
   align-items: center;
   gap: 10px;
   margin-top: 2px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   flex-wrap: wrap;
 }
 .latency {
@@ -675,7 +675,7 @@ watch(
 .latency .bars i {
   width: 3px;
   background: var(--w-10);
-  border-radius: 1px;
+  border-radius: var(--r-xs);
   opacity: 0.35;
 }
 .latency .bars i:nth-child(1) { height: 4px; }
@@ -694,7 +694,7 @@ watch(
 .players { color: var(--text-2); }
 .err { color: var(--danger); }
 .server-motd {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin-top: 2px;
   max-width: 540px;
@@ -702,56 +702,9 @@ watch(
   word-break: break-word;
   line-height: 1.5;
 }
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.12s;
-}
-.mini-btn:hover {
-  background: var(--w-08);
-  color: var(--text-1);
-}
-.mini-btn.play {
-  color: var(--accent);
-  border-color: var(--accent-04);
-  background: var(--accent-soft);
-}
-.mini-btn.play:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-/* 云端恢复：世界 tab 头部唯一的跨面板动作，推到右侧并与播放按钮同色系 */
+/* 云端恢复：世界 tab 头部唯一的跨面板动作，推到右侧（外观走全局 .mini-btn.modifier） */
 .mini-btn.cloud {
   margin-left: auto;
-  color: var(--accent);
-  border-color: var(--accent-04);
-  background: var(--accent-soft);
-}
-.mini-btn.cloud:hover {
-  background: var(--accent-10);
-  color: var(--accent);
-}
-.mini-btn.pin {
-  padding: 7px 9px;
-}
-.mini-btn.pin svg {
-  width: 14px;
-  height: 14px;
-}
-.mini-btn.pin.active {
-  color: var(--accent);
-  border-color: var(--accent-04);
-  background: var(--accent-soft);
 }
 .center {
   padding: 60px;
@@ -759,7 +712,7 @@ watch(
   color: var(--text-3);
 }
 .empty {
-  padding: 44px 24px;
+  padding: 48px 24px;
   text-align: center;
   color: var(--text-3);
   display: flex;
@@ -778,12 +731,12 @@ watch(
   margin-bottom: 4px;
 }
 .empty-title {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 600;
   color: var(--text-2);
 }
 .hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .bk-body {
@@ -814,13 +767,13 @@ watch(
   border-bottom: none;
 }
 .bk-row .c-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 .bk-del {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
@@ -828,7 +781,7 @@ watch(
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   transition: all 0.12s;
 }
 .bk-del:hover {

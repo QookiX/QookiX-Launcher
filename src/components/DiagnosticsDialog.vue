@@ -121,7 +121,7 @@ async function saveAs() {
     v-model:show="show"
     preset="card"
     :title="t('diagnostics.title')"
-    style="width: 720px; max-width: 95vw"
+    style="width: 780px; max-width: 95vw"
     :mask-closable="true"
     :close-on-esc="true"
   >
@@ -218,7 +218,7 @@ async function saveAs() {
 }
 .dg-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.7;
   color: var(--text-3);
 }
@@ -232,9 +232,9 @@ async function saveAs() {
 .dg-modes button {
   background: none;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   padding: 3px 10px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   cursor: pointer;
 }
@@ -245,7 +245,7 @@ async function saveAs() {
 .dg-loading {
   padding: 32px 0;
   text-align: center;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-3);
 }
 .dg-sections {
@@ -256,13 +256,13 @@ async function saveAs() {
 }
 .dg-section {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 8px 12px;
   background: var(--panel-sub, var(--w-02));
 }
 .dg-title {
   margin: 0 0 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -274,7 +274,7 @@ async function saveAs() {
   gap: 3px;
 }
 .dg-lines li {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-2);
   word-break: break-all;
@@ -283,7 +283,7 @@ async function saveAs() {
   margin-top: 6px;
 }
 .dg-block summary {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--accent);
   cursor: pointer;
 }
@@ -292,8 +292,8 @@ async function saveAs() {
   margin: 6px 0 0;
   padding: 8px;
   background: var(--k-22);
-  border-radius: 6px;
-  font-size: 11px;
+  border-radius: var(--r-xs);
+  font-size: var(--fs-2xs);
   line-height: 1.6;
   color: var(--text-2);
   white-space: pre-wrap;
@@ -303,7 +303,7 @@ async function saveAs() {
 }
 .dg-meta {
   margin: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .dg-meta b {
@@ -317,7 +317,7 @@ async function saveAs() {
   gap: 2px;
 }
 .dg-history-head {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-2);
   display: flex;
@@ -325,12 +325,12 @@ async function saveAs() {
   gap: 8px;
 }
 .dg-history-note {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 400;
   color: var(--text-3);
 }
 .dg-history-empty {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   padding: 4px 0;
 }
@@ -338,7 +338,7 @@ async function saveAs() {
   display: flex;
   align-items: center;
   gap: 6px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
 }
 .dg-history-row:hover {
   background: var(--w-04);
@@ -352,7 +352,7 @@ async function saveAs() {
   background: none;
   border: none;
   padding: 3px 6px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-2);
   cursor: pointer;
   font-variant-numeric: tabular-nums;
@@ -364,7 +364,7 @@ async function saveAs() {
   background: none;
   border: none;
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 3px 8px;
   cursor: pointer;
   opacity: 0;

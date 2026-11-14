@@ -242,7 +242,7 @@ onMounted(async () => {
   -webkit-app-region: no-drag;
 }
 .tb-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
   letter-spacing: 0.2px;
@@ -268,11 +268,11 @@ onMounted(async () => {
   gap: 6px;
   height: 28px;
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-05);
   color: var(--text-2);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -377,7 +377,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 15px;
+  font-size: var(--fs-md);
   cursor: pointer;
   transition: all 0.12s;
 }
@@ -396,10 +396,10 @@ onMounted(async () => {
   min-width: 15px;
   height: 15px;
   padding: 0 4px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--accent);
   color: var(--accent-contrast);
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   line-height: 15px;
   text-align: center;

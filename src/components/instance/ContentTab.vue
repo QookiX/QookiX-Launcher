@@ -525,7 +525,7 @@ defineExpose({
         <IconClose />
       </button>
     </div>
-    <div v-if="!loadingContent && !filteredItems.length" class="empty glass">
+    <div v-if="!loadingContent && !filteredItems.length" class="qx-empty glass">
       <template v-if="contentItems.length">
         <p>{{ t("instanceContent.noMatch", { keyword: filterText }) }}</p>
         <button class="btn ghost" @click="filterText = ''">{{ t("instanceContent.clearSearch") }}</button>
@@ -637,7 +637,7 @@ defineExpose({
       v-model:show="switchState.show"
       preset="card"
       :title="t('instanceContent.switchVersionTitle', { name: switchState.item?.record.name ?? switchState.item?.record.filename ?? '' })"
-      style="width: 520px; max-width: 94vw"
+      style="width: 560px; max-width: 94vw"
       :mask-closable="true"
       :close-on-esc="true"
       @mask-click="switchState.show = false"
@@ -688,7 +688,7 @@ defineExpose({
   border: none;
   outline: none;
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
 }
 .filter-clear {
@@ -698,7 +698,7 @@ defineExpose({
   cursor: pointer;
   display: inline-flex;
   padding: 2px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .filter-clear:hover {
   color: var(--text-1);
@@ -708,9 +708,9 @@ defineExpose({
   align-items: center;
   gap: 7px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 9px 16px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -746,7 +746,7 @@ defineExpose({
 .c-icon {
   width: 34px;
   height: 34px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   background: var(--w-05);
   display: flex;
   align-items: center;
@@ -767,18 +767,18 @@ defineExpose({
   min-width: 0;
 }
 .c-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   margin-bottom: 3px;
 }
 .c-en {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 400;
   color: var(--text-3);
   margin-left: 6px;
 }
 .c-file {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin-bottom: 3px;
 }
@@ -786,11 +786,11 @@ defineExpose({
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .src {
   padding: 1px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   font-weight: 600;
 }
 .src.modrinth {
@@ -823,7 +823,7 @@ defineExpose({
 .icon-btn {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
@@ -831,7 +831,7 @@ defineExpose({
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   transition: all 0.12s;
 }
 .icon-btn.danger:hover {
@@ -859,15 +859,6 @@ defineExpose({
   text-align: center;
   color: var(--text-3);
 }
-.empty {
-  padding: 40px;
-  text-align: center;
-  color: var(--text-3);
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-  align-items: center;
-}
 .empty-actions {
   display: flex;
   gap: 10px;
@@ -892,9 +883,9 @@ defineExpose({
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-2);
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 8px 14px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   font-family: inherit;
   transition: all 0.12s;
@@ -911,7 +902,7 @@ defineExpose({
   font-weight: 600;
 }
 .sv-date {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .sv-actions {
@@ -949,7 +940,7 @@ defineExpose({
   color: var(--text-3);
   cursor: pointer;
   padding: 4px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
 }
 .dep-head .x:hover {
   background: var(--w-06);
@@ -958,14 +949,14 @@ defineExpose({
 .dep-sub {
   margin: 6px 0 14px;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .dep-section {
   margin-bottom: 16px;
 }
 .dep-section h5 {
   margin: 0 0 8px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .dep-row {
@@ -975,7 +966,7 @@ defineExpose({
   gap: 12px;
   padding: 9px 12px;
   border: 1px solid var(--w-08);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   margin-bottom: 8px;
 }
 .dep-info {
@@ -983,28 +974,28 @@ defineExpose({
 }
 .dep-id {
   font-family: "Cascadia Code", Consolas, "Courier New", monospace;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 .dep-req {
   margin-left: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   font-family: "Cascadia Code", Consolas, monospace;
 }
 .dep-by {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .dep-disabled {
   margin-top: 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--warn);
 }
 .dep-tag {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .dep-actions {
@@ -1015,7 +1006,7 @@ defineExpose({
 }
 .dep-title {
   max-width: 160px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .dep-ok {
@@ -1024,6 +1015,6 @@ defineExpose({
   gap: 8px;
   padding: 16px 0 6px;
   color: var(--success);
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 </style>

@@ -17,6 +17,7 @@
     "core:window:allow-is-minimized",
     "core:window:allow-set-size",
     "opener:default",
+    "opener:allow-open-path",
     "dialog:default",
     "process:default",
     "updater:default",

@@ -432,9 +432,9 @@ onBeforeUnmount(() => {
     />
 
     <div class="ctrl">
-      <button class="mini-btn" :title="t('nbt.mapZoomOut')" @click="zoomBy(1.25)">−</button>
-      <button class="mini-btn" :title="t('nbt.mapZoomIn')" @click="zoomBy(0.8)">+</button>
-      <button class="mini-btn" @click="fitToSave">{{ t("nbt.mapReset") }}</button>
+      <button class="mini-btn icon-only solid" :title="t('nbt.mapZoomOut')" @click="zoomBy(1.25)">−</button>
+      <button class="mini-btn icon-only solid" :title="t('nbt.mapZoomIn')" @click="zoomBy(0.8)">+</button>
+      <button class="mini-btn solid" @click="fitToSave">{{ t("nbt.mapReset") }}</button>
     </div>
 
     <!-- 渲染进度：顶部细进度条 + 左下角百分比 -->
@@ -453,7 +453,7 @@ onBeforeUnmount(() => {
 <style scoped>
 .chunk-map {
   position: relative;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: #101319;
 }
@@ -468,30 +468,16 @@ canvas {
   display: flex;
   gap: 4px;
 }
-.mini-btn {
-  min-width: 26px;
-  padding: 4px 8px;
-  border-radius: 7px;
-  border: 1px solid var(--border);
-  background: rgba(20, 22, 28, 0.82);
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-}
-.mini-btn:hover {
-  background: rgba(36, 39, 48, 0.92);
-}
 .badge,
 .scale {
   position: absolute;
   left: 8px;
   bottom: 8px;
   padding: 3px 8px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: rgba(20, 22, 28, 0.82);
   color: var(--text-3);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .topbar {
   position: absolute;

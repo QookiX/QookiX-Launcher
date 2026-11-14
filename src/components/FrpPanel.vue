@@ -29,6 +29,8 @@ const authUri = ref("");
 const polling = ref(false);
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 
+const agreedToTerms = ref(false);
+
 const runningSet = computed(() => new Set(running.value));
 
 interface LocalTunnel {
@@ -140,6 +142,10 @@ async function loadLocal() {
 }
 
 async function startAuth() {
+  if (!agreedToTerms.value) {
+    message.warning(t("frp.termsHint"));
+    return;
+  }
   loading.value = true;
   try {
     const d = await api.frpLoginStart();
@@ -293,10 +299,10 @@ onUnmounted(() => {
     <!-- 未登录：设备授权 -->
     <section v-if="!loggedIn" class="frp-card">
       <header class="frp-card-head">
-        <span class="frp-card-title"><IconGlobe /> {{ t("frp.brand") }}</span>
-        <span class="frp-status">{{ t("frp.notLoggedIn") }}</span>
+        <span class="qx-section-title frp-card-title"><IconGlobe /> {{ t("frp.brand") }}</span>
+        <span class="qx-badge frp-status">{{ t("frp.notLoggedIn") }}</span>
         <span class="frp-spacer"></span>
-        <button class="frp-btn" @click="openUrl(SITE)">
+        <button class="qx-btn qx-btn--sm" @click="openUrl(SITE)">
           <IconExternal /> {{ t("frp.openSite") }}
         </button>
       </header>
@@ -305,16 +311,26 @@ onUnmounted(() => {
         <div v-if="authCode" class="frp-auth">
           <div class="frp-code">{{ authCode }}</div>
           <div class="frp-auth-ops">
-            <button class="frp-btn primary" @click="openUrl(authUri)">
+            <button class="qx-btn qx-btn--sm qx-btn--primary" @click="openUrl(authUri)">
               <IconExternal /> {{ t("frp.openAuth") }}
             </button>
             <span v-if="polling" class="frp-wait">{{ t("frp.waiting") }}</span>
           </div>
           <p class="frp-hint">{{ t("frp.authHint") }}</p>
         </div>
-        <button v-else class="frp-btn primary" :disabled="loading" @click="startAuth">
+        <button v-else class="qx-btn qx-btn--sm qx-btn--primary" :disabled="loading" @click="startAuth">
           {{ loading ? t("frp.gettingCode") : t("frp.getCode") }}
         </button>
+        <div class="frp-legal">
+          <p class="frp-hint frp-legal-hint">{{ t("frp.termsHint") }}</p>
+          <div class="frp-legal-links">
+            <button class="qx-btn qx-btn--xs qx-btn--ghost" @click="openUrl(SITE + '/terms')">
+              <IconExternal /> {{ t("frp.terms") }}
+            </button>
+            <span class="frp-legal-text">{{ t("frp.disclaimerText") }}</span>
+          </div>
+          <p class="frp-hint frp-frpc-notice">{{ t("frp.frpcNotice") }}</p>
+        </div>
       </div>
     </section>
 
@@ -322,17 +338,17 @@ onUnmounted(() => {
       <!-- 账号条 -->
       <section class="frp-card">
         <header class="frp-card-head">
-          <span class="frp-card-title"><IconGlobe /> {{ t("frp.brand") }}</span>
-          <span class="frp-status on">{{ t("frp.loggedIn") }}</span>
+          <span class="qx-section-title frp-card-title"><IconGlobe /> {{ t("frp.brand") }}</span>
+          <span class="qx-badge frp-status frp-status--ok">{{ t("frp.loggedIn") }}</span>
           <span class="frp-spacer"></span>
           <span class="frp-account">{{ user?.username || "" }}</span>
-          <button class="frp-btn" @click="openUrl(SITE)">
+          <button class="qx-btn qx-btn--sm" @click="openUrl(SITE)">
             <IconExternal /> {{ t("frp.openSite") }}
           </button>
-          <button class="frp-icon-btn" :title="t('frp.refresh')" @click="loadTunnels">
+          <button class="qx-btn qx-btn--sm qx-btn--ghost frp-icon-btn" :title="t('frp.refresh')" @click="loadTunnels">
             <IconRefresh />
           </button>
-          <button class="frp-btn" @click="logout">{{ t("frp.logout") }}</button>
+          <button class="qx-btn qx-btn--sm" @click="logout">{{ t("frp.logout") }}</button>
         </header>
       </section>
 
@@ -341,20 +357,20 @@ onUnmounted(() => {
       <!-- MohuaFrp 隧道 -->
       <section v-if="sub === 'panel'" key="panel" class="frp-card">
         <header class="frp-card-head">
-          <span class="frp-card-title">{{ t("frp.panelTunnels") }}</span>
-          <span class="frp-count">{{ tunnels.length }}</span>
+          <span class="qx-section-title frp-card-title">{{ t("frp.panelTunnels") }}</span>
+          <span class="qx-badge frp-count">{{ tunnels.length }}</span>
         </header>
         <p class="frp-hint">{{ t("frp.panelHint") }}</p>
-        <p v-if="!tunnels.length" class="frp-empty">{{ t("frp.panelEmpty") }}</p>
-        <div v-else class="frp-grid">
+        <p v-if="!tunnels.length" class="qx-empty frp-empty">{{ t("frp.panelEmpty") }}</p>
+        <div v-else class="qx-grid qx-grid--card">
           <article v-for="tn in tunnels" :key="tn.id" class="frp-tun">
             <div class="frp-tun-top">
               <span class="frp-tun-name">{{ tn.name }}</span>
-              <span class="frp-status" :class="tn.status">{{ statusText(tn.status) }}</span>
+              <span class="qx-badge frp-status" :class="tn.status">{{ statusText(tn.status) }}</span>
             </div>
             <div class="frp-tags">
-              <span class="frp-tag proto">{{ tn.protocol }}</span>
-              <span v-if="tn.node_name" class="frp-tag">{{ tn.node_name }}</span>
+              <span class="qx-badge qx-badge--accent">{{ tn.protocol }}</span>
+              <span v-if="tn.node_name" class="qx-badge">{{ tn.node_name }}</span>
             </div>
             <div class="frp-flow">
               <span class="frp-flow-local">127.0.0.1:{{ tn.local_port }}</span>
@@ -367,17 +383,17 @@ onUnmounted(() => {
               </span>
               <span v-else class="frp-idle">{{ t("frp.idle") }}</span>
               <span class="frp-spacer"></span>
-              <button class="frp-icon-text" @click="showLog(tn.name)">{{ t("frp.logs") }}</button>
+              <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link" @click="showLog(tn.name)">{{ t("frp.logs") }}</button>
               <button
                 v-if="runningSet.has(tn.name)"
-                class="frp-btn danger"
+                class="qx-btn qx-btn--sm qx-btn--danger"
                 @click="stopName(tn.name)"
               >
                 {{ t("frp.stop") }}
               </button>
               <button
                 v-else
-                class="frp-btn primary"
+                class="qx-btn qx-btn--sm qx-btn--primary"
                 :disabled="tn.status !== 'active'"
                 @click="start(tn)"
               >
@@ -391,10 +407,10 @@ onUnmounted(() => {
       <!-- 本地隧道 -->
       <section v-else key="local" class="frp-card">
         <header class="frp-card-head">
-          <span class="frp-card-title">{{ t("frp.localTunnels") }}</span>
-          <span class="frp-count">{{ localTunnels.length }}</span>
+          <span class="qx-section-title frp-card-title">{{ t("frp.localTunnels") }}</span>
+          <span class="qx-badge frp-count">{{ localTunnels.length }}</span>
           <span class="frp-spacer"></span>
-          <button class="frp-btn" @click="newLocal">{{ t("frp.create") }}</button>
+          <button class="qx-btn qx-btn--sm" @click="newLocal">{{ t("frp.create") }}</button>
         </header>
         <p class="frp-hint">{{ t("frp.localHint") }}</p>
 
@@ -429,7 +445,7 @@ onUnmounted(() => {
           </div>
           <div class="frp-field">
             <label>{{ t("frp.nodeHost") }}</label>
-            <n-input v-model:value="editing.host" size="small" placeholder="node1.frp.mhjz1.cn" />
+            <n-input v-model:value="editing.host" size="small" placeholder="example.com" />
           </div>
           <div class="frp-field narrow">
             <label>{{ t("frp.nodePort") }}</label>
@@ -440,17 +456,17 @@ onUnmounted(() => {
             />
           </div>
           <div class="frp-form-ops">
-            <button class="frp-btn" @click="showForm = false">{{ t("frp.cancel") }}</button>
-            <button class="frp-btn primary" @click="saveLocal">{{ t("frp.save") }}</button>
+            <button class="qx-btn qx-btn--sm" @click="showForm = false">{{ t("frp.cancel") }}</button>
+            <button class="qx-btn qx-btn--sm qx-btn--primary" @click="saveLocal">{{ t("frp.save") }}</button>
           </div>
         </div>
 
-        <p v-if="!localTunnels.length" class="frp-empty">{{ t("frp.localEmpty") }}</p>
-        <div v-else class="frp-grid">
+        <p v-if="!localTunnels.length" class="qx-empty frp-empty">{{ t("frp.localEmpty") }}</p>
+        <div v-else class="qx-grid qx-grid--card">
           <article v-for="tn in localTunnels" :key="tn.name" class="frp-tun">
             <div class="frp-tun-top">
               <span class="frp-tun-name">{{ tn.name }}</span>
-              <span class="frp-status">{{ tn.protocol.toUpperCase() }}</span>
+              <span class="qx-badge frp-status">{{ tn.protocol.toUpperCase() }}</span>
             </div>
             <div class="frp-flow">
               <span class="frp-flow-local">127.0.0.1:{{ tn.local_port }}</span>
@@ -463,19 +479,19 @@ onUnmounted(() => {
               </span>
               <span v-else class="frp-idle">{{ t("frp.idle") }}</span>
               <span class="frp-spacer"></span>
-              <button class="frp-icon-text" @click="showLog(tn.name)">{{ t("frp.logs") }}</button>
-              <button class="frp-icon-text" @click="editLocal(tn)">{{ t("frp.edit") }}</button>
-              <button class="frp-icon-text danger" @click="removeLocal(tn)">
+              <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link" @click="showLog(tn.name)">{{ t("frp.logs") }}</button>
+              <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link" @click="editLocal(tn)">{{ t("frp.edit") }}</button>
+              <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link frp-link--danger" @click="removeLocal(tn)">
                 {{ t("frp.remove") }}
               </button>
               <button
                 v-if="runningSet.has(tn.name)"
-                class="frp-btn danger"
+                class="qx-btn qx-btn--sm qx-btn--danger"
                 @click="stopName(tn.name)"
               >
                 {{ t("frp.stop") }}
               </button>
-              <button v-else class="frp-btn primary" @click="startLocal(tn)">
+              <button v-else class="qx-btn qx-btn--sm qx-btn--primary" @click="startLocal(tn)">
                 {{ t("frp.start") }}
               </button>
             </div>
@@ -490,14 +506,14 @@ onUnmounted(() => {
       v-model:show="logOpen"
       preset="card"
       :title="t('frp.logTitle', { name: logName })"
-      style="width: 720px; max-width: 94vw"
+      style="width: 780px; max-width: 94vw"
       :bordered="false"
     >
       <div class="frp-log-wrap">
         <pre ref="logEl" class="frp-log">{{ logText }}</pre>
         <div class="frp-log-ops">
-          <button class="frp-btn" @click="showLog(logName)">{{ t("frp.refresh") }}</button>
-          <button class="frp-btn primary" @click="logOpen = false">{{ t("frp.close") }}</button>
+          <button class="qx-btn qx-btn--sm" @click="showLog(logName)">{{ t("frp.refresh") }}</button>
+          <button class="qx-btn qx-btn--sm qx-btn--primary" @click="logOpen = false">{{ t("frp.close") }}</button>
         </div>
       </div>
     </n-modal>
@@ -505,409 +521,226 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
+/* Layout only. Reusable looks (card/button/badge/empty/grid/section title)
+   come from the global .qx-* classes in src/styles/components.css.
+   The parent .frp-tab is already a glass panel, so no nested glass card here. */
 .frp-root {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--gap-panel);
   min-width: 0;
 }
-
-/**
- * 区块本身**不是**卡片：外层已经有一层 glass，再套一层就是三层嵌套。
- * 这里只当排版容器，真正有卡面的是下面的 .frp-tun。
- */
 .frp-card {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--sp-4);
   min-width: 0;
 }
-/* 子页签切换：淡入 + 轻微上浮，别硬切 */
-.frp-fade-enter-active,
-.frp-fade-leave-active {
-  transition: opacity 0.18s ease, transform 0.18s ease;
-}
-.frp-fade-enter-from {
-  opacity: 0;
-  transform: translateY(5px);
-}
-.frp-fade-leave-to {
-  opacity: 0;
-  transform: translateY(-5px);
-}
-
-/* 区块之间用一条细线分隔，代替整块底色。
-   只在「后一块」画上边框，第一块不要再画下边框，否则接缝处会叠成两条线。 */
 .frp-card + .frp-card {
-  margin-top: 4px;
-  padding-top: 14px;
+  margin-top: var(--sp-1);
+  padding-top: var(--sp-6);
   border-top: 1px solid var(--border);
 }
 .frp-card-head {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: var(--sp-3);
 }
+/* Text style comes from .qx-section-title; this only lays out the icon. */
 .frp-card-title {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text-1);
+  gap: var(--sp-2);
+}
+.frp-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-4);
 }
 .frp-card-title svg {
-  width: 14px;
-  height: 14px;
+  width: var(--sp-6);
+  height: var(--sp-6);
   color: var(--accent);
 }
-.frp-count {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: 999px;
-  background: var(--w-06);
-  color: var(--text-3);
-  font-size: 10px;
-  line-height: 18px;
-  text-align: center;
-}
-.frp-spacer {
-  flex: 1;
-}
-
-/* 子页签：贴在右侧，只做切换，不抢主视觉 */
-.frp-subtabs {
-  display: flex;
-  justify-content: flex-end;
-  gap: 4px;
-  margin: -2px 0 2px;
-}
-.frp-subtabs button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
-  border: none;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-3);
-  font-size: 11px;
-  font-family: inherit;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
-}
-.frp-subtabs button:hover {
-  color: var(--text-1);
-  background: var(--w-06);
-}
-.frp-subtabs button.on {
-  color: var(--accent);
-  background: var(--accent-08, rgba(232, 154, 75, 0.12));
-}
+.frp-spacer { flex: 1; }
 .frp-account {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 180px;
 }
-
 .frp-hint {
   margin: 0;
-  font-size: 11px;
-  line-height: 1.65;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
   color: var(--text-3);
 }
 .frp-empty {
   margin: 0;
-  padding: 18px 0;
-  text-align: center;
-  font-size: 12px;
-  color: var(--text-3);
+  padding: var(--sp-7) var(--sp-6);
 }
+.frp-status--ok,
+.frp-status.active { color: var(--success); }
+.frp-status.expired,
+.frp-status.disabled { color: var(--danger-text); }
 
-/* 一隧道一卡 */
-.frp-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
-  gap: 10px;
-}
+/* One light card per tunnel (avoids a third glass layer). */
 .frp-tun {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px 14px;
-  border-radius: 12px;
+  gap: var(--sp-3);
+  padding: var(--sp-5) var(--sp-6);
   border: 1px solid var(--border);
-  /* 比外层 glass 亮一档，让「这一张是实体卡」一眼可辨 */
+  border-radius: var(--r-lg);
   background: var(--w-06);
   min-width: 0;
-  transition: border-color 0.15s ease, background 0.15s ease;
+  transition: border-color var(--dur-sm) var(--ease-out), background var(--dur-sm) var(--ease-out);
 }
 .frp-tun:hover {
-  border-color: var(--border-strong, rgba(255, 255, 255, 0.16));
+  border-color: var(--accent-35);
   background: var(--w-10);
 }
-.frp-tun-top {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
+.frp-tun-top { display: flex; align-items: center; gap: var(--sp-3); }
 .frp-tun-name {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.frp-tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.frp-tag {
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: var(--bg-2, rgba(255, 255, 255, 0.04));
-  color: var(--text-3);
-}
-.frp-tag.proto {
-  color: var(--accent);
-  background: var(--accent-08, rgba(232, 154, 75, 0.12));
-}
+.frp-tags { display: flex; flex-wrap: wrap; gap: var(--sp-2); }
 .frp-flow {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: var(--sp-2);
+  font-size: var(--fs-2xs);
   font-family: ui-monospace, Consolas, monospace;
   color: var(--text-3);
   overflow: hidden;
 }
 .frp-flow-local,
-.frp-flow-remote {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.frp-flow-arrow {
-  flex: none;
-  color: var(--text-3);
-  opacity: 0.6;
-}
-.frp-flow-remote {
-  color: var(--text-2);
-}
-.frp-tun-foot {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 2px;
-}
+.frp-flow-remote { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.frp-flow-arrow { flex: none; opacity: 0.6; }
+.frp-flow-remote { color: var(--text-2); }
+.frp-tun-foot { display: flex; align-items: center; gap: var(--sp-2); margin-top: var(--sp-1); }
 .frp-running {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 11px;
-  color: var(--success, #4ec9a0);
+  gap: var(--sp-2);
+  font-size: var(--fs-2xs);
+  color: var(--success);
 }
 .frp-running i {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: var(--success, #4ec9a0);
-  box-shadow: 0 0 0 3px rgba(78, 201, 160, 0.16);
+  width: var(--sp-2);
+  height: var(--sp-2);
+  border-radius: var(--r-pill);
+  background: var(--success);
+  box-shadow: 0 0 0 3px var(--success-12);
 }
-.frp-idle {
-  font-size: 11px;
-  color: var(--text-3);
-}
+.frp-idle { font-size: var(--fs-2xs); color: var(--text-3); }
 
-.frp-status {
-  flex: none;
-  font-size: 10px;
-  padding: 2px 7px;
-  border-radius: 999px;
-  border: 1px solid var(--border);
-  color: var(--text-3);
-}
-.frp-status.active,
-.frp-status.on {
-  color: var(--success, #4ec9a0);
-  border-color: rgba(78, 201, 160, 0.4);
-}
-.frp-status.expired,
-.frp-status.disabled {
-  color: var(--danger, #e5534b);
-  border-color: rgba(229, 83, 75, 0.35);
-}
+/* Compact variants of the global ghost button. */
+.frp-link { padding: 0 var(--sp-2); }
+.frp-link--danger,
+.frp-link--danger:hover:not(:disabled) { color: var(--danger-text); }
+.frp-icon-btn { width: var(--ctl-sm); padding: 0; }
 
-/* 日志弹窗 */
-.frp-log-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+/* Log dialog */
+.frp-log-wrap { display: flex; flex-direction: column; gap: var(--sp-4); }
 .frp-log {
   margin: 0;
   max-height: 420px;
   overflow: auto;
-  padding: 12px;
-  border-radius: 10px;
-  background: var(--w-06, rgba(255, 255, 255, 0.06));
+  padding: var(--sp-5);
+  border-radius: var(--r-md);
+  background: var(--w-06);
   color: var(--text-2);
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.65;
   white-space: pre-wrap;
   word-break: break-all;
-  /* 桌面端全局禁用了选择，日志必须能选中复制 */
+  /* Global UI disables text selection; logs must stay selectable. */
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
 }
-.frp-log-ops {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-}
+.frp-log-ops { display: flex; justify-content: flex-end; gap: var(--sp-3); }
 
-/* 登录区 */
-.frp-auth {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
+/* Device authorization */
+.frp-auth { display: flex; flex-direction: column; gap: var(--sp-4); }
 .frp-code {
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 26px;
+  font-size: var(--fs-xl);
   letter-spacing: 3px;
   text-align: center;
-  padding: 14px 0;
-  border-radius: 10px;
+  padding: var(--sp-5) 0;
+  border-radius: var(--r-md);
   background: var(--w-06);
   color: var(--accent);
 }
-.frp-auth-ops {
+.frp-auth-ops { display: flex; align-items: center; gap: var(--sp-4); }
+.frp-wait { font-size: var(--fs-xs); color: var(--text-3); }
+
+/* Legal notice (terms + disclaimer) */
+.frp-legal {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-3);
+  margin-top: var(--sp-2);
+  padding: var(--sp-4);
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--w-04);
+}
+.frp-legal-hint {
+  margin: 0;
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+}
+.frp-legal-links {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
 }
-.frp-wait {
-  font-size: 12px;
+.frp-legal-text {
+  flex: 1;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
+  line-height: 1.5;
+}
+.frp-frpc-notice {
+  margin: 0;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  font-style: italic;
 }
 
-/* 表单 */
+/* Form */
 .frp-form {
   display: flex;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 12px;
-  border-radius: 10px;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
   border: 1px solid var(--border);
+  border-radius: var(--r-md);
   background: var(--w-04);
 }
-.frp-field {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  width: 180px;
-}
-.frp-field.narrow {
-  width: 110px;
-}
-.frp-field label {
-  font-size: 11px;
-  color: var(--text-3);
-}
-.frp-form-ops {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  margin-left: auto;
-}
+.frp-field { display: flex; flex-direction: column; gap: var(--sp-1); width: 180px; }
+.frp-field.narrow { width: 110px; }
+.frp-field label { font-size: var(--fs-2xs); color: var(--text-3); }
+.frp-form-ops { display: flex; align-items: flex-end; gap: var(--sp-3); margin-left: auto; }
 
-/* 按钮 */
-.frp-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-06);
-  color: var(--text-1);
-  font-size: 11px;
-  font-family: inherit;
-  white-space: nowrap;
-  cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+/* Sub-tab crossfade */
+.frp-fade-enter-active,
+.frp-fade-leave-active {
+  transition: opacity var(--dur-md) var(--ease-out), transform var(--dur-md) var(--ease-out);
 }
-.frp-btn svg {
-  width: 12px;
-  height: 12px;
-}
-.frp-btn:hover:not(:disabled) {
-  background: var(--w-10);
-}
-.frp-btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-.frp-btn.primary {
-  border-color: transparent;
-  background: var(--accent);
-  color: #fff;
-}
-.frp-btn.danger {
-  color: var(--danger, #e5534b);
-}
-.frp-icon-text {
-  flex: none;
-  border: none;
-  background: none;
-  padding: 0 2px;
-  font-size: 11px;
-  font-family: inherit;
-  color: var(--text-3);
-  white-space: nowrap;
-  cursor: pointer;
-}
-.frp-icon-text:hover {
-  color: var(--accent);
-}
-.frp-icon-text.danger:hover {
-  color: var(--danger, #e5534b);
-}
-.frp-icon-btn {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-}
-.frp-icon-btn svg {
-  width: 13px;
-  height: 13px;
-}
-.frp-icon-btn:hover {
-  color: var(--accent);
-  border-color: var(--accent-35, rgba(232, 154, 75, 0.35));
-}
+.frp-fade-enter-from { opacity: 0; transform: translateY(var(--sp-2)); }
+.frp-fade-leave-to { opacity: 0; transform: translateY(calc(-1 * var(--sp-2))); }
 </style>

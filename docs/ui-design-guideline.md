@@ -4,7 +4,26 @@
 > 目标：让任何协作者在不读别人代码的情况下，也能写出视觉一致的页面。
 > 本文只是规范，不包含代码改动。
 
+> **落地进度（2026-11）**
+> §13.1 的令牌地基与 §13.2 的共享原子类已经落地，并按职责拆成三份文件：
+> `src/styles/tokens.css`（令牌）、`src/styles/base.css`（重置 / 外壳 / 转场）、
+> `src/styles/components.css`（`.qx-*` 组件类）。
+> `src/styles.css` 现在只是入口 + 第三方组件覆写。
+> 新页面请直接引用 `.qx-*`，不要再复制一份 `.btn` / `.card` / `.mini-btn`。
+> 自定义主页（`home.json`）见 [custom-home.md](./custom-home.md)。
+>
+> 已统一到 `.qx-*`：首页 / 工具箱 / 实例页骨架；联机、实例详情、内容详情、创建实例、
+> 文件管理器、实例设置、实例页的按钮；实例详情 / NBT / 下载抽屉 / 实例内容页签的空状态。
+> 已知仍待收口：`mini-btn` 在 17 个文件里有 12 份略不相同的定义（约 219 处引用，
+> 且「primary」在设置页是描边而非填充，需要先定语义再改名）；`BrowseView` 的吸附头
+> 与页面标题存在布局耦合，需开窗口实测。
+
 ---
+
+> **阅读顺序提示（2026-11-14）**：§3 令牌、§5 组件、§6 网格是**现行**约束；
+> §4 已按实际判断重写（**不设宽度上限、不强制页面标题**）；
+> §10 / §13 / §14 是早期施工计划，其中「统一 1120 宽度」「每页补标题」的条款**已作废**，
+> 仅作为改造过程记录保留，不要照着做。
 
 ## 0. 一句话结论
 
@@ -16,7 +35,7 @@
 
 | # | 问题 | 取证 |
 |---|---|---|
-| 1 | **页面骨架不统一** | 只有 Home 有 `max-width: 1080px`；Browse / Instances / Settings / Multiplayer / Toolbox 宽度无上限，窗口拉宽后完全不协调 |
+| 1 | ~~**页面骨架不统一**~~ | 当时的判断是「有的页有上限、有的没有」。**后来推翻**：上限本身就是错的解法，全站已统一为「都不设上限」（见 §4） |
 | 2 | **页面标题层级混乱** | InstanceDetail `h1 21px`、ServerDetail `h2 20px`、ProjectDetail ≈20px；而 Browse / Instances / Toolbox / Multiplayer 干脆**没有标题** |
 | 3 | **按钮没有尺寸分级** | 主按钮 `9px 18px / 10px / 13px`、`mini-btn 7px 13px / 8px / 12px`、`.btn.sm 6px 12px`、`.btn.big 13px 26px`、标题栏 `28px 高 / 8px / 12px`、`icon-btn 32×32`、`pin-unpin 28×28`、`tb-btn 30×30` 圆形、`ctrl-btn 32×32` —— 至少 8 套 |
 | 4 | **圆角失控** | 实际出现 3/4/5/6/7/8/9/10/12/14/16/18/999px 共 13 种；同一页面里 `.glass 14` 与 `.map-info 10`、`.id-ver-list 10` 并存 |
@@ -80,19 +99,26 @@
 
 ### 3.2 字体
 
-字体族沿用现有 `"Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui`，不修改。字号收敛为 **7 档**：
+字体族沿用现有 `"Segoe UI", "Microsoft YaHei", "PingFang SC", system-ui`，不修改。字号收敛为 **8 档**：
 
 | 令牌 | 值 | 用途 |
 |---|---|---|
 | `--fs-2xs` | 11px | 角标、分组小标题、badge |
 | `--fs-xs` | 12px | meta 信息、说明文字、小按钮 |
 | `--fs-sm` | 13px | **默认正文 / 按钮 / 表单 / 标签页** |
+| `--fs-base` | 14px | 面板标题、弹窗正文、卡片名（2026-11 补：全仓 65 处 14px 的无名档） |
 | `--fs-md` | 15px | 卡片标题、区块标题 |
 | `--fs-lg` | 20px | 页面主标题（全局唯一） |
 | `--fs-xl` | 26px | 大数字展示（验证码、统计值） |
 | `--mono` | Cascadia Code | 路径、版本号、代码块 |
 
-**删除** 14 / 16 / 17 / 21px 四处游离字号，以及全部小数字号 `10.5 / 11.5 / 12.5 / 13.5px`（实测 16 处）。字重只保留 **400 / 500 / 600 / 700**，禁止 800。
+**删除** 16 / 17 / 21px 三处游离字号，以及全部小数字号 `10.5 / 11.5 / 12.5 / 13.5px`（实测 16 处）。字重只保留 **400 / 500 / 600 / 700**，禁止 800。
+
+> 14px 原来是"删除项"，但它是全仓出现最多的字号（65 处，面板标题 / 弹窗正文 / 卡片名都在用），删不掉。与其让它散落在各页，不如正式收编为 `--fs-base`，字号档位变 8 档 —— 这是唯一一处对早期规范的推翻，理由是「规范要跟着真实密度走」。
+
+> `font-size` 也常被用来给 svg 图标定尺寸（`font-size: 21px` 的图标容器、`font-size: 14px` 的 `.mini-btn svg`）。这类值不要当字号处理，收编时一律跳过。
+
+> 2026-11 已完成一轮机械收编：`<style>` 块里的字号字面量从 1001 处降到 59 处（94% 走令牌），圆角从 482 处降到 1 处。剩下的 18 / 16 / 22 / 34 / 36 / 46px 多为图标尺寸与装饰性大数字，**不要再强行并入 8 档**。
 
 行高：标题 `1.3`，正文 `1.55`，等宽 `1.5`。
 
@@ -123,7 +149,7 @@
 | `--r-sm` | 8px | 小按钮、图标按钮、输入框内小控件 |
 | `--r-md` | 10px | 按钮、输入框、下拉、选项卡容器 |
 | `--r-lg` | 14px | **卡片 / 玻璃面板（主用）** |
-| `--r-xl` | 18px | Dock、抽屉、浮动大面板 |
+| `--r-xl` | 16px | Dock、抽屉、浮动大面板 |
 | `--r-pill` | 999px | 仅状态 pill（如 `core-badge`） |
 
 删除 3 / 4 / 5 / 7 / 9 / 11 / 16px。**规则：嵌套元素圆角 = 父圆角 − 4px**（14 → 10 → 8）。
@@ -132,11 +158,14 @@
 
 | 令牌 | 值 | 用途 |
 |---|---|---|
-| `--card-shadow` | 现有 | 静置卡片 |
-| `--card-shadow-hover` | 现有 | hover |
-| `--layer-shadow` | **新增** `0 8px 28px rgba(0,0,0,.18)` | Dock / 抽屉 / 浮层 |
+| `--card-shadow` | 深色 `none` / 浅色 `0 2px 8px rgba(0,0,0,.08)` | 静置卡片 |
+| `--card-shadow-hover` | 内外各 1px `--accent-50` 细环（浅色额外叠 `0 10px 28px`） | hover |
+| `--float-shadow` | 深色 `none` / 浅色 `0 8px 24px rgba(0,0,0,.1)`（**任何主题都不画 1px 细环**） | 底部悬浮岛：Dock、启动条 |
+| `--layer-shadow` | **新增** `0 8px 28px rgba(0,0,0,.18)` | 抽屉 / 浮层 |
 | `--pop-shadow` | **新增** `0 12px 36px rgba(0,0,0,.32)` | 弹出菜单 / Popover |
 | `--border` | 现有 | 唯一描边色；禁止 `1px solid rgba(...)` 手写 |
+
+**卡片不要黑色投影**：深色主题底色本身就是 `#10131a`，纯黑阴影压上去只是把卡片四周压得更黑 —— 静止态 28% 几乎看不出，一旦悬停到 42% 就会沿四边糊出一圈黑边，看起来像描边而不是浮起；有背景图 / 动态场景时（`:root.has-bg` 把 `--panel` 变成深色半透）黑圈会更明显。深色下的层次靠 `--panel` 明度差 + 悬停时的 accent 细环表达；只有浅色主题的白卡需要投影来拉开与浅底的层次。**悬浮岛同理**（`--float-shadow`）：Dock 这类半透明玻璃条在深色底上投黑影子只会糊出一圈脏边；但**用 1px 细环勾边界同样不行**（圆角处会显出一道亮线，像贴了边框贴纸）。正解是「不描边、不投影」，靠 `--panel` 玻璃底 + 磨砂与卡片保持同一套视觉语言。
 
 **hover 统一规则**：卡片与列表行只变阴影或背景（`--panel` → `--panel-hover`），**不 translate / scale**；按钮 hover 只变背景色档位，禁止 `filter: brightness()`。
 
@@ -170,25 +199,29 @@
 
 ## 4. 页面骨架规范
 
-所有主视图（`src/views` 下的一级页面）必须使用同一骨架：
+所有主视图（`src/views` 下的一级页面）使用同一骨架：
 
 ```text
-.qx-page                  max-width: 1120px; margin: 0 auto;
+.qx-page                  width: 100%;（不设宽度上限，不居中收窄）
                           display: flex; flex-direction: column; gap: 16px;
-  .qx-page-head           flex; align-items: flex-end; justify-content: space-between; gap: 16px;
-    .qx-page-title        20px / 600 / --text-1（含图标 22×22，gap 10px）
-    .qx-page-sub          12px / --text-3 / margin-top 4px（可选：面包屑或统计）
-    .qx-page-actions      右侧操作区，按钮只用 md 尺寸
-  .qx-toolbar             玻璃面板：padding 12px 14px / radius 14 / gap 10px
+  .qx-toolbar             玻璃面板：padding 10px 12px / radius 14 / gap 10px
   .qx-page-body           flex: 1; gap: 16px;
 ```
 
+> `.qx-page-head / .qx-page-title / .qx-page-sub` 已从 `components.css` 删除（零引用）。
+> 页面标题属于页面自己的事，要在某页出现就在那一页写，不要复活共享类。
+
 规则：
 
-- **每页必须有且只有一个 20px 主标题**。Browse / Instances / Toolbox / Multiplayer / TimeMachine 目前缺失，属于 P0 改造项。
-- 详情页（Instance / Project / Server）头部沿用 `.glass` 大卡（`padding: 20px 24px`），但标题字号必须回落 `--fs-lg 20px`。
-- 页面内容不再使用 1080 之外的其它上限；工具类页面（NBT、材质预览、SeedMap）可 `max-width: none`，但左右 padding 仍为 28px。
-- InstanceDetail 现状 `h1 21px`、ServerDetail `h2 20px` 需统一为同级 `h1 20px`。
+- **不设内容宽度上限**。内容区宽度直接跟随窗口、左对齐。原先的 `max-width: 1120px; margin: 0 auto`
+  已移除：宽屏下右侧大片留白，而且各页加不加全靠自觉，反而制造了更多不一致。要收窄是页面自己的事，
+  不要写回 `.qx-page`。
+- **不强制页面标题**。实例页原本补过「标题 + 实例总数 + 导入整合包按钮」的页头，已按实际观感撤掉，
+  导入按钮回到分组筛选行里。页标题属于页面自己的选择，
+  不要再按「每页必须有且只有一个 20px 主标题」去补。发现流、工具箱这类以内容为主的页面直接铺内容即可。
+- 详情页（Instance / Project / Server）头部沿用 `.glass` 大卡（`padding: 20px 24px`）。
+- 如果某页确实需要标题，字号用 `--fs-lg 20px`、字重 600，不要再出现 21 / 22px 的「差不多大」。
+- `.qx-page` 只管纵向排布与间距；根元素已有自定义 flex 布局的页面不必强行套用它。
 
 ---
 
@@ -210,7 +243,23 @@
 - **text**：无底无边，hover `--w-06`
 - **danger**：`var(--danger-bg)` 底 + `1px solid var(--danger)` 40% 边 + `var(--danger-text)` 字
 
-**废除**：`.btn.big`（用 `lg`）、`.btn.sm` 的 `6px 12px`，以及 `9px 18px`、`8px 18px`、`13px 26px`、`7px 13px`、`8px 14px`、`8px 12px`、`6px 12px` 等所有 padding 字面量。`.mini-btn` 现有 5 套变体全部并入 `sm` 档。主按钮 hover 一律用 `--accent-hover`，废除全项目 17 处 `filter: brightness(1.05~1.12)`。
+**废除**：`.btn.big`（用 `lg`）、`.btn.sm` 的 `6px 12px`，以及 `9px 18px`、`8px 18px`、`13px 26px`、`7px 13px`、`8px 14px`、`8px 12px`、`6px 12px` 等所有 padding 字面量。主按钮 hover 一律用 `--accent-hover`，废除全项目 `filter: brightness(1.05~1.12)`。
+
+#### `.mini-btn`（兼容层，已收口到 `components.css`）
+
+历史上 17 个文件各写一份 `.mini-btn`：padding 六种（`4×8 / 5×9 / 5×10 / 6×10 / 7×12 / 7×13`）、圆角三种（7/8/9）、高度 24–34 不等，并排时按钮高度对不齐。现在**只在 `components.css` 定义一次**，规格 = 上面的 `sm` 档（28px 高 / `0 12px` / 12px / 600 / radius 8）。
+
+| 变体 | 外观 | 用途 |
+|---|---|---|
+| `.mini-btn` | `--w-06` 底 + `--border` 描边 | 默认次级操作 |
+| `.mini-btn.primary` | `--accent-soft` 底 + `--accent-45` 描边 + `--accent` 字 | 行内「这个可以点」 |
+| `.mini-btn.cta` | accent 渐变 + `--accent-contrast` 字 | 区块主操作（一屏最多一个） |
+| `.mini-btn.danger` | `--danger-14` 底 + `--danger-text` 字 | 删除类 |
+| `.mini-btn.active` | 同 primary | 可切换态 |
+| `.mini-btn.icon-only` | 28×28 方形，无左右内边距 | 纯图标 |
+| `.mini-btn.solid` | `--bg-2` 实底 | 压在图片 / 地图 / 画布上 |
+
+**规矩**：页面 `<style scoped>` 里**禁止**再出现 `.mini-btn { ... }` 本体或变体定义 —— scoped 会编译成 `.mini-btn[data-v-x]`，优先级高于全局，留着就永远盖不住。页面里只允许留 `margin-left: auto` / `flex-shrink` 这类纯布局覆写。
 
 ### 5.2 图标按钮
 
@@ -226,16 +275,53 @@ naive-ui 的 `NSelect / NInput` 统一使用 `size="medium"`，**禁止** `size=
 
 ### 5.4 分段控件 / 标签页（强制统一）
 
-| 属性 | 值 |
+只有两档，全部由 `src/styles/components.css` 的 `.qx-seg` 提供，页面里不再写容器 / 按钮 / 滑块的尺寸与配色。
+
+| 属性 | 默认档（页面级标签栏） | 紧凑档 `.qx-seg--sm`（面板 / 弹窗 / 表单行内的切换） |
+|---|---|---|
+| 容器 | `padding: 4px` / `radius: 14px` / `--panel` + backdrop 8px / `gap: 4px` | `padding: 4px` / `radius: 10px` / 其余同左 |
+| 项 | `height: 36px`（`--ctl-lg`） / `padding: 0 12px` / 13px / 600 / `radius: 8px` | `height: 28px`（`--ctl-sm`） / `padding: 0 10px` / 12px / 600 / `radius: 6px` |
+| 整条高度 | **44px** | **36px** |
+| 指示器 | `.qx-seg__indicator`：`--accent-soft` / 上下各 4px 贴合 / 圆角随档位 | 同左 |
+| 实现 | **必须** `useSlidingIndicator`，禁止手写 indicator；指示器元素固定用 `.qx-seg__indicator` | 同左 |
+| 状态色 | 默认 `--text-2` → 悬停只铺 `--w-06` 淡底、文字色不动 → 选中 `--accent`（全走令牌，禁写死颜色）。**禁止**把悬停文字提到 `--text-1`：深色下那是 `#f2f3f7`，几乎纯白，会盖过选中态 | 同左 |
+
+> 早期版本这里写的是「项 28px / `padding: 0 16px`」。实际落地时项内是 13px 文字 + 14px 图标，28px 会被行高撑破、比页面里其它控件矮一档；发现页分类切换实测 35px 才是视觉基准，故默认档改为 **36px**（`--ctl-lg`）。28px 保留给紧凑档，用于弹窗与设置页表单行，不用于页面级标签栏。
+
+用法（页面里只留布局差异）：
+
+```html
+<div ref="segRef" class="my-tabs qx-seg">           <!-- 或 qx-seg qx-seg--sm -->
+  <div class="qx-seg__indicator" :style="segStyle"></div>
+  <button :class="{ active: tab === 'a' }">A</button>
+  <button :class="{ active: tab === 'b' }">B</button>
+</div>
+```
+
+```css
+/* 页面样式里最多只保留这类布局覆盖，尺寸/颜色一律不写 */
+.my-tabs { align-self: flex-start; }
+```
+
+> 指示器挂在**页面组件**上（`useSlidingIndicator` 在页面 setup 里调用），`onMounted` 只跑一次。控件那一刻若正被收起的页签（`v-show`）藏着、或在 `v-if` 分支里还没渲染，量到的矩形是 `0×0`。composable 自带兜底：量不到尺寸就不写样式，并在 `ResizeObserver` / 父组件 `onUpdated` 后补测，所以一般不用手动 `refresh()`。但「切页会整体重建面板」的页面（设置页 `.settings-body` 带 `:key="tab"`）仍建议把新增的 seg 加进它的统一 refresh 列表，双保险。
+>
+> 按钮内容始终水平居中（`.qx-seg > button` 带 `justify-content: center`）。**默认不要给按钮加 `flex: 1` 或给容器定宽**——项比文字宽出来，右侧就会空一块；需要等宽时让内容居中，或者干脆按内容宽度排。
+
+已迁移（页内只留 `align-self` / `flex: none` / `display: flex` 这类布局差异）：
+
+| 默认档（36px） | 紧凑档（28px） |
 |---|---|
-| 容器 | `padding: 4px` / `radius: 10px` / `background: var(--w-05)` / `gap: 4px` |
-| 项 | `height: 28px` / `padding: 0 16px` / `13px / 600` / `radius: 8px` |
-| 指示器 | `background: var(--panel-hover)` 或 accent 14% / `radius: 8px` / `0.26s` |
-| 实现 | **必须** `useSlidingIndicator`，禁止手写 indicator |
+| MultiplayerView `.mode-tabs` / `.mp-subtabs` | SettingsView `.seg` ×6（关闭行为 / 主题 / 语言 / 内存模式 / 代理模式 / 更新源） |
+| BrowseView `.type-card`（吸顶过渡保留在页内） | SkinView 动作 / 模型切换 ×2 |
+| ProjectDetailView `.type-card` | DownloadsDrawer `.tabs` |
+| CreateInstanceView `.mode-tabs` | InstallDialog `.id-type-tabs` |
+| ServerDetailView `.tabs` | ServerDetailView `.props-mode-tabs`（表单 / 源码） |
+| InstanceDetailView `.tabs`（保留整行 + 右侧操作区靠右） | RoomDirectoryPanel `.rd-subtabs` |
+| NBTEditorView 三大分区 `.seg` | NBTEditorView 表单 / 树形切换 |
+| TimeMachineView `.seg` | NBT ChunkEditor `.seg-group`（地图 / 列表） |
+| SkinView `.skin-tab-seg`（已保存 / 官方） | BrowseView `.view-switch`（网格 / 列表 / 紧凑，按钮定宽 30px） |
 
-涉及改造：ServerDetail `.tabs`、InstanceDetail `.tabs`、Multiplayer `.mode-tabs`、DownloadsDrawer `.tabs`、NBT `.seg`、Skin `.seg`、TimeMachine `.seg`、Browse 类型切换。
-
-现状至少有 6 套互不兼容的实现：TimeMachine（`radius 9 / indicator 7 / padding 3 / 14px / 高 38`）、Skin（`radius 8 / indicator 6 / padding 3 / 11px`）、NBT ChunkEditor（容器 9 / 项 7 / `4px 12px`）、NBT 其它页（composable + 另一套尺寸）、ServerDetail（`padding 5 / indicator 9`）、RoomDirectory `.rd-subtabs`（容器 10 / 项 8）。另外 **`SavesTab.vue` 的 `.seg` 名字叫分段控件，实际是 `radius 999 / padding 7px 14px` 的胶囊按钮组**——命名与语义冲突，必须更名 `.pill-group`。统一后全部改为上表规格，高度固定 36px（容器 4px padding + 28px 项）。
+仍是独立按钮组、**不属于**本节范围（不是"一条容器 + 滑块"的标签栏）：`CreateInstanceView` / `MultiplayerView` 的 `.ver-cats`（版本分类筛选 chips）、`DiagnosticsDialog` 的 `.dg-modes`（预览模式）、`SavesTab` 的 `.seg`（实为 `radius 999` 胶囊，应按 §5.4 之前的约定更名 `.pill-group`）。
 
 ### 5.5 卡片
 
@@ -251,6 +337,8 @@ naive-ui 的 `NSelect / NInput` 统一使用 `size="medium"`，**禁止** `size=
 | hover | 仅 `box-shadow: var(--card-shadow-hover)` |
 
 **统一卡片背景写法**：内容区卡片只用 `--panel`；卡片内次级块用 `--w-03`；浮层用 `--bg-2`。禁止 `color-mix()` 自造底色（SeedMap 的 `--feat-solid` 除外，因为它必须保证地图上可读）。
+
+> **`.qx-card` 已与 `.glass` 对齐**：不再自带 `1px solid var(--border)` 与 `--card-shadow`。此前它俩不一致，导致「按规范用 `.qx-card` 反而和周围的卡长得不一样」——全站 6 个真实卡片类（`.inst-card` / `.pin-card` / `.server-card` / `.tool-card` / `.p-card` / 设置页 `.card`）都是无描边 + 无静置投影，只有悬停给 `--card-shadow-hover` 细环。要描边的场景请显式加 `.qx-card--outline`，不要改基础款。
 
 ### 5.6 列表行（菜单 / 下拉 / 实例列表）
 
@@ -367,8 +455,8 @@ CloudSync 的 `padding 26px 16px` + dashed 边框属于特例：dashed 边框可
 
 1. 在 `styles.css` 补齐 §3 令牌（纯新增，零风险）。
 2. 抽出共享类：`.qx-page / .qx-page-head / .qx-page-title / .qx-page-sub / .qx-toolbar / .qx-grid-* / .qx-btn(-lg/-md/-sm/-xs) / .qx-icon-btn / .qx-empty / .qx-seg`。
-3. 给 5 个缺失标题的页面补统一页头（Browse / Instances / Toolbox / Multiplayer / TimeMachine）。
-4. 统一页面最大宽度 1120 与 padding 28 / 24。
+3. ~~给 5 个缺失标题的页面补统一页头~~（**已作废**：页面标题不是必须的，见 §4）。
+4. ~~统一页面最大宽度 1120~~（**已作废**：全站取消宽度上限，见 §4）。左右 padding 仍按 `#app-content` 的 26px。
 
 ### P1（视觉差异最刺眼）
 
@@ -396,7 +484,7 @@ CloudSync 的 `padding 26px 16px` + dashed 边框属于特例：dashed 边框可
 
 ## 11. 验收清单（PR Review 用）
 
-- [ ] 新页面有且只有一个 20px 主标题，宽度 1120
+- [ ] 页面没有擅自加 `max-width`（全站不设内容宽度上限）；确有需要时是本页的局部决定，不是规范要求
 - [ ] 页面内出现的数字，全部能在 §3 表格里查到
 - [ ] `rgrep "rgba(" src/views` 无手写主题色（0 处）
 - [ ] `rgrep "#[0-9a-fA-F]{3,6}" src/views` 结果为空
@@ -497,7 +585,7 @@ NbtTreeEditor  PlayerEditor  TreeNode
 
 ---
 
-## 13. 改造实施方案（可执行）
+## 13. 改造实施方案（历史记录 · 大部分已执行，§13.5 已作废）
 
 ### 13.0 施工顺序
 
@@ -592,7 +680,7 @@ npm run build
 
 ```css
 /* ── 页面骨架 ───────────────────────────────────────── */
-.qx-page { max-width: 1120px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--gap-page); }
+.qx-page { width: 100%; display: flex; flex-direction: column; gap: var(--gap-page); }  /* 不设宽度上限 */
 .qx-page-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
 .qx-page-title { display: flex; align-items: center; gap: 10px; font-size: var(--fs-xl); font-weight: 600; color: var(--text-1); margin: 0; }
 .qx-page-sub { margin-top: 4px; font-size: var(--fs-sm); color: var(--text-3); }
@@ -713,7 +801,7 @@ Select-String -Path src\**\*.vue -Pattern "^\.mini-btn"               # 期望 0
 
 ---
 
-### 13.5 PR-5：页面骨架
+### 13.5 PR-5：页面骨架 ⚠️ 整节作废，按 §4 执行
 
 | 文件 | 现状 | 动作 |
 |---|---|---|
@@ -835,7 +923,7 @@ Select-String -Path src\**\*.vue -Pattern "^\.mini-btn"               # 期望 0
 
 1. **深色子系统**（`CodeEditor`、`ImageViewer`、`TimeMachineLightbox`、`SplashScreen`、`LaunchProgress`）：这些组件恒为深色是合理的，但必须把硬编码色收敛为 `--k-*` / `--bg-0` 令牌，并**删除 `CodeEditor` 里对 `--accent` 的覆盖**（它现在把用户自定义主题色锁死成 `#e89a4b`）。
 2. **语义色**：`#4caf50` / `#f44336` / `#e8a04b` / `#2196f3` / `#57c257` / `#f08a67` / `#7cb8f5` / `#3fb950` / `#4493f8` / `#a371f7` → `--success` / `--danger` / `--accent` / `--info` 及对应 `-14` 底色。
-3. **主按钮文字色 `#1a1206`**（`FriendsPanel`、`QookixLoginDialog`）→ `var(--accent-contrast)`。
+3. **主按钮文字色 `#1a1206`**（`FriendsPanel`、`QookixLoginDialog`）→ `var(--accent-contrast)`。同类还有 `LanSyncPanel` 的 `.ls-btn.primary` 写了 `color: var(--bg-0)`（深色主题下 `--bg-0` 是近黑，等于强调底上压深色字）——那两个按钮已改挂 `.qx-btn--sm` + `--primary/--danger`，本地按钮外观整段删除。
 4. **品牌渐变**（`AppIcon` 与 `IconPickerDialog` 两份同一色系、数值不同）→ 抽到 `src/instance-icons.ts` 一处导出，两处引用。
 
 #### 13.7.3 收尾项
@@ -885,7 +973,7 @@ PR 描述里必须附上以上 5 个数字的前后对比，否则不合并。
 
 ---
 
-## 14. 以 SettingsView 为基准的分页改造步骤
+## 14. 以 SettingsView 为基准的分页改造步骤（历史记录，勿照做）
 
 ### 14.0 先明确：能复用的是 5 层，不是那张侧栏
 

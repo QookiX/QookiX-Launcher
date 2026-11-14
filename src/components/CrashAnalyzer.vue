@@ -517,7 +517,7 @@ async function handleSelect(filename: string) {
   justify-content: center;
   padding: 40px 0;
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 
 .crash-empty {
@@ -528,15 +528,15 @@ async function handleSelect(filename: string) {
   gap: 8px;
   padding: 60px 0;
   color: var(--text-3);
-  font-size: 14px;
+  font-size: var(--fs-base);
 }
 .crash-empty p {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   color: var(--text-2);
 }
 .crash-empty-hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -561,16 +561,16 @@ async function handleSelect(filename: string) {
   justify-content: space-between;
 }
 .crash-log-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--text-1);
 }
 .crash-log-count {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   background: var(--panel);
   padding: 2px 8px;
-  border-radius: 20px;
+  border-radius: var(--r-xl);
 }
 .crash-log-items {
   display: flex;
@@ -583,7 +583,7 @@ async function handleSelect(filename: string) {
   display: flex;
   align-items: center;
   gap: 10px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--panel);
   transition: all 0.12s;
@@ -623,12 +623,12 @@ async function handleSelect(filename: string) {
   min-width: 0;
 }
 .crash-log-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
 .crash-log-meta {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   display: flex;
   gap: 4px;
@@ -642,12 +642,12 @@ async function handleSelect(filename: string) {
   border: none;
   background: transparent;
   color: var(--text-3);
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   opacity: 0;
   transition: all 0.12s;
 }
@@ -669,7 +669,7 @@ async function handleSelect(filename: string) {
   min-width: 0;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 16px;
 }
 
@@ -684,13 +684,13 @@ async function handleSelect(filename: string) {
   align-items: center;
   gap: 6px;
   padding: 4px 10px;
-  border-radius: 20px;
-  font-size: 12px;
+  border-radius: var(--r-xl);
+  font-size: var(--fs-xs);
   font-weight: 600;
   width: fit-content;
 }
 .crash-confidence {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 
@@ -702,7 +702,7 @@ async function handleSelect(filename: string) {
 }
 .crash-other-cause {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 10px 12px;
   background: var(--panel);
 }
@@ -713,27 +713,27 @@ async function handleSelect(filename: string) {
   flex-wrap: wrap;
 }
 .crash-other-tag {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   padding: 2px 8px;
-  border-radius: 20px;
+  border-radius: var(--r-xl);
   flex-shrink: 0;
 }
 .crash-other-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
   flex: 1;
   min-width: 0;
 }
 .crash-other-conf {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   flex-shrink: 0;
 }
 .crash-other-advice {
   margin: 6px 0 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-2);
 }
@@ -744,7 +744,7 @@ async function handleSelect(filename: string) {
   flex-direction: column;
   gap: 2px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--panel);
 }
@@ -752,7 +752,7 @@ async function handleSelect(filename: string) {
   display: flex;
   gap: 10px;
   padding: 6px 12px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .crash-detail:nth-child(odd) {
   background: rgba(128, 128, 128, 0.04);
@@ -770,7 +770,7 @@ async function handleSelect(filename: string) {
 /* 关键堆栈 */
 .crash-stack {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 10px 12px;
   background: var(--panel);
   max-height: 220px;
@@ -778,7 +778,7 @@ async function handleSelect(filename: string) {
   font-family: "Cascadia Code", Consolas, monospace;
 }
 .crash-stack-line {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-2);
   white-space: pre-wrap;
@@ -795,7 +795,7 @@ async function handleSelect(filename: string) {
 }
 
 .crash-title {
-  font-size: 20px;
+  font-size: var(--fs-lg);
   font-weight: 700;
   color: var(--text-1);
   margin: 0;
@@ -808,7 +808,7 @@ async function handleSelect(filename: string) {
   gap: 6px;
 }
 .crash-section-label {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 700;
   color: var(--text-3);
   letter-spacing: 0.5px;
@@ -818,17 +818,17 @@ async function handleSelect(filename: string) {
 }
 .crash-reason {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-2);
   line-height: 1.6;
 }
 .crash-excerpt {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 10px 12px;
   font-family: "Cascadia Code", Consolas, monospace;
   line-height: 1.5;
@@ -841,21 +841,21 @@ async function handleSelect(filename: string) {
   gap: 6px;
 }
 .crash-mod {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 3px 8px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 600;
 }
 .crash-advice {
   margin: 0;
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-1);
   line-height: 1.7;
   background: rgba(122, 208, 138, 0.08);
   border: 1px solid rgba(122, 208, 138, 0.18);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px 14px;
 }
 
@@ -868,14 +868,14 @@ async function handleSelect(filename: string) {
 .crash-raw {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   padding: 12px;
   overflow: auto;
   max-height: 300px;
 }
 .crash-raw pre {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: "Cascadia Code", Consolas, monospace;
   line-height: 1.5;
   color: var(--text-2);

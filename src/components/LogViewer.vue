@@ -120,7 +120,7 @@ async function exportLog() {
   border-bottom: 1px solid var(--border);
 }
 .log-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
 }
@@ -130,12 +130,12 @@ async function exportLog() {
   gap: 8px;
 }
 .auto {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin-right: 6px;
 }
 .auto :deep(.n-checkbox__label) {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .mini {
@@ -145,9 +145,9 @@ async function exportLog() {
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   font-family: inherit;
   transition: all 0.12s;
@@ -160,7 +160,7 @@ async function exportLog() {
   flex: 1;
   overflow-y: auto;
   padding: 12px 14px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.55;
   background: var(--k-25);
   /* allow selecting / copying log text */
@@ -181,7 +181,7 @@ async function exportLog() {
 }
 .exit-info {
   padding: 8px 14px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   border-top: 1px solid var(--border);
 }

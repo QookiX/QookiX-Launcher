@@ -472,7 +472,7 @@ onBeforeUnmount(() => {
     v-model:show="showValue"
     preset="card"
     :title="browseMode ? t('cloudSync.titleBrowse') : t('cloudSync.titleWorld', { world })"
-    style="width: 600px; max-width: 94vw"
+    style="width: 560px; max-width: 94vw"
     :mask-closable="phase !== 'authing'"
     :close-on-esc="phase !== 'authing'"
   >
@@ -686,16 +686,16 @@ onBeforeUnmount(() => {
   padding: 26px 16px;
   text-align: center;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 /* 云存档条目上标注的所属实例 */
 .cw-inst {
   flex-shrink: 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--w-06);
   color: var(--text-2);
   white-space: nowrap;
@@ -726,19 +726,19 @@ onBeforeUnmount(() => {
   margin-top: 2px;
 }
 .hero-title {
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 700;
   margin-bottom: 4px;
 }
 .hero-sub {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   line-height: 1.6;
 }
 .perk {
   margin: 0;
   padding-left: 18px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   line-height: 2;
 }
@@ -748,7 +748,7 @@ onBeforeUnmount(() => {
   gap: 10px;
 }
 .auth-step {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-2);
   display: flex;
@@ -761,14 +761,14 @@ onBeforeUnmount(() => {
   border-radius: 50%;
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
 }
 .auth-err {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--danger);
   text-align: center;
   line-height: 1.8;
@@ -780,12 +780,12 @@ onBeforeUnmount(() => {
 .code-box {
   position: relative;
   padding: 18px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   border: 1px dashed var(--accent-04);
   background: var(--accent-soft);
   color: var(--accent);
-  font-size: 26px;
-  font-weight: 800;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
   letter-spacing: 6px;
   text-align: center;
   cursor: pointer;
@@ -795,14 +795,14 @@ onBeforeUnmount(() => {
   position: absolute;
   right: 10px;
   bottom: 6px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   letter-spacing: 0;
   font-weight: 400;
   color: var(--text-3);
 }
 .auth-wait {
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .ready {
@@ -815,7 +815,7 @@ onBeforeUnmount(() => {
   background: none;
   border: none;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   text-decoration: underline;
   font-family: inherit;
@@ -833,7 +833,7 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   cursor: pointer;
 }
@@ -841,7 +841,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .quota-ctl {
@@ -852,12 +852,12 @@ onBeforeUnmount(() => {
 .q-btn {
   width: 24px;
   height: 24px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   border: 1px solid var(--border);
   background: var(--w-06);
   color: var(--text-1);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--fs-base);
   line-height: 1;
 }
 .q-btn:disabled {
@@ -870,14 +870,14 @@ onBeforeUnmount(() => {
   font-weight: 700;
 }
 .snap-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 700;
   color: var(--text-3);
   margin-top: 2px;
 }
 .progress-box {
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-04);
   border: 1px solid var(--border);
   display: flex;
@@ -887,7 +887,7 @@ onBeforeUnmount(() => {
 .progress-head {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 .progress-pct {
@@ -896,13 +896,13 @@ onBeforeUnmount(() => {
 }
 .progress-track {
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--w-08);
   overflow: hidden;
 }
 .progress-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--accent);
   transition: width 0.25s ease;
 }
@@ -915,7 +915,7 @@ onBeforeUnmount(() => {
   100% { margin-left: 100%; }
 }
 .progress-size {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .snap-list {
@@ -946,13 +946,13 @@ onBeforeUnmount(() => {
   min-width: 0;
 }
 .c-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
 }
 .c-meta {
   display: flex;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .c-actions {
@@ -964,7 +964,7 @@ onBeforeUnmount(() => {
 .snap-del {
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-2);
@@ -972,28 +972,28 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .snap-del:hover {
   color: var(--danger);
   border-color: var(--danger-50);
 }
 .cw-warn {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--warn);
   background: rgba(224, 160, 0, 0.08);
   border: 1px solid rgba(224, 160, 0, 0.25);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 6px 10px;
   margin-bottom: 6px;
 }
 .foot-hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .cw-group {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--r-md);
   margin-bottom: 8px;
   overflow: hidden;
 }
@@ -1024,7 +1024,7 @@ onBeforeUnmount(() => {
 
 .cw-chevron {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   flex-shrink: 0;
 }
@@ -1038,18 +1038,18 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   padding: 4px 0 8px;
 }
 .cw-input {
   flex: 1;
   padding: 6px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-family: inherit;
   outline: none;
 }

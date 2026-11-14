@@ -913,7 +913,7 @@ async function save() {
               class="mod-select"
               :options="modOptions"
               :filter="filterMod"
-              :menu-props="{ class: 'qk-select-menu' }"
+              :menu-props="{ class: 'qx-select-menu' }"
               filterable
               clearable
               size="small"
@@ -985,15 +985,15 @@ async function save() {
   gap: 12px;
 }
 .empty {
-  padding: 48px 20px;
+  padding: 48px 24px;
   text-align: center;
-  border-radius: 12px;
-  color: var(--text-2);
-  font-size: 14px;
+  border-radius: var(--r-md);
+  color: var(--text-3);
+  font-size: var(--fs-sm);
 }
 .empty .sub {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .bar {
@@ -1001,49 +1001,29 @@ async function save() {
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
 }
 .spacer {
   flex: 1;
 }
 .conflict-badge {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--danger);
   cursor: help;
 }
 .dirty {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
-}
-.mini-btn {
-  padding: 7px 13px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: transparent;
-  color: var(--text-2);
-  font-size: 12px;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.mini-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.mini-btn.primary {
-  color: var(--accent);
-  border-color: var(--accent-35);
-  background: var(--accent-soft);
-  font-weight: 600;
 }
 .listening-tip {
   padding: 10px 14px;
-  border-radius: 12px;
-  font-size: 13px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-sm);
   color: var(--accent);
 }
 .listening-tip .sub {
   margin-left: 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 
@@ -1054,7 +1034,7 @@ async function save() {
 .kb-board {
   display: flex;
   flex-direction: column;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   /* 键盘底座：比键帽更深，营造外壳包围感 */
   background: rgba(0, 0, 0, 0.22);
   border: 1px solid var(--border);
@@ -1081,7 +1061,7 @@ async function save() {
 .kb-key {
   flex-shrink: 0;
   box-sizing: border-box;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   /* 键帽质感：四边同色描边 + 下方投影当"厚度"。
      早前用 border-bottom 画厚度，未绑定的键没有强调色边框，
      黑色底边在深色底座上等于看不见，导致键帽像少了下边缘。 */
@@ -1106,7 +1086,7 @@ async function save() {
 }
 .kb-key .cap {
   /* 中文动作名比英文长，字号略小以便在 40px 键帽里多显示几个字 */
-  font-size: 9px;
+  font-size: var(--fs-2xs);
   line-height: 1.05;
   white-space: nowrap;
   overflow: hidden;
@@ -1140,7 +1120,7 @@ async function save() {
   opacity: 0.85;
 }
 .kb-key.decor .cap {
-  font-size: 15px;
+  font-size: var(--fs-md);
 }
 .kb-key.decor:hover {
   border-color: var(--border);
@@ -1164,12 +1144,12 @@ async function save() {
   align-items: center;
   gap: 6px;
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: rgba(0, 0, 0, 0.22);
   border: 1px solid var(--border);
 }
 .mouse-label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin-right: 4px;
   flex-shrink: 0;
@@ -1191,7 +1171,7 @@ async function save() {
   justify-content: center;
 }
 .board-hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin: -4px 2px 0;
 }
@@ -1233,8 +1213,8 @@ async function save() {
 }
 .panel-hint {
   padding: 18px 16px;
-  border-radius: 12px;
-  font-size: 12px;
+  border-radius: var(--r-md);
+  font-size: var(--fs-xs);
   line-height: 1.7;
   color: var(--text-3);
   /* 未选中键时把面板撑到与键盘同高，右侧不至于空一大块 */
@@ -1247,7 +1227,7 @@ async function save() {
 
 .key-panel {
   padding: 12px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   /* 选中键时面板也撑到与键盘同高，避免右侧下方留一大块空白 */
   flex: 1;
 }
@@ -1258,7 +1238,7 @@ async function save() {
   margin-bottom: 8px;
 }
 .kp-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -1267,7 +1247,7 @@ async function save() {
   background: transparent;
   color: var(--text-3);
   cursor: pointer;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   padding: 2px 4px;
 }
 .kp-close:hover {
@@ -1285,7 +1265,7 @@ async function save() {
   gap: 4px;
 }
 .kp-group-title {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 600;
   color: var(--text-3);
 }
@@ -1299,18 +1279,18 @@ async function save() {
   align-items: center;
   gap: 6px;
   padding: 4px 8px;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: var(--accent-soft);
   border: 1px solid var(--accent-35);
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .kp-x {
   border: none;
   background: transparent;
   color: inherit;
   cursor: pointer;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 0;
   opacity: 0.7;
 }
@@ -1318,7 +1298,7 @@ async function save() {
   opacity: 1;
 }
 .kp-none {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .kp-actions {
@@ -1326,7 +1306,7 @@ async function save() {
   gap: 8px;
 }
 .kp-pick-hint {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   margin: 0 0 8px;
 }
@@ -1345,10 +1325,10 @@ async function save() {
   gap: 8px;
   padding: 7px 10px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-1);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   text-align: left;
   cursor: pointer;
 }
@@ -1361,7 +1341,7 @@ async function save() {
   cursor: default;
 }
 .kp-here {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--accent);
 }
 
@@ -1376,7 +1356,7 @@ async function save() {
   display: flex;
   gap: 8px;
   padding: 8px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   /* 整宽下输入框拉太长很怪，限制一行的最大宽度 */
   max-width: 720px;
 }
@@ -1393,8 +1373,8 @@ async function save() {
 /* naive-ui Select 外观对齐上面的自定义输入框（同一背景/边框/圆角/高度/字号） */
 .list-filters .mod-select :deep(.n-base-selection) {
   --n-height: 34px;
-  --n-font-size: 13px;
-  --n-border-radius: 10px;
+  --n-font-size: var(--fs-sm);
+  --n-border-radius: var(--r-md);
   --n-color: var(--w-06);
   --n-color-active: var(--w-06);
   --n-border: 1px solid var(--border);
@@ -1415,7 +1395,7 @@ async function save() {
 }
 .scan-box {
   padding: 16px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -1424,7 +1404,7 @@ async function save() {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
 }
 .scan-pct {
@@ -1433,13 +1413,13 @@ async function save() {
 }
 .scan-track {
   height: 6px;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--w-08);
   overflow: hidden;
 }
 .scan-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   background: var(--accent);
   transition: width 0.2s ease;
 }
@@ -1456,7 +1436,7 @@ async function save() {
   }
 }
 .scan-sub {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 
@@ -1475,7 +1455,7 @@ async function save() {
   gap: 12px;
 }
 .mod-card {
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 10px 12px 12px;
 }
 .mod-card-head {
@@ -1485,20 +1465,20 @@ async function save() {
   gap: 8px;
 }
 .mod-card-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 700;
   color: var(--text-1);
 }
 .mod-card-count {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--accent);
   background: var(--accent-soft);
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   padding: 1px 8px;
   flex-shrink: 0;
 }
 .mod-card-sub {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-family: ui-monospace, Consolas, monospace;
   margin-bottom: 4px;
@@ -1512,26 +1492,13 @@ async function save() {
   padding: 16px;
   text-align: center;
 }
-.text-input {
-  background: var(--w-06);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text-1);
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: inherit;
-  outline: none;
-}
-.text-input:focus {
-  border-color: var(--accent-05);
-}
 .row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   cursor: pointer;
   border: 1px solid transparent;
   transition: background 0.12s;
@@ -1559,14 +1526,14 @@ async function save() {
   flex: 1;
 }
 .label {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .action {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-family: ui-monospace, Consolas, monospace;
   overflow: hidden;
@@ -1575,7 +1542,7 @@ async function save() {
 }
 .row-key {
   flex-shrink: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
 }
 .row-key.unbound {
@@ -1584,17 +1551,6 @@ async function save() {
 }
 
 .text-input {
-  background: var(--w-06);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  color: var(--text-1);
-  padding: 8px 12px;
-  font-size: 13px;
-  font-family: inherit;
-  outline: none;
   min-width: 0;
-}
-.text-input:focus {
-  border-color: var(--accent-05);
 }
 </style>

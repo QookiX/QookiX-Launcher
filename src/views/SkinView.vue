@@ -769,8 +769,8 @@ onMounted(async () => {
         </div>
         <div class="anim-row">
           <span class="anim-label">{{ t("skin.action") }}</span>
-          <div ref="animSegRef" class="seg">
-            <div class="indicator" :style="animSegStyle"></div>
+          <div ref="animSegRef" class="seg qx-seg qx-seg--sm">
+            <div class="qx-seg__indicator" :style="animSegStyle"></div>
             <button :class="{ active: renderer.animation.value === 'idle' }" @click="setAnim('idle')">{{ t("skin.animIdle") }}</button>
             <button :class="{ active: renderer.animation.value === 'walk' }" @click="setAnim('walk')">{{ t("skin.animWalk") }}</button>
             <button :class="{ active: renderer.animation.value === 'run' }" @click="setAnim('run')">{{ t("skin.animRun") }}</button>
@@ -789,7 +789,7 @@ onMounted(async () => {
             <IconShield /> {{ t("skin.cape") }}
           </button>
           <button
-            class="mini-btn primary"
+            class="mini-btn cta"
             :disabled="!canSaveCurrent || savingCurrent"
             @click="saveCurrentToLocal"
           >
@@ -797,13 +797,13 @@ onMounted(async () => {
           </button>
         </div>
         <div class="apply-row">
-          <div ref="modelSegRef" class="seg">
-            <div class="indicator" :style="modelSegStyle"></div>
+          <div ref="modelSegRef" class="seg qx-seg qx-seg--sm">
+            <div class="qx-seg__indicator" :style="modelSegStyle"></div>
             <button :class="{ active: skinVariant === 'classic' }" @click="setSkinModel('classic')">{{ t("skin.modelClassic") }}</button>
             <button :class="{ active: skinVariant === 'slim' }" @click="setSkinModel('slim')">{{ t("skin.modelSlim") }}</button>
           </div>
           <button
-            class="mini-btn primary apply-btn"
+            class="mini-btn cta apply-btn"
             :disabled="!currentSrc || applying || !currentAccount"
             @click="requestApplySkin"
           >
@@ -815,8 +815,8 @@ onMounted(async () => {
       </section>
 
       <section class="tabs-pane glass">
-        <div ref="skinTabSegRef" class="seg skin-tab-seg">
-          <div class="indicator" :style="skinTabSegStyle"></div>
+        <div ref="skinTabSegRef" class="seg skin-tab-seg qx-seg">
+          <div class="qx-seg__indicator" :style="skinTabSegStyle"></div>
           <button :class="{ active: tab === 'saved' }" @click="tab = 'saved'">{{ t("skin.tabSaved") }}</button>
           <button :class="{ active: tab === 'official' }" @click="tab = 'official'">{{ t("skin.tabOfficial") }}</button>
         </div>
@@ -1044,7 +1044,7 @@ onMounted(async () => {
   position: relative;
   flex: 1;
   min-height: 240px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   background:
     radial-gradient(ellipse at center, var(--accent-08), transparent 70%),
     linear-gradient(180deg, var(--w-03), var(--k-12));
@@ -1063,16 +1063,15 @@ onMounted(async () => {
 .skin-canvas:active {
   cursor: grabbing;
 }
-.not-account-hint,
 .preview-label {
   position: absolute;
   top: 10px;
   left: 10px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-2);
   background: var(--k-40);
   padding: 3px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   pointer-events: none;
   backdrop-filter: blur(4px);
   white-space: nowrap;
@@ -1087,14 +1086,14 @@ onMounted(async () => {
   flex-direction: column;
   gap: 6px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-04);
   border: 1px solid var(--border);
 }
 .info-row {
   display: flex;
   justify-content: space-between;
-  font-size: 12px;
+  font-size: var(--fs-xs);
 }
 .info-label {
   color: var(--text-3);
@@ -1111,7 +1110,7 @@ onMounted(async () => {
   height: 22px;
   padding: 0;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--w-08);
   color: var(--text-3);
   cursor: pointer;
@@ -1189,7 +1188,7 @@ onMounted(async () => {
   width: 520px;
   max-width: 90vw;
   max-height: 80vh;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--bg-2);
   display: flex;
@@ -1212,7 +1211,7 @@ onMounted(async () => {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: none;
   background: transparent;
   color: var(--text-3);
@@ -1232,7 +1231,7 @@ onMounted(async () => {
 }
 .cape-modal-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .apply-row {
@@ -1248,7 +1247,7 @@ onMounted(async () => {
   margin-left: auto;
 }
 .hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin: 6px 0 0;
 }
@@ -1258,78 +1257,12 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
-.seg {
-  position: relative;
-  display: flex;
-  background: var(--w-05);
-  border-radius: 8px;
-  padding: 3px;
-  gap: 2px;
-}
-.seg .indicator {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  border-radius: 6px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.seg button {
-  position: relative;
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  padding: 5px 10px;
-  border-radius: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: color 0.12s, background 0.12s;
-}
-.seg button:hover {
-  color: var(--text-1);
-}
-.seg button.active {
-  color: var(--accent);
-}
+/* 分段控件外观走全局：动作 / 模型切换用 .qx-seg--sm，皮肤/官方页签用 .qx-seg */
 .anim-label {
   white-space: nowrap;
-}
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  border-radius: 9px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  white-space: nowrap;
-  transition: all 0.14s;
-}
-.mini-btn:hover:not(:disabled) {
-  background: var(--w-08);
-  color: var(--text-1);
-}
-.mini-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.mini-btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-  border: none;
-}
-.mini-btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
 }
 .tabs-pane {
   padding: 16px 18px;
@@ -1341,10 +1274,6 @@ onMounted(async () => {
 .skin-tab-seg {
   align-self: flex-start;
   margin-bottom: 12px;
-}
-.skin-tab-seg button {
-  padding: 6px 16px;
-  font-size: 13px;
 }
 .tab-content {
   flex: 1;
@@ -1369,24 +1298,23 @@ onMounted(async () => {
   flex-shrink: 0;
 }
 .tab-count {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   white-space: nowrap;
 }
 .skin-grid {
   display: grid;
-  /* minmax 从 108px 降到 104px:5 列阈值由 604px 降到 584px,给上方
-     scrollbar-gutter: stable 预留的 8px 留出余量,切 tab 时不再从 5 列塌成 4 列。 */
-  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
-  gap: 16px;
+  /* 列宽走 §6 的 96 档；5 列阈值比 104 时更宽松，切 tab 不会从 5 列塌成 4 列 */
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  gap: var(--gap-grid);
 }
 .skin-card {
   position: relative;
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 12px;
-  border-radius: 11px;
+  gap: var(--sp-2);
+  padding: var(--sp-5);
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--w-03);
   cursor: pointer;
@@ -1434,7 +1362,7 @@ onMounted(async () => {
 .thumb-wrap {
   width: 100%;
   aspect-ratio: 1 / 1;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   background: var(--k-20);
   display: flex;
@@ -1456,12 +1384,12 @@ onMounted(async () => {
   min-width: 0;
 }
 .skin-name {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   color: var(--text-1);
 }
 .skin-size {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .del-btn {
@@ -1470,11 +1398,11 @@ onMounted(async () => {
   right: 6px;
   width: 22px;
   height: 22px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   border: none;
   background: var(--k-45);
   color: var(--danger-text);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   cursor: pointer;
   display: flex;
   align-items: center;
@@ -1500,23 +1428,23 @@ onMounted(async () => {
 }
 .offline-hint-text {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   color: var(--text-2);
 }
 .confirm-text {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 1.65;
   color: var(--text-1);
 }
 .confirm-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-3);
   padding: 8px 10px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: var(--w-04);
   border: 1px solid var(--border);
 }

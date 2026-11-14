@@ -100,11 +100,20 @@ pub struct Settings {
     /// 自定义内容 API 镜像根地址（`content_mirror == "custom"` 时生效），
     /// 根地址下需提供 `/modrinth/v2` 与 `/curseforge/v1`；也可直接填平台专属地址
     pub content_mirror_custom: String,
-    /// 自定义背景图片绝对路径（None = 使用默认渐变背景）
+    /// 背景类型："gradient"（渐变底色） | "image"（自定义图片） | "scene"（实时渲染的动态场景）。
+    /// 空字符串 = 自动：有 background_image 用图片，否则用渐变（兼容 0.21 及更早版本的配置）。
+    pub background_mode: String,
+    /// 动态场景 id（background_mode 为 "scene" 时生效），取值见前端 scenes.ts。
+    /// 空字符串 = 默认场景（海岛），保证老配置升级后外观不变。
+    pub background_scene: String,
+    /// 动态场景画质："low"（流畅 / 省电） | "medium"（均衡） | "high"（高清）。
+    /// 空字符串 = 默认档（medium），兼容没有这个字段的旧配置。
+    pub background_quality: String,
+    /// 自定义背景图片绝对路径（background_mode 为 "image" 时生效）
     pub background_image: Option<String>,
     /// 背景图片模糊半径 px（0-50）
     pub background_blur: u32,
-    /// 背景图片暗化程度 0-100（数值越大前景内容越清晰）
+    /// 背景暗化程度 0-100（图片与动态场景共用，数值越大前景内容越清晰）
     pub background_dim: u32,
     /// 磨砂卡片模糊半径 px（0-30）
     pub glass_blur: u32,
@@ -175,6 +184,9 @@ impl Default for Settings {
             // 内容 API 默认官方源：镜像属于第三方服务，首次使用应由用户主动选择
             content_mirror: "official".into(),
             content_mirror_custom: String::new(),
+            background_mode: String::new(),
+            background_scene: String::new(),
+            background_quality: String::new(),
             background_image: None,
             background_blur: 0,
             background_dim: 45,

@@ -1831,25 +1831,7 @@ onUnmounted(() => {
 .seed-credit a:hover { color: var(--accent); }
 
 /* —— 通用小按钮（与设置页 / 联机页保持一致） —— */
-.mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 7px 13px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, color 0.15s;
-}
-.mini-btn:hover { background: var(--w-08); color: var(--text-1); }
-.mini-btn:disabled { opacity: 0.5; cursor: default; }
-.mini-btn.primary { border-color: var(--accent); color: var(--accent); }
-.mini-btn.primary:hover { background: var(--accent-soft); }
-.mini-btn svg { font-size: 14px; }
-.link-btn { padding: 0; border: none; background: none; color: var(--text-3); font-size: 12px; cursor: pointer; }
+.link-btn { padding: 0; border: none; background: none; color: var(--text-3); font-size: var(--fs-xs); cursor: pointer; }
 .link-btn:hover { color: var(--accent); }
 
 /* —— 参数栏 —— */
@@ -1858,16 +1840,16 @@ onUnmounted(() => {
 .seed-field { flex: 1 1 180px; min-width: 180px; }
 .seed-actions { display: flex; align-items: center; gap: 6px; padding-bottom: 1px; }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.field label { font-size: 12px; color: var(--text-3); }
+.field label { font-size: var(--fs-xs); color: var(--text-3); }
 .mono { font-variant-numeric: tabular-nums; }
 
 /* —— 历史记录 —— */
 .history-panel { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow-y: auto; }
-.history-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-3); padding-bottom: 6px; }
-.history-item { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px; border: none; border-radius: 6px; background: transparent; cursor: pointer; color: var(--text-1); font: inherit; }
+.history-head { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-xs); color: var(--text-3); padding-bottom: 6px; }
+.history-item { display: flex; flex-direction: column; gap: 2px; text-align: left; padding: 6px 8px; border: none; border-radius: var(--r-xs); background: transparent; cursor: pointer; color: var(--text-1); font: inherit; }
 .history-item:hover { background: var(--panel-hover); }
-.hs-seed { font-size: 13px; font-variant-numeric: tabular-nums; }
-.hs-meta { font-size: 11px; color: var(--text-3); }
+.hs-seed { font-size: var(--fs-sm); font-variant-numeric: tabular-nums; }
+.hs-meta { font-size: var(--fs-2xs); color: var(--text-3); }
 
 /* —— 主体布局 —— */
 .map-side .panel-title { margin: 0 0 2px; }
@@ -1877,15 +1859,15 @@ onUnmounted(() => {
 .tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
 .tb-scale { margin-left: auto; white-space: nowrap; }
 .coord-field { display: flex; align-items: center; gap: 5px; }
-.coord-field label { font-size: 12px; color: var(--text-3); }
+.coord-field label { font-size: var(--fs-xs); color: var(--text-3); }
 .coord-field :deep(.n-input-number) { width: 110px; }
-.panel-title { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: 14px; font-weight: 600; color: var(--text-1); }
+.panel-title { display: flex; align-items: center; gap: 8px; margin: 0 0 4px; font-size: var(--fs-base); font-weight: 600; color: var(--text-1); }
 .panel-title svg { color: var(--accent); }
-.layer-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); cursor: pointer; }
+.layer-row { display: flex; align-items: center; gap: 8px; font-size: var(--fs-sm); color: var(--text-2); cursor: pointer; }
 .layer-sep { height: 1px; background: var(--border); margin: 2px 0; }
 /* 小标题行：左侧文字 + 右侧「清除」 */
-.panel-sub { display: flex; align-items: center; justify-content: space-between; font-size: 13px; color: var(--text-2); }
-.row-links { display: flex; gap: 10px; font-size: 12px; }
+.panel-sub { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-sm); color: var(--text-2); }
+.row-links { display: flex; gap: 10px; font-size: var(--fs-xs); }
 
 /* —— 地图上的浮层 ——
    `.glass` 用的是 --panel（白 4% / 白 55% 半透明），在应用背景上没问题，
@@ -1916,9 +1898,9 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 9px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
 }
-.map-side .layer-row { font-size: 12px; }
+.map-side .layer-row { font-size: var(--fs-xs); }
 
 /* 点选的点位信息卡：锚在点击的那个点上（left/top 由 pickedStyle 给） */
 .map-info {
@@ -1928,18 +1910,17 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 5px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .mi-head { display: flex; align-items: center; gap: 8px; }
 .mi-head .biome-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mi-kind { flex: none; font-size: 11px; color: var(--text-3); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; }
-.mi-close { border: none; background: none; color: var(--text-3); font-size: 15px; line-height: 1; padding: 0 2px; cursor: pointer; }
+.mi-kind { flex: none; font-size: var(--fs-2xs); color: var(--text-3); border: 1px solid var(--border); border-radius: var(--r-xs); padding: 0 4px; }
+.mi-close { border: none; background: none; color: var(--text-3); font-size: var(--fs-md); line-height: 1; padding: 0 2px; cursor: pointer; }
 .mi-close:hover { color: var(--text-1); }
-.mi-line { font-size: 12px; color: var(--text-2); }
+.mi-line { font-size: var(--fs-xs); color: var(--text-2); }
 /* 卡片宽度固定 232px，英文文案（Copy coords / Highlight…）比中文长很多，
    不换行会直接顶出卡片，所以这里允许折行、按钮保持各自自然宽度 */
 .mi-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 3px; }
-.mi-actions .mini-btn { padding: 5px 8px; white-space: nowrap; }
 
 /* 地图内右侧控制 */
 .map-ctrl {
@@ -1956,7 +1937,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   color: var(--text-2);
   font-size: 16px;
   cursor: pointer;
@@ -1965,8 +1946,8 @@ onUnmounted(() => {
 .ctrl-btn:hover { background: var(--panel-hover); background: color-mix(in srgb, var(--feat-solid) 84%, var(--accent)); color: var(--text-1); border-color: var(--accent-35); }
 
 /* 悬停群系面板 + 加载进度 */
-.biome-dot { width: 10px; height: 10px; border-radius: 3px; flex: none; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35); }
-.biome-name { font-size: 13px; color: var(--text-1); }
+.biome-dot { width: 10px; height: 10px; border-radius: var(--r-xs); flex: none; box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.35); }
+.biome-name { font-size: var(--fs-sm); color: var(--text-1); }
 .map-progress {
   position: absolute;
   right: 12px;
@@ -1976,11 +1957,11 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
-.progress-head { display: flex; align-items: center; justify-content: space-between; font-size: 12px; color: var(--text-3); }
-.progress-track { height: 5px; border-radius: 3px; background: var(--panel-hover); background: color-mix(in srgb, var(--text-3) 22%, var(--feat-solid)); overflow: hidden; }
-.progress-track i { display: block; height: 100%; border-radius: 3px; background: var(--accent); transition: width 0.18s ease; }
+.progress-head { display: flex; align-items: center; justify-content: space-between; font-size: var(--fs-xs); color: var(--text-3); }
+.progress-track { height: 5px; border-radius: var(--r-xs); background: var(--panel-hover); background: color-mix(in srgb, var(--text-3) 22%, var(--feat-solid)); overflow: hidden; }
+.progress-track i { display: block; height: 100%; border-radius: var(--r-xs); background: var(--accent); transition: width 0.18s ease; }
 
 /* —— 地图 —— */
 /* canvas 必须用绝对定位填满：`.map-wrap` 的高度来自 flex，而 canvas 是
@@ -1993,14 +1974,14 @@ onUnmounted(() => {
 /* 悬停在结构图钉上：可点的提示 */
 .biome-canvas.over-struct { cursor: pointer; }
 .biome-canvas:active { cursor: grabbing; }
-.map-coord { position: absolute; top: 12px; right: 54px; padding: 3px 8px; border-radius: 7px; font-size: 12px; color: var(--text-2); pointer-events: none; }
-.map-tooltip { position: absolute; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 10px; pointer-events: none; white-space: nowrap; }
-.map-tooltip .coord { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
+.map-coord { position: absolute; top: 12px; right: 54px; padding: 3px 8px; border-radius: var(--r-sm); font-size: var(--fs-xs); color: var(--text-2); pointer-events: none; }
+.map-tooltip { position: absolute; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: var(--r-md); pointer-events: none; white-space: nowrap; }
+.map-tooltip .coord { font-size: var(--fs-xs); color: var(--text-3); font-variant-numeric: tabular-nums; }
 
 /* —— 导入存档 —— */
 .import-body { display: flex; flex-direction: column; gap: 14px; }
 .import-footer { display: flex; justify-content: flex-end; gap: 10px; }
-.muted { color: var(--text-3); font-size: 13px; }
-.muted.tiny { font-size: 11px; line-height: 1.5; }
-.muted.small { font-size: 12px; }
+.muted { color: var(--text-3); font-size: var(--fs-sm); }
+.muted.tiny { font-size: var(--fs-2xs); line-height: 1.5; }
+.muted.small { font-size: var(--fs-xs); }
 </style>

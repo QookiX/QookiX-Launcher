@@ -4,7 +4,7 @@
  *
  * 加入动作直接调本地陶瓦（`terracotta_join_room`），后端只提供房间码。
  */
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { NInput, NModal, NSelect, useMessage } from "naive-ui";
 import { api } from "../api";
@@ -13,6 +13,7 @@ import { useInstancesStore } from "../stores/instances";
 import { PLAY_TYPES, agoText, playTypeLabel } from "../utils/qookix";
 import type { PackCompareOut, PackFile, QookixRoom } from "../types";
 import { fmtBytes } from "../utils/format";
+import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import { IconCheck, IconCopy, IconExternal, IconRefresh, IconUsers } from "../components/icons";
 
 const emit = defineEmits<{ (e: "login"): void; (e: "joined"): void }>();
@@ -23,6 +24,14 @@ const instances = useInstancesStore();
 const message = useMessage();
 
 const sub = ref<"friends" | "public">("friends");
+// 好友房间 / 公开大厅切换的滑动高亮
+const subSegRef = ref<HTMLElement | null>(null);
+const { indicatorStyle: subSegStyle, refresh: refreshSubSeg } = useSlidingIndicator(
+  subSegRef,
+  () => Array.from(subSegRef.value?.querySelectorAll<HTMLElement>("button") ?? []),
+  () => (sub.value === "friends" ? 0 : 1),
+);
+watch(sub, () => nextTick(() => refreshSubSeg()));
 const publicRooms = ref<QookixRoom[]>([]);
 const keyword = ref("");
 const loading = ref(false);
@@ -429,7 +438,8 @@ onUnmounted(() => {
       <!-- 目录 -->
       <section class="rd-dir glass">
         <header class="rd-head">
-          <div class="rd-subtabs">
+          <div ref="subSegRef" class="rd-subtabs qx-seg qx-seg--sm">
+            <div class="qx-seg__indicator" :style="subSegStyle"></div>
             <button :class="{ active: sub === 'friends' }" @click="switchSub('friends')">
               {{ t("qookix.rooms.friends") }}
             </button>
@@ -561,7 +571,7 @@ onUnmounted(() => {
       v-model:show="packCheckOpen"
       preset="card"
       :title="t('qookix.pack.title')"
-      style="width: 520px; max-width: 92vw"
+      style="width: 560px; max-width: 92vw"
       :bordered="false"
     >
       <div v-if="packCheck" class="pack-body">
@@ -679,7 +689,7 @@ onUnmounted(() => {
 }
 .rd-login-text {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .rd-head {
@@ -693,7 +703,7 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -703,7 +713,7 @@ onUnmounted(() => {
 }
 .rd-count {
   margin-left: 6px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .rd-invites,
@@ -730,7 +740,7 @@ onUnmounted(() => {
   justify-content: space-between;
   gap: 12px;
   padding: 8px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border-left: 3px solid var(--accent);
   background: var(--panel);
   transition: opacity var(--dur-sm, 0.15s) var(--ease-out, ease);
@@ -739,40 +749,18 @@ onUnmounted(() => {
   opacity: 0.5;
 }
 .rd-invite-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 .rd-invite-meta {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .rd-invite-ops {
   display: flex;
   gap: 6px;
 }
-.rd-subtabs {
-  display: flex;
-  gap: 6px;
-  padding: 3px;
-  border-radius: 10px;
-  background: var(--panel);
-}
-.rd-subtabs button {
-  border: none;
-  background: transparent;
-  border-radius: 8px;
-  padding: 5px 12px;
-  font-size: 12px;
-  white-space: nowrap;
-  color: var(--text-3);
-  cursor: pointer;
-  transition: color var(--dur-sm, 0.15s) var(--ease-out, ease),
-    background var(--dur-sm, 0.15s) var(--ease-out, ease);
-}
-.rd-subtabs button.active {
-  background: var(--accent-15, rgba(232, 154, 75, 0.15));
-  color: var(--accent);
-}
+/* 好友房间 / 公开大厅切换：外观与滑块走全局 .qx-seg--sm */
 .rd-head-ops {
   display: flex;
   align-items: center;
@@ -780,7 +768,7 @@ onUnmounted(() => {
 }
 .rd-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 10px;
 }
 .rd-room {
@@ -788,7 +776,7 @@ onUnmounted(() => {
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   background: var(--panel);
   transition: transform var(--dur-sm, 0.15s) var(--ease-out, ease),
@@ -808,7 +796,7 @@ onUnmounted(() => {
   gap: 8px;
 }
 .rd-room-title {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -816,9 +804,9 @@ onUnmounted(() => {
 }
 .rd-status {
   flex: none;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 2px 7px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   color: var(--text-3);
 }
@@ -835,9 +823,9 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   padding: 2px 7px;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: var(--bg-2, rgba(255, 255, 255, 0.04));
   color: var(--text-3);
 }
@@ -852,7 +840,7 @@ onUnmounted(() => {
   gap: 8px;
 }
 .rd-owner {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -868,7 +856,7 @@ onUnmounted(() => {
   width: 14px;
   height: 14px;
   flex: none;
-  border-radius: 3px;
+  border-radius: var(--r-xs);
   image-rendering: pixelated;
 }
 .rd-verified {
@@ -900,10 +888,10 @@ onUnmounted(() => {
   gap: 5px;
   height: 30px;
   padding: 0 12px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   white-space: nowrap;
   flex: none;
@@ -917,13 +905,14 @@ onUnmounted(() => {
 .rd-btn.primary {
   border: none;
   background: var(--accent);
-  color: #1a1206;
+  /* 跟随全局主题对比色：写死深色墨字在红色/紫色主题下会变成黑字 */
+  color: var(--accent-contrast, #fff);
   font-weight: 600;
 }
 .rd-btn.small {
   height: 26px;
   padding: 0 10px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .rd-btn:hover:not(:disabled) {
   filter: brightness(1.05);
@@ -941,7 +930,7 @@ onUnmounted(() => {
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
   color: var(--text-3);
@@ -986,7 +975,7 @@ onUnmounted(() => {
 }
 .pack-head {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .pack-list {
@@ -995,7 +984,7 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
 }
 .pack-list .bad {
@@ -1010,7 +999,7 @@ onUnmounted(() => {
 .pack-items {
   display: block;
   margin-top: 2px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   word-break: break-all;
 }
@@ -1025,7 +1014,7 @@ onUnmounted(() => {
 }
 .rd-subhint {
   margin: -4px 0 0;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 1.6;
   color: var(--text-3);
 }
@@ -1033,7 +1022,7 @@ onUnmounted(() => {
   margin: 0;
   padding: 20px 0;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .rd-report {

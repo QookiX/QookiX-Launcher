@@ -282,11 +282,11 @@ function unpin(id: string) {
   /* 四周留白统一 6px：60 - 6×2 = 48px 内容高，与 nav-item 宽度一致，
      图标在正方形格子里完全居中，上下左右边距严格相等 */
   padding: 6px;
-  border-radius: 18px;
+  border-radius: var(--r-xl);
   background: var(--panel);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.18);
+  box-shadow: var(--float-shadow);
 }
 .nav-list {
   display: flex;
@@ -313,7 +313,7 @@ function unpin(id: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
 }
 /* 背景高亮被图标挡住，改用内描边表示选中、亮度表示悬停 */
@@ -384,7 +384,7 @@ function unpin(id: string) {
   align-items: center;
   height: 48px;
   padding: 0;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   color: var(--text-2);
   text-decoration: none;
   white-space: nowrap;
@@ -435,7 +435,7 @@ function unpin(id: string) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   opacity: 0;
   transform: translateX(-12px);
@@ -482,7 +482,7 @@ function unpin(id: string) {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   padding-left: 8px;
   padding-right: 14px;
@@ -515,9 +515,9 @@ function unpin(id: string) {
   display: flex;
   align-items: stretch;
   height: 60px;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.22);
+  box-shadow: var(--float-shadow);
   transition: filter 0.15s, transform 0.1s ease;
 }
 .launch-zone:hover {
@@ -530,7 +530,7 @@ function unpin(id: string) {
   justify-content: center;
   width: 34px;
   border: none;
-  border-radius: 14px 0 0 14px;
+  border-radius: var(--r-lg) 0 0 14px;
   background: transparent;
   color: var(--accent-contrast);
   cursor: pointer;
@@ -541,7 +541,7 @@ function unpin(id: string) {
   background: rgba(0, 0, 0, 0.12);
 }
 .split-switch-chev {
-  font-size: 15px;
+  font-size: var(--fs-md);
   transition: transform 0.22s cubic-bezier(0.34, 1.3, 0.5, 1);
 }
 .split-switch-chev.open {
@@ -577,7 +577,7 @@ function unpin(id: string) {
   width: 38px;
   height: 38px;
   flex-shrink: 0;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   overflow: hidden;
   background: var(--w-10);
   display: flex;
@@ -599,12 +599,12 @@ function unpin(id: string) {
   min-width: 0;
 }
 .split-title {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
   line-height: 1.2;
 }
 .split-name {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-weight: 500;
   opacity: 0.85;
   max-width: 200px;
@@ -633,12 +633,12 @@ function unpin(id: string) {
      不裁的话 translateX 那一段会把面板撑出横向滚动条 */
   overflow: hidden auto;
   padding: 6px;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   /* 展开动画首行带宽 = 面板 6px 内边距 + 46px 行高（见下方 inst-unfold） */
   --inst-reveal: 52px;
   background: color-mix(in srgb, var(--bg-1) 92%, #ffffff 8%);
   border: 1px solid var(--border);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--pop-shadow);
   z-index: 5;
 }
 .inst-row {
@@ -648,11 +648,11 @@ function unpin(id: string) {
   width: 100%;
   padding: 8px 10px;
   border: none;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: var(--text-2);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   cursor: pointer;
   text-align: left;
   transition: background 0.12s, color 0.12s;
@@ -679,7 +679,7 @@ function unpin(id: string) {
   width: 30px;
   height: 30px;
   flex-shrink: 0;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -698,7 +698,7 @@ function unpin(id: string) {
   min-width: 0;
 }
 .inst-row-meta {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   flex-shrink: 0;
 }
@@ -706,7 +706,7 @@ function unpin(id: string) {
   padding: 18px 12px;
   text-align: center;
   color: var(--text-3);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   /* 空列表也走同一条入场曲线，起跳与首行一致 */
   animation: inst-row-in 0.26s cubic-bezier(0.4, 0, 0.2, 1) 0.11s both;
 }

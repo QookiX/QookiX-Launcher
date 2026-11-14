@@ -879,8 +879,8 @@ onMounted(async () => {
     <!-- 吸附底衬：单独一个元素而不是 ::before，这样它能正常吃到 backdrop-filter
          （负 z-index 的伪元素在 WebView2 上磨砂不一定生效），颜色和卡片走同一档半透。 -->
     <div class="head-glass" aria-hidden="true"></div>
-    <div ref="typeBox" class="type-card glass">
-      <div class="indicator" :style="typeIndicatorStyle"></div>
+    <div ref="typeBox" class="type-card qx-seg">
+      <div class="qx-seg__indicator" :style="typeIndicatorStyle"></div>
       <button
         v-for="tp in types"
         :key="tp.key"
@@ -955,8 +955,8 @@ onMounted(async () => {
           size="small"
           class="tb-select page-size"
         />
-        <div ref="viewBox" class="view-switch">
-          <div class="indicator" :style="viewIndicatorStyle"></div>
+        <div ref="viewBox" class="view-switch qx-seg qx-seg--sm">
+          <div class="qx-seg__indicator" :style="viewIndicatorStyle"></div>
           <button :class="{ active: view === 'grid' }" :title="t('browse.view.grid')" @click="view = 'grid'"><IconGrid /></button>
           <button :class="{ active: view === 'list' }" :title="t('browse.view.list')" @click="view = 'list'"><IconList /></button>
           <button :class="{ active: view === 'compact' }" :title="t('browse.view.compact')" @click="view = 'compact'"><IconAlignJustify /></button>
@@ -1111,7 +1111,7 @@ onMounted(async () => {
         <div
           v-for="(n, i) in newsStore.news"
           :key="n.url"
-          class="news-card"
+          class="news-card glass"
           :style="{ animationDelay: newsDelay(i) }"
           @click="n.url && openUrl(n.url).catch(() => {})"
         >
@@ -1291,11 +1291,14 @@ onMounted(async () => {
 .search-box {
   flex: 1;
   min-width: 220px;
+  /* 高度与 .qx-input / .qx-btn--md 对齐（32）：原来靠 input 的 8px 上下内边距撑到 34，
+     和同一行 28 的 n-select 差出一截，整条工具条的基线看起来是斜的 */
+  height: var(--ctl-md);
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 12px;
-  border-radius: 9px;
+  gap: var(--sp-3);
+  padding: 0 var(--sp-5);
+  border-radius: var(--r-md);
   background: var(--w-06);
   color: var(--text-3);
   cursor: text;
@@ -1312,56 +1315,26 @@ onMounted(async () => {
   border: none;
   outline: none;
   color: var(--text-1);
-  padding: 8px 0;
-  font-size: 13px;
+  padding: 0;
+  font-size: var(--fs-sm);
   font-family: inherit;
 }
 .search-box input::placeholder {
   color: var(--text-3);
 }
+/* 外观（容器/按钮/滑块/悬停）全部走全局 .qx-seg，这里只留吸顶面板的层级与过渡 */
 .type-card {
-  position: relative;
   z-index: 1;
-  display: inline-flex;
-  gap: 4px;
-  padding: 5px;
   align-self: flex-start;
   /* 吸顶时面板要"化"进底衬：背景和圆角都得能过渡 */
   transition:
     background-color 0.26s ease,
     border-radius 0.26s ease;
 }
-.type-card .indicator {
-  position: absolute;
-  top: 5px;
-  bottom: 5px;
-  border-radius: 9px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.type-card button {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  border: none;
-  background: transparent;
-  color: var(--text-2);
-  /* 加了图标之后左右内边距从 18 收到 14，整条标签栏宽度基本不变 */
-  padding: 8px 14px;
-  border-radius: 9px;
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-}
 /* 分类图标：跟着文字一起变色，宽度固定不参与收缩 */
 .type-icon {
-  font-size: 14px;
+  font-size: var(--fs-base);
   flex-shrink: 0;
-}
-.type-card button.active {
-  color: var(--accent);
 }
 .filter-btn {
   display: inline-flex;
@@ -1370,9 +1343,9 @@ onMounted(async () => {
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-2);
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   padding: 7px 13px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -1393,12 +1366,12 @@ onMounted(async () => {
   margin-bottom: 18px;
 }
 .filter-group label {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-2);
   font-weight: 600;
 }
 .filter-hint {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin: 4px 0 0;
 }
@@ -1411,9 +1384,9 @@ onMounted(async () => {
   border: 1px solid var(--border);
   background: var(--w-04);
   color: var(--text-2);
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   padding: 5px 11px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
   cursor: pointer;
   font-family: inherit;
@@ -1435,7 +1408,7 @@ onMounted(async () => {
 }
 .cf-hint {
   padding: 12px 16px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-2);
 }
 .cf-hint a {
@@ -1460,7 +1433,7 @@ onMounted(async () => {
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
   gap: 16px;
 }
 /* 骨架屏：只排布局，颜色变量 / shimmer / 条块尺寸走 styles.css 的公共原子（投影列表共用同一套） */
@@ -1508,40 +1481,11 @@ onMounted(async () => {
 .tb-select.instance-select :deep(.n-base-selection) {
   --n-height: 35px !important;
 }
-.view-switch {
-  position: relative;
-  display: flex;
-  background: var(--w-05);
-  border-radius: 9px;
-  padding: 3px;
-  gap: 2px;
-}
-.view-switch .indicator {
-  position: absolute;
-  top: 3px;
-  bottom: 3px;
-  border-radius: 7px;
-  background: var(--accent-soft);
-  pointer-events: none;
-}
-.view-switch button {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
+/* 网格 / 列表 / 紧凑：外观走全局 .qx-seg--sm，这里只固定成等宽图标按钮 */
+.view-switch > button {
   width: 30px;
-  height: 26px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 7px;
-  cursor: pointer;
-  font-size: 14px;
-}
-.view-switch button:hover {
-  color: var(--text-1);
-}
-.view-switch button.active {
-  color: var(--accent);
+  padding: 0;
+  font-size: var(--fs-base); /* 图标尺寸（svg 为 1em），不是文字字号 */
 }
 .filter-tags {
   display: flex;
@@ -1554,11 +1498,11 @@ onMounted(async () => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   background: var(--accent-soft);
   color: var(--accent);
   border: 1px solid var(--accent-03);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 3px 10px;
 }
 .ftag-x {
@@ -1568,7 +1512,7 @@ onMounted(async () => {
   cursor: pointer;
   display: inline-flex;
   padding: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   opacity: 0.7;
 }
 .ftag-x:hover {
@@ -1590,7 +1534,7 @@ onMounted(async () => {
   align-items: center;
   gap: 16px;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .pager-total {
   color: var(--text-3);
@@ -1610,11 +1554,11 @@ onMounted(async () => {
   gap: 6px;
 }
 .news-tab-icon {
-  font-size: 15px;
+  font-size: var(--fs-md);
 }
 .center-hint {
   margin-top: 6px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   opacity: 0.8;
 }
@@ -1647,22 +1591,24 @@ onMounted(async () => {
 }
 .news-card {
   display: flex;
-  border: 1px solid var(--border);
-  border-radius: 12px;
+  /* 与实例卡 / 服务器卡 / 项目卡同一套：只靠 --panel 明度差定义边界，不加描边；
+     圆角走 --r-lg，不再单独写 12px。磨砂与底色由 .glass 提供。 */
+  border-radius: var(--r-lg);
   overflow: hidden;
   cursor: pointer;
-  background: var(--panel);
-  backdrop-filter: blur(var(--glass-blur, 8px));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  box-shadow: var(--card-shadow);
+  transition: transform 0.15s ease, box-shadow var(--dur-md) var(--ease-out);
   animation: news-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
 @keyframes news-card-enter {
   from { transform: translateY(20px); opacity: 0; }
   to { transform: none; opacity: 1; }
 }
+/* 原来这里是 `0 4px 20px var(--k-15)` 的黑色投影，深色主题下和卡片其它投影
+   是两套语言；统一改用卡片的悬停令牌（深色 accent 细环 / 浅色浅投影 + 细环）。
+   图片放大保留，它是新闻卡独有的「信息正在展开」提示。 */
 .news-card:hover {
-  box-shadow: 0 4px 20px var(--k-15);
+  box-shadow: var(--card-shadow-hover);
 }
 .news-image {
   flex-shrink: 0;
@@ -1689,7 +1635,7 @@ onMounted(async () => {
   min-width: 0;
 }
 .news-title {
-  font-size: 14px;
+  font-size: var(--fs-base);
   font-weight: 700;
   margin: 0;
   color: var(--text-1);
@@ -1699,7 +1645,7 @@ onMounted(async () => {
   overflow: hidden;
 }
 .news-desc {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
   margin: 0;
   display: -webkit-box;
@@ -1711,7 +1657,7 @@ onMounted(async () => {
 .news-meta {
   display: flex;
   gap: 12px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   margin-top: auto;
 }

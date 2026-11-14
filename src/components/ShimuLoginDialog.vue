@@ -104,7 +104,7 @@ function openSite() {
     v-model:show="show"
     preset="card"
     :title="t('shimu.title')"
-    style="width: 460px; max-width: 92vw"
+    style="width: 420px; max-width: 92vw"
   >
     <div class="shimu-box">
       <!-- 已登录：资料卡 -->
@@ -176,14 +176,14 @@ function openSite() {
 }
 .shimu-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.6;
   color: var(--text-3);
 }
 /* 第三方平台声明：登录前必须确认 */
 .shimu-notice-title {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 .shimu-notice {
@@ -191,14 +191,14 @@ function openSite() {
   flex-direction: column;
   gap: 8px;
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   border: 1px solid var(--border);
   border-left: 3px solid var(--accent-35);
   background: var(--panel);
 }
 .shimu-notice p {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.7;
   color: var(--text-2);
 }
@@ -207,12 +207,12 @@ function openSite() {
 .shimu-row .grow { flex: 1; min-width: 0; }
 .shimu-warn {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--accent);
 }
 .shimu-waiting {
   margin: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 .shimu-user {
@@ -223,7 +223,7 @@ function openSite() {
 .shimu-avatar {
   width: 44px;
   height: 44px;
-  border-radius: 12px;
+  border-radius: var(--r-md);
   object-fit: cover;
   flex: none;
   background: var(--w-04);
@@ -239,11 +239,11 @@ function openSite() {
   min-width: 0;
 }
 .shimu-name {
-  font-size: 14px;
+  font-size: var(--fs-base);
   color: var(--text-1);
 }
 .shimu-meta {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .shimu-row {

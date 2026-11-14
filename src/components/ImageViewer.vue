@@ -353,7 +353,7 @@ onBeforeUnmount(() => {
 .iv-title {
   flex: 1;
   min-width: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -384,7 +384,7 @@ onBeforeUnmount(() => {
 .iv-img {
   max-width: 100%;
   max-height: 100%;
-  border-radius: 4px;
+  border-radius: var(--r-xs);
   box-shadow: 0 18px 56px rgb(0 0 0 / 55%);
   transition: transform 0.18s ease;
   will-change: transform;
@@ -394,7 +394,7 @@ onBeforeUnmount(() => {
   transition: none;
 }
 .iv-empty {
-  font-size: 20px;
+  font-size: var(--fs-lg);
   color: rgba(255, 255, 255, 0.4);
 }
 
@@ -443,7 +443,7 @@ onBeforeUnmount(() => {
 .iv-count {
   min-width: 56px;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: #b6b8c2;
   font-variant-numeric: tabular-nums;
 }
@@ -460,7 +460,7 @@ onBeforeUnmount(() => {
   width: 32px;
   height: 32px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: #d5d7df;
   display: grid;
@@ -481,11 +481,11 @@ onBeforeUnmount(() => {
   height: 28px;
   padding: 0 8px;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   background: transparent;
   color: #b6b8c2;
   font-family: inherit;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-variant-numeric: tabular-nums;
   cursor: pointer;
 }

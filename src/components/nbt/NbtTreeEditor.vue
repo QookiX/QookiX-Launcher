@@ -360,61 +360,41 @@ watch(
   align-items: center;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--w-04);
 }
 .p-name {
   font-weight: 700;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   white-space: nowrap;
 }
 .p-key {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   font-family: ui-monospace, Consolas, monospace;
 }
 .p-type {
-  font-size: 10px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .p-hint {
   flex: 1;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
 }
 .input {
   flex: 1;
   min-width: 0;
   padding: 5px 8px;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: var(--surface-2);
   color: var(--text-1);
   font-family: inherit;
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 .input.narrow {
   flex: 0 1 140px;
-}
-.mini-btn {
-  padding: 5px 10px;
-  border-radius: 8px;
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-2);
-  font-size: 12px;
-  font-family: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.mini-btn.primary {
-  color: var(--accent);
-  border-color: var(--accent-04);
-  background: var(--accent-soft);
-}
-.mini-btn:disabled {
-  opacity: 0.5;
-  cursor: default;
 }
 .center {
   padding: 24px;
@@ -430,10 +410,10 @@ watch(
   position: fixed;
   min-width: 170px;
   padding: 4px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   background: var(--surface-1, var(--surface-2));
   border: 1px solid var(--border);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  box-shadow: var(--layer-shadow);
   display: flex;
   flex-direction: column;
 }
@@ -441,10 +421,10 @@ watch(
   text-align: left;
   padding: 6px 10px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--r-xs);
   background: none;
   color: var(--text-1);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-family: inherit;
   cursor: pointer;
 }

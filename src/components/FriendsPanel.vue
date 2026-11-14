@@ -425,7 +425,7 @@ onMounted(() => {
       v-model:show="remarkOpen"
       preset="card"
       :title="t('qookix.friends.remarkTitle')"
-      style="width: 380px; max-width: 92vw"
+      style="width: 420px; max-width: 92vw"
       :bordered="false"
     >
       <div class="fp-remark">
@@ -475,14 +475,14 @@ onMounted(() => {
 }
 .fp-empty-title {
   margin: 0;
-  font-size: 15px;
+  font-size: var(--fs-md);
   font-weight: 600;
   color: var(--text-1);
 }
 .fp-empty-desc {
   margin: 0;
   max-width: 420px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   line-height: 1.7;
   color: var(--text-3);
 }
@@ -518,7 +518,7 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   padding: 8px 10px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   transition: background var(--dur-sm, 0.15s) var(--ease-out, ease);
 }
 .fp-hit:hover {
@@ -529,11 +529,11 @@ onMounted(() => {
   flex: 1;
 }
 .fp-hit-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
 }
 .fp-hit-meta {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -567,7 +567,7 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
 }
@@ -580,9 +580,9 @@ onMounted(() => {
   margin-left: auto;
   min-width: 18px;
   padding: 1px 7px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   background: var(--w-06, rgba(255, 255, 255, 0.06));
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   line-height: 16px;
   text-align: center;
   color: var(--text-3);
@@ -592,7 +592,7 @@ onMounted(() => {
   margin: 0;
   padding: 16px 0;
   text-align: center;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .fp-list {
@@ -607,7 +607,7 @@ onMounted(() => {
   align-items: center;
   gap: 10px;
   padding: 7px 8px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
   transition: background var(--dur-sm, 0.15s) var(--ease-out, ease);
 }
 .fp-row:hover {
@@ -624,7 +624,7 @@ onMounted(() => {
   border-radius: 50%;
   background: var(--accent-08, rgba(232, 154, 75, 0.12));
   color: var(--accent);
-  font-size: 12px;
+  font-size: var(--fs-xs);
   font-weight: 600;
 }
 .fp-avatar-img {
@@ -669,14 +669,14 @@ onMounted(() => {
   flex: 1;
 }
 .fp-row-name {
-  font-size: 13px;
+  font-size: var(--fs-sm);
   color: var(--text-1);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .fp-row-meta {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -685,7 +685,7 @@ onMounted(() => {
 /* 「1.20.1 fabric · 在玩 xx」：比 @用户名 再弱一档，别抢主信息 */
 .fp-row-activity {
   margin-top: 1px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   opacity: 0.9;
   overflow: hidden;
@@ -701,9 +701,9 @@ onMounted(() => {
 /* ---- 小按钮 ---- */
 .fp-tag {
   flex: none;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   padding: 2px 8px;
-  border-radius: 999px;
+  border-radius: var(--r-pill);
   border: 1px solid var(--border);
   color: var(--text-3);
   white-space: nowrap;
@@ -711,9 +711,9 @@ onMounted(() => {
 .fp-mini {
   border: 1px solid var(--border);
   background: transparent;
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   padding: 4px 9px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-2);
   white-space: nowrap;
   cursor: pointer;
@@ -739,10 +739,10 @@ onMounted(() => {
   gap: 6px;
   height: 32px;
   padding: 0 14px;
-  border-radius: 9px;
+  border-radius: var(--r-sm);
   border: 1px solid var(--border);
   background: transparent;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-1);
   white-space: nowrap;
   flex: none;
@@ -757,13 +757,14 @@ onMounted(() => {
 .fp-btn.primary {
   border: none;
   background: var(--accent);
-  color: #1a1206;
+  /* 跟随全局主题对比色：写死深色墨字在红色/紫色主题下会变成黑字 */
+  color: var(--accent-contrast, #fff);
   font-weight: 600;
 }
 .fp-btn.small {
   height: 26px;
   padding: 0 10px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
 }
 .fp-btn:hover:not(:disabled) {
   filter: brightness(1.05);
@@ -778,7 +779,7 @@ onMounted(() => {
 .fp-hint {
   margin: 0;
   padding: 0 4px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .fp-divider {
@@ -794,7 +795,7 @@ onMounted(() => {
   border: none;
   background: none;
   padding: 0;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   color: var(--text-1);
   cursor: pointer;
@@ -814,10 +815,10 @@ onMounted(() => {
   margin-top: 4px;
   padding: 3px 8px;
   border: 1px solid rgba(78, 201, 160, 0.35);
-  border-radius: 8px;
+  border-radius: var(--r-sm);
   background: rgba(78, 201, 160, 0.1);
   color: var(--success, #4ec9a0);
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   font-family: inherit;
   cursor: pointer;
   transition: background var(--dur-sm, 0.15s) var(--ease-out, ease);
@@ -862,7 +863,7 @@ onMounted(() => {
 }
 .fp-remark-hint {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: var(--text-3);
 }
 .fp-remark-ops {

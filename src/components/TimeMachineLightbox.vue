@@ -146,7 +146,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 .lb-img {
   max-width: 100%;
   max-height: calc(100vh - 150px);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   box-shadow: 0 24px 64px rgb(0 0 0 / 45%);
   animation: lbIn 0.36s cubic-bezier(0.22, 1, 0.36, 1);
 }
@@ -161,7 +161,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   }
 }
 .lb-loading {
-  font-size: 20px;
+  font-size: var(--fs-lg);
   color: rgba(255, 255, 255, 0.4);
 }
 .lb-nav,
@@ -199,7 +199,7 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   top: 16px;
   width: 34px;
   height: 34px;
-  border-radius: 10px;
+  border-radius: var(--r-md);
 }
 .lb-side {
   width: 300px;
@@ -207,13 +207,13 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   max-height: calc(100vh - 150px);
   overflow: auto;
   padding: 14px 16px;
-  border-radius: 14px;
+  border-radius: var(--r-lg);
   border: 1px solid rgba(255, 255, 255, 0.1);
   background: rgba(255, 255, 255, 0.06);
   display: flex;
   flex-direction: column;
   gap: 9px;
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: #e8e9ee;
 }
 .lb-meta {
@@ -226,12 +226,12 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   gap: 10px;
 }
 .lb-count {
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: #9a9daa;
   font-variant-numeric: tabular-nums;
 }
 .lb-title {
-  font-size: 12px;
+  font-size: var(--fs-xs);
   color: #e8e9ee;
   overflow: hidden;
   text-overflow: ellipsis;

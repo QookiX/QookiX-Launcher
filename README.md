@@ -86,6 +86,27 @@
 - 本启动器的中文模组百科词库 `WikiEntries.txt` 数据源自 [PCL2（Plain Craft Launcher 2）](https://github.com/LTCat/PCL2)（Copyright © 龙腾猫跃，**GPL-3.0**）收录的 [MCMod 百科](https://www.mcmod.cn) 词条索引
 - 依据 GPL-3.0 第 5 条，该数据以相同许可证纳入本启动器分发，完整版权与许可声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
+### 第三方内网穿透服务（MohuaFrp）
+
+- 本启动器的「内网穿透」功能通过 [MohuaFrp](https://frp.mhjz1.cn) 提供端口映射能力
+- MohuaFrp 是**第三方闭源服务**：本启动器仅负责设备授权登录、隧道列表展示与启停、本地隧道配置以及 frpc 子进程管理
+- 用户需自行注册账号并创建隧道，需遵守 MohuaFrp 的服务条款
+- 本启动器与 MohuaFrp 是两个相互独立、各自以自身许可证发布的第三方服务，二者之间无任何隶属或背书关系
+
+### 第三方内网穿透客户端（frpc / frp）
+
+- 内网穿透功能依赖 [frp](https://github.com/fatedier/frp)（Copyright (c) 2016-2024 frp Authors，**Apache-2.0**）的客户端组件 frpc
+- frpc 采用 Apache-2.0 许可证，与本项目 GNU GPL v3 兼容
+- 本启动器**不静态或动态链接 frpc**，而是通过子进程方式调用 frpc 可执行文件
+- 用户需自行从 frp 官方发行包中提取 frpc 可执行文件并放置到指定路径（`<数据目录>/frp/frpc.exe`）
+- frpc 的完整许可证文本见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+
+### 内网穿透免责声明
+
+- 本启动器不对用户通过内网穿透功能进行的任何行为承担责任
+- 用户需自行遵守相关法律法规
+- 用户使用内网穿透功能即表示你已阅读并同意 MohuaFrp 的服务条款
+
 ### 免责条款
 
 - 本项目按“原样”提供，不附带任何明示或默示担保

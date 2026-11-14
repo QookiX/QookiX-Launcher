@@ -51,12 +51,43 @@ fn envelope_err(status: u16, body: &str) -> String {
     format!("HTTP {status}: {snip}")
 }
 
+// ------------------------------------------------------------------ null 容错
+//
+// 面板对「这个隧道没有该字段」的情况会返回 `null`（例如 HTTP/域名隧道没有
+// remote_port、灰度节点没有 node_port），而 serde 的 `#[serde(default)]` 只
+// 兜「字段缺失」，字段存在但值为 null 时仍然会报
+// `invalid type: null, expected u32`，所以标量字段都要再过一层。
+
+fn de_u32_or_zero<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    Ok(Option::<u32>::deserialize(d)?.unwrap_or(0))
+}
+
+fn de_u64_or_zero<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u64, D::Error> {
+    Ok(Option::<u64>::deserialize(d)?.unwrap_or(0))
+}
+
+fn de_i64_or_zero<'de, D: serde::Deserializer<'de>>(d: D) -> Result<i64, D::Error> {
+    Ok(Option::<i64>::deserialize(d)?.unwrap_or(0))
+}
+
+fn de_f64_or_zero<'de, D: serde::Deserializer<'de>>(d: D) -> Result<f64, D::Error> {
+    Ok(Option::<f64>::deserialize(d)?.unwrap_or(0.0))
+}
+
+fn de_string_or_empty<'de, D: serde::Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(Option::<String>::deserialize(d)?.unwrap_or_default())
+}
+
 /// 解包 `{status,message,error,data}`
 fn unwrap_data<T: for<'de> Deserialize<'de>>(status: u16, body: &str) -> Result<T, String> {
     if status >= 400 {
         return Err(envelope_err(status, body));
     }
-    let env: Envelope<T> = serde_json::from_str(body).map_err(|e| format!("面板响应解析失败: {e}"))?;
+    let env: Envelope<T> = serde_json::from_str(body).map_err(|e| {
+        // 带上原文片段，否则光看 serde 的 column 号没法定位是哪个字段
+        let snip: String = body.trim().chars().take(240).collect();
+        format!("面板响应解析失败: {e}；原文片段: {snip}")
+    })?;
     if env.status == "error" {
         return Err(if env.message.is_empty() {
             env.error
@@ -71,12 +102,17 @@ fn unwrap_data<T: for<'de> Deserialize<'de>>(status: u16, body: &str) -> Result<
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DeviceAuth {
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub device_code: String,
     /// 展示给用户的授权码，如 `WDJB-MJHT`
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub user_code: String,
     /// 已带 user_code 的完整授权链接（优先用它）
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub verification_uri_complete: String,
+    #[serde(default, deserialize_with = "de_u64_or_zero")]
     pub expires_in: u64,
+    #[serde(default, deserialize_with = "de_u64_or_zero")]
     pub interval: u64,
 }
 
@@ -167,12 +203,13 @@ pub async fn device_token(device_code: &str) -> Result<PollResult, String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FrpUser {
+    #[serde(default, deserialize_with = "de_i64_or_zero")]
     pub id: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub username: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub email: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_f64_or_zero")]
     pub balance: f64,
     #[serde(default)]
     pub tunnel_stats: Option<serde_json::Value>,
@@ -194,28 +231,30 @@ pub async fn user_balance(token: &str) -> Result<FrpUser, String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Tunnel {
+    #[serde(default, deserialize_with = "de_i64_or_zero")]
     pub id: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub protocol: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub local_ip: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u32_or_zero")]
     pub local_port: u32,
-    #[serde(default)]
+    /// HTTP / 域名隧道没有远程端口，面板会给 null
+    #[serde(default, deserialize_with = "de_u32_or_zero")]
     pub remote_port: u32,
     #[serde(default)]
     pub custom_domain: Option<String>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub status: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub node_name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub node_hostname: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u32_or_zero")]
     pub node_port: u32,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub billing_type: String,
 }
 
@@ -242,13 +281,17 @@ pub async fn list_tunnels(token: &str) -> Result<Vec<Tunnel>, String> {
 #[derive(Debug, Clone, Deserialize)]
 pub struct TunnelConfig {
     /// 服务端拼好的完整 frpc TOML，已带认证 Token
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub config: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_string_or_empty")]
     pub tunnel_name: String,
-    #[serde(default)]
+    // Returned by the panel API but not consumed by the launcher yet
+    // (LocalTunnel carries its own host/port for locally defined tunnels).
+    #[serde(default, deserialize_with = "de_string_or_empty")]
+    #[allow(dead_code)]
     pub host: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "de_u32_or_zero")]
+    #[allow(dead_code)]
     pub port: u32,
 }
 
@@ -295,11 +338,43 @@ mod tests {
     #[test]
     fn list_parses_tunnels() {
         let body = r#"{"status":"success","data":{"tunnels":[
-            {"id":63,"name":"mc","protocol":"tcp","local_port":25565,"remote_port":30001,"status":"active","node_hostname":"node1.frp.mhjz1.cn","node_port":7000}
+            {"id":63,"name":"mc","protocol":"tcp","local_port":25565,"remote_port":30001,"status":"active","node_hostname":"example.com","node_port":7000}
         ]}}"#;
         let l: TunnelList = unwrap_data(200, body).unwrap();
         assert_eq!(l.tunnels.len(), 1);
         assert_eq!(l.tunnels[0].name, "mc");
         assert_eq!(l.tunnels[0].node_port, 7000);
+    }
+
+    /// 面板会把「不适用」的字段给成 null（HTTP 隧道没有 remote_port 等），
+    /// 这类响应不能整条列表解析失败。
+    #[test]
+    fn list_tolerates_null_scalars() {
+        let body = r#"{"status":"success","data":{"tunnels":[
+            {"id":71,"name":"web","protocol":"http","local_ip":null,"local_port":8080,
+             "remote_port":null,"custom_domain":"demo.mhjz1.cn","status":null,
+             "node_name":null,"node_hostname":"node2.frp.mhjz1.cn","node_port":null,
+             "billing_type":null},
+            {"id":null,"name":null,"protocol":null,"local_port":null,"remote_port":null,
+             "status":null,"node_hostname":null,"node_port":null,"billing_type":null}
+        ]}}"#;
+        let l: TunnelList = unwrap_data(200, body).unwrap();
+        assert_eq!(l.tunnels.len(), 2);
+        assert_eq!(l.tunnels[0].name, "web");
+        assert_eq!(l.tunnels[0].remote_port, 0);
+        assert_eq!(l.tunnels[0].node_port, 0);
+        assert_eq!(l.tunnels[0].local_ip, "");
+        assert_eq!(l.tunnels[0].custom_domain.as_deref(), Some("demo.mhjz1.cn"));
+        assert_eq!(l.tunnels[1].id, 0);
+        assert_eq!(l.tunnels[1].local_port, 0);
+    }
+
+    #[test]
+    fn device_auth_tolerates_null_numbers() {
+        let body = r#"{"status":"success","data":{"device_code":"dc","user_code":"ABCD-EFGH",
+            "verification_uri_complete":null,"expires_in":null,"interval":null}}"#;
+        let a: DeviceAuth = unwrap_data(200, body).unwrap();
+        assert_eq!(a.device_code, "dc");
+        assert_eq!(a.interval, 0);
     }
 }

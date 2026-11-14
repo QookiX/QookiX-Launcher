@@ -96,12 +96,12 @@ function go(p: number) {
   height: 30px;
   padding: 0 6px;
   border: 1px solid var(--border);
-  border-radius: 7px;
+  border-radius: var(--r-sm);
   /* --panel / --panel-hover 深浅色都有定义（--w-* 只在深色主题给了值，
      浅色下按钮会没有底色） */
   background: var(--panel);
   color: var(--text-2);
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-weight: 600;
   font-family: inherit;
   cursor: pointer;
@@ -130,6 +130,6 @@ function go(p: number) {
   min-width: 24px;
   text-align: center;
   color: var(--text-3);
-  font-size: 13px;
+  font-size: var(--fs-sm);
 }
 </style>

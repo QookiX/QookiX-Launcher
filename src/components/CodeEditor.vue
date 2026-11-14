@@ -278,7 +278,7 @@ html.light .ed {
   --text-3: #8b8e9c;
   --border: rgba(255, 255, 255, 0.08);
   --panel: rgba(34, 37, 48, 0.6);
-  --accent: #e89a4b;
+  /* 不再覆盖 --accent：编辑器跟随全局主题色 */
 }
 
 .ed-gutter {
@@ -298,7 +298,7 @@ html.light .ed {
   line-height: 20px;
   padding-right: 10px;
   font-family: "Cascadia Code", Consolas, "Courier New", monospace;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   font-variant-numeric: tabular-nums;
   color: var(--text-3);
   opacity: 0.55;
@@ -328,7 +328,7 @@ html.light .ed {
   margin: 0;
   padding: 10px 14px 0;
   font-family: "Cascadia Code", Consolas, "Courier New", monospace;
-  font-size: 13px;
+  font-size: var(--fs-sm);
   line-height: 20px;
   letter-spacing: 0;
   tab-size: 2;
@@ -361,7 +361,7 @@ html.light .ed {
   caret-color: var(--accent);
 }
 .ed-input::selection {
-  background: rgba(232, 154, 75, 0.32);
+  background: var(--accent-30);
 }
 
 .ed-status {
@@ -374,7 +374,7 @@ html.light .ed {
   align-items: center;
   gap: 14px;
   padding: 0 12px;
-  font-size: 11px;
+  font-size: var(--fs-2xs);
   color: var(--text-3);
   background: var(--panel);
   border-top: 1px solid var(--border);
