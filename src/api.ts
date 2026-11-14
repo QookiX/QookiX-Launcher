@@ -26,6 +26,7 @@ import type {
   QookixMe,
   FrpTunnel,
   FrpUser,
+  QookixSkin,
   QookixNotifications,
   PackCompareOut,
   PackManifestOut,
@@ -1009,15 +1010,44 @@ export const api = {
   frpLogs: (name: string, lines = 300) =>
     invoke<string>("frp_logs", { name, lines }),
 
+  // 皮肤托管（QookiX 账号自带，替代第三方皮肤站）
+  qookixMySkin: () => invoke<QookixSkin>("qookix_my_skin", undefined, { net: true }),
+  qookixUploadSkin: (skin?: string, cape?: string, model?: string) =>
+    invoke<QookixSkin>(
+      "qookix_upload_skin",
+      { skin: skin ?? null, cape: cape ?? null, model: model ?? null },
+      { net: true },
+    ),
+  qookixClearSkin: () => invoke<{ cleared: boolean }>("qookix_clear_skin", undefined, { net: true }),
+  qookixSkins: (uids: number[]) =>
+    invoke<{ skins: Record<string, QookixSkin> }>(
+      "qookix_skins",
+      { uids },
+      { net: true },
+    ),
+
   // 联机环境清单（Phase 2a）
   qookixPackManifest: (instanceId: string) =>
     invoke<PackManifestOut>("qookix_pack_manifest", { instanceId }),
   // P2P 文件传输（P1）：房主开服务 / 关服务，客人拉取
-  qookixPackServe: (instanceId: string) =>
-    invoke<{ packNet: string; manifest: string; modsCount: number; needBytes: number }>(
-      "qookix_pack_serve",
-      { instanceId },
-    ),
+  /**
+   * 房主开文件服务。
+   * - 不传 relayUrl：走局域网（EasyTier），端口随机
+   * - 传 relayUrl：走 frp 等中继，`port` 必须等于隧道里配的本地端口
+   */
+  qookixPackServe: (instanceId: string, relayUrl?: string, port?: number) =>
+    invoke<{
+      packNet: string;
+      manifest: string;
+      modsCount: number;
+      needBytes: number;
+      httpPort: number;
+      mode: "lan" | "relay";
+    }>("qookix_pack_serve", {
+      instanceId,
+      relayUrl: relayUrl ?? null,
+      port: port ?? null,
+    }),
   qookixPackStopServe: () => invoke<void>("qookix_pack_stop_serve"),
   qookixPackPull: (roomId: string, instanceId: string) =>
     invoke<{ downloaded: number; failed: number; bytes: number }>(

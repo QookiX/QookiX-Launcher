@@ -74,6 +74,15 @@ export default {
     shareActivity: "Show friends what I'm playing",
     shareActivityHint:
       "Friends see your running instance and version. Only reported while the game is running locally; no history is kept.",
+    skin: {
+      title: "My skin",
+      hint: "Upload a 64×64 PNG. It shows up for friends and in rooms. Default skin is used until you upload one.",
+      upload: "Choose image",
+      uploading: "Uploading…",
+      remove: "Remove",
+      classic: "Classic",
+      slim: "Slim",
+    },
     time: {
       justNow: "just now",
       minutes: "{n} min ago",
@@ -107,6 +116,16 @@ export default {
       manualHint: "{n} mods have no online source — ask the host for the files:",
       pullHint:
         "{size} has no online source and must be transferred from the host (the host has to stay online)",
+      relayLabel: "Expose via frp tunnel (works across networks)",
+      relayHint:
+        "The file service binds to the local port configured in the tunnel, so friends don't need to be on your LAN. Note: traffic inside the tunnel is plain HTTP and passes through the frps host.",
+      relayTunnel: "Tunnel",
+      relayLoading: "Loading tunnels…",
+      relayPick: "Pick a tunnel",
+      relayTunnelHint:
+        "Create the tunnel on the MohuaFrp website first, and set its local port to the port the file service should use.",
+      relayEmpty: "No TCP tunnel found — create one on the MohuaFrp website first",
+      relayNeedLogin: "Sign in to MohuaFrp under Port forwarding before enabling relay",
       pullDo: "Sync from host",
       pulling: "Transferring…",
       pullOk: "Synced {n} files",
