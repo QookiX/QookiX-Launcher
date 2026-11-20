@@ -7,11 +7,14 @@
  */
 import { ref, onMounted, onUnmounted, computed } from "vue";
 import QRCode from "qrcode";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../composables/tauriListeners";
+import { type UnlistenFn } from "@tauri-apps/api/event";
 import { api } from "../api";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
 import type { LanSyncState } from "../types";
+
+const { listen } = useTauriListenerScope();
 
 const { t } = useI18n();
 const message = useMessage();

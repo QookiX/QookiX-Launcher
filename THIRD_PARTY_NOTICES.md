@@ -27,10 +27,13 @@ Terracotta 与本启动器是两个相互独立、各自以自身许可证发布
 - **许可证**：MIT License
 - **完整许可证文本**：https://github.com/Cubitect/cubiomes/blob/master/LICENSE
 - **集成方式**：Vendored 源码快照，静态链接进本启动器
+- **快照提交**：[e61f90580cbdd883214a8054670dacae655e59c0](https://github.com/Cubitect/cubiomes/commit/e61f90580cbdd883214a8054670dacae655e59c0)
 
 **使用说明**：「工具箱 → 种子地图」的生物群系、结构与出生点计算由 cubiomes 提供。本启动器在 `src-tauri/vendor/cubiomes/` 保存其**上游未修改的源码快照**（含其 LICENSE 与 README），由 `src-tauri/build.rs` 编译，并通过自写的 C 胶水层（`src-tauri/src/cubiomes_bridge.c`）与 Rust 封装（`src-tauri/src/cubiomes.rs`）调用；本启动器未修改 cubiomes 本身。
 
 cubiomes 采用 MIT 许可证，与本项目采用的 GNU GPL v3 兼容。cubiomes 与本启动器是两个相互独立、各自以自身许可证发布的开源项目，二者之间不存在任何隶属或背书关系。
+
+更新时，按目标提交替换 `src-tauri/vendor/cubiomes/` 中的上游文件，保留许可证并更新此处的提交号。随后编译第一方 C 桥接并运行 `cargo test --manifest-path src-tauri/Cargo.toml --lib cubiomes::tests`，验证桥接接口以及种子地图的地表和地下采样。
 
 ### MIT License
 

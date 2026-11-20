@@ -6,6 +6,7 @@
 pub mod api;
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 
@@ -77,10 +78,83 @@ mod job {
     pub fn adopt(_child: &std::process::Child) {}
 }
 
-/// 等待授权的会话（device_code 不能展示给用户，放内存里即可）
-static PENDING: Mutex<Option<api::DeviceAuth>> = Mutex::new(None);
-/// 正在跑的隧道：隧道名 → 子进程
-static RUNNING: Mutex<Option<HashMap<String, Child>>> = Mutex::new(None);
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum TunnelKey {
+    Panel(i64),
+    Local(String),
+}
+
+impl TunnelKey {
+    fn parse(raw: &str) -> Result<Self, String> {
+        match raw.split_once(':') {
+            Some(("panel", id)) => id.parse::<i64>().ok().filter(|id| *id > 0)
+                .map(Self::Panel).ok_or_else(|| "面板隧道 ID 无效".into()),
+            Some(("local", id)) => {
+                crate::fsutil::validate_id(id, "本地隧道")?;
+                Ok(Self::Local(id.into()))
+            }
+            _ => Err("隧道来源或 ID 无效".into()),
+        }
+    }
+
+    fn wire_id(&self) -> String {
+        match self {
+            Self::Panel(id) => format!("panel:{id}"),
+            Self::Local(id) => format!("local:{id}"),
+        }
+    }
+
+    fn log_path(&self, root: &Path) -> PathBuf {
+        let logs = root.join("logs");
+        match self {
+            Self::Panel(id) => logs.join("panel").join(format!("{id}.log")),
+            Self::Local(id) => logs.join("local").join(format!("{id}.log")),
+        }
+    }
+}
+
+#[derive(Default)]
+struct Runtime {
+    generation: u64,
+    pending: Option<api::DeviceAuth>,
+    processes: HashMap<TunnelKey, Child>,
+}
+
+impl Runtime {
+    fn check_panel(&self, generation: u64) -> Result<(), String> {
+        (self.generation == generation).then_some(()).ok_or_else(|| "面板会话已变化，请重试".into())
+    }
+
+    fn reap(&mut self) {
+        self.processes.retain(|_, child| !matches!(child.try_wait(), Ok(Some(_))));
+    }
+
+    fn stop(&mut self, key: &TunnelKey) -> Result<(), String> {
+        let Some(child) = self.processes.get_mut(key) else { return Ok(()) };
+        if child.try_wait().map_err(|err| err.to_string())?.is_none() {
+            child.kill().map_err(|err| format!("停止 frpc 失败: {err}"))?;
+            child.wait().map_err(|err| format!("回收 frpc 失败: {err}"))?;
+        }
+        self.processes.remove(key);
+        Ok(())
+    }
+
+    fn stop_matching(&mut self, matches: impl Fn(&TunnelKey) -> bool) -> Result<(), String> {
+        let keys: Vec<_> = self.processes.keys().filter(|key| matches(key)).cloned().collect();
+        let mut first_error = None;
+        for key in keys {
+            if let Err(err) = self.stop(&key) {
+                first_error.get_or_insert(err);
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+}
+
+fn runtime() -> std::sync::MutexGuard<'static, Runtime> {
+    static RUNTIME: std::sync::LazyLock<Mutex<Runtime>> = std::sync::LazyLock::new(|| Mutex::new(Runtime::default()));
+    RUNTIME.lock().unwrap_or_else(|error| error.into_inner())
+}
 
 fn auth_path(state: &AppState) -> std::path::PathBuf {
     state.root.join("frp_auth.json")
@@ -99,26 +173,32 @@ fn load_token(state: &AppState) -> Option<String> {
 }
 
 fn save_token(state: &AppState, token: &str) -> Result<(), String> {
-    let enc = crate::secret::protect(token)?;
-    let text = serde_json::to_string_pretty(&json!({ "token": enc })).map_err(|e| e.to_string())?;
-    std::fs::write(auth_path(state), text).map_err(|e| format!("保存登录态失败: {e}"))
+    let encrypted = crate::secret::protect(token)?;
+    let bytes = serde_json::to_vec_pretty(&json!({ "token": encrypted })).map_err(|err| err.to_string())?;
+    crate::fsutil::atomic_write(&auth_path(state), &bytes).map_err(|err| format!("保存登录态失败: {err}"))
 }
 
-/// 隧道名做文件名时只留安全字符
-fn safe_name(name: &str) -> String {
-    let s: String = name
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
-        .collect();
-    if s.is_empty() {
-        format!("tunnel_{}", crate::util::now_secs())
-    } else {
-        s
+fn panel_token(state: &AppState) -> Option<(u64, String)> {
+    let runtime = runtime();
+    load_token(state).map(|token| (runtime.generation, token))
+}
+
+fn start_process(runtime: &mut Runtime, state: &AppState, key: TunnelKey, config: &Path) -> Result<PathBuf, String> {
+    runtime.reap();
+    let log_path = key.log_path(&frp_dir(state));
+    if runtime.processes.contains_key(&key) {
+        return Ok(log_path);
     }
-}
-
-fn running_map() -> std::sync::MutexGuard<'static, Option<HashMap<String, Child>>> {
-    RUNNING.lock().unwrap_or_else(|e| e.into_inner())
+    let frpc = find_frpc(state)?;
+    std::fs::create_dir_all(log_path.parent().ok_or("日志目录无效")?).map_err(|err| err.to_string())?;
+    let log = std::fs::File::create(&log_path).map_err(|err| format!("建立 frpc 日志失败: {err}"))?;
+    let stderr = log.try_clone().map_err(|err| err.to_string())?;
+    let child = Command::new(frpc).arg("-c").arg(config).stdin(Stdio::null())
+        .stdout(Stdio::from(log)).stderr(Stdio::from(stderr)).spawn()
+        .map_err(|err| format!("启动 frpc 失败: {err}"))?;
+    job::adopt(&child);
+    runtime.processes.insert(key, child);
+    Ok(log_path)
 }
 
 /// 找 frpc 可执行文件：优先 `<数据目录>/frp/frpc.exe`，再退回 exe 同目录
@@ -149,39 +229,48 @@ fn find_frpc(state: &AppState) -> Result<std::path::PathBuf, String> {
 /// 开始设备授权：返回授权码与链接，前端展示并引导用户去浏览器
 #[tauri::command]
 pub async fn frp_login_start() -> Result<serde_json::Value, String> {
+    let generation = {
+        let mut runtime = runtime();
+        runtime.generation = runtime.generation.wrapping_add(1);
+        runtime.pending = None;
+        runtime.generation
+    };
     let d = api::device_register().await?;
-    let interval = d.interval;
-    let expires_in = d.expires_in;
-    {
-        let mut p = PENDING.lock().unwrap_or_else(|e| e.into_inner());
-        *p = Some(d.clone());
-    }
+    let mut runtime = runtime();
+    runtime.check_panel(generation)?;
+    runtime.pending = Some(d.clone());
     Ok(json!({
         "userCode": d.user_code,
         "uri": d.verification_uri_complete,
-        "interval": interval,
-        "expiresIn": expires_in,
+        "interval": d.interval,
+        "expiresIn": d.expires_in,
     }))
 }
 
 /// 轮询一次（**前端负责按 interval 调用**，这里不 sleep，避免占用运行时）
 #[tauri::command]
 pub async fn frp_login_poll(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let device_code = {
-        let p = PENDING.lock().unwrap_or_else(|e| e.into_inner());
-        p.as_ref()
-            .map(|d| d.device_code.clone())
-            .ok_or_else(|| "没有进行中的授权，请重新获取授权码".to_string())?
+    let (generation, device_code) = {
+        let runtime = runtime();
+        let device = runtime.pending.as_ref().ok_or("没有进行中的授权，请重新获取授权码")?;
+        (runtime.generation, device.device_code.clone())
     };
     match api::device_token(&device_code).await? {
-        api::PollResult::Pending => Ok(json!({ "status": "pending" })),
+        api::PollResult::Pending => {
+            runtime().check_panel(generation)?;
+            Ok(json!({ "status": "pending" }))
+        }
         api::PollResult::Authorized(token) => {
-            save_token(&state, &token)?;
-            {
-                let mut p = PENDING.lock().unwrap_or_else(|e| e.into_inner());
-                *p = None;
-            }
             let user = api::user_balance(&token).await.ok();
+            let mut runtime = runtime();
+            runtime.check_panel(generation)?;
+            if runtime.pending.as_ref().is_none_or(|device| device.device_code != device_code) {
+                return Err("设备授权已失效".into());
+            }
+            runtime.stop_matching(|key| matches!(key, TunnelKey::Panel(_)))?;
+            save_token(&state, &token)?;
+            runtime.pending = None;
+            runtime.generation = runtime.generation.wrapping_add(1);
             Ok(json!({ "status": "authorized", "user": user }))
         }
     }
@@ -190,109 +279,53 @@ pub async fn frp_login_poll(state: State<'_, AppState>) -> Result<serde_json::Va
 /// 当前登录态
 #[tauri::command]
 pub async fn frp_status(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let Some(token) = load_token(&state) else {
+    let Some((generation, token)) = panel_token(&state) else {
         return Ok(json!({ "loggedIn": false, "user": null }));
     };
-    match api::user_balance(&token).await {
-        Ok(u) => Ok(json!({ "loggedIn": true, "user": u })),
-        // 网络问题不该把用户踢下线，保持登录态但标记未校验
-        Err(e) => Ok(json!({ "loggedIn": true, "user": null, "warning": e })),
+    let response = api::user_balance(&token).await;
+    runtime().check_panel(generation)?;
+    match response {
+        Ok(user) => Ok(json!({ "loggedIn": true, "user": user })),
+        Err(err) => Ok(json!({ "loggedIn": true, "user": null, "warning": err })),
     }
 }
 
-/// 隧道列表（附带本地是否正在跑）
 #[tauri::command]
 pub async fn frp_tunnels(state: State<'_, AppState>) -> Result<serde_json::Value, String> {
-    let token = load_token(&state).ok_or_else(|| "未登录面板".to_string())?;
+    let (generation, token) = panel_token(&state).ok_or("未登录面板")?;
     let tunnels = api::list_tunnels(&token).await?;
-    let running: Vec<String> = {
-        let mut m = running_map();
-        match m.as_mut() {
-            Some(map) => {
-                // 顺手回收已经退出的进程
-                map.retain(|_, c| matches!(c.try_wait(), Ok(None)));
-                map.keys().cloned().collect()
-            }
-            None => Vec::new(),
-        }
-    };
+    let mut runtime = runtime();
+    runtime.check_panel(generation)?;
+    runtime.reap();
+    let running: Vec<_> = runtime.processes.keys().filter(|key| matches!(key, TunnelKey::Panel(_)))
+        .map(TunnelKey::wire_id).collect();
     Ok(json!({ "tunnels": tunnels, "running": running }))
 }
 
-/// 启动一条隧道
 #[tauri::command]
-pub async fn frp_start(
-    state: State<'_, AppState>,
-    tunnel_id: i64,
-) -> Result<serde_json::Value, String> {
-    let token = load_token(&state).ok_or_else(|| "未登录面板".to_string())?;
+pub async fn frp_start(state: State<'_, AppState>, tunnel_id: i64) -> Result<serde_json::Value, String> {
+    if tunnel_id <= 0 { return Err("面板隧道 ID 无效".into()); }
+    let key = TunnelKey::Panel(tunnel_id);
+    let (generation, token) = panel_token(&state).ok_or("未登录面板")?;
     let cfg = api::tunnel_config(&token, tunnel_id).await?;
     if cfg.config.trim().is_empty() {
         return Err("面板没有返回可用的隧道配置".into());
     }
-    let name = if cfg.tunnel_name.is_empty() {
-        format!("tunnel_{tunnel_id}")
-    } else {
-        cfg.tunnel_name.clone()
-    };
-    let safe = safe_name(&name);
-
-    let dir = frp_dir(&state);
-    // 面板下发的配置放 panel/，和用户自己的本地隧道（tunnels/）分开，
-    // 否则本地隧道列表里会混进一堆面板隧道
-    let tun_dir = dir.join("panel");
-    let log_dir = dir.join("logs");
-    std::fs::create_dir_all(&tun_dir).map_err(|e| format!("建目录失败: {e}"))?;
-    std::fs::create_dir_all(&log_dir).map_err(|e| format!("建目录失败: {e}"))?;
-
-    let cfg_path = tun_dir.join(format!("{safe}.toml"));
-    std::fs::write(&cfg_path, &cfg.config).map_err(|e| format!("写入配置失败: {e}"))?;
-    let log_path = log_dir.join(format!("{safe}.log"));
-    let log = std::fs::File::create(&log_path).map_err(|e| format!("建日志失败: {e}"))?;
-    let log2 = log.try_clone().map_err(|e| e.to_string())?;
-
-    let frpc = find_frpc(&state)?;
-    // 注意：frp 0.6x 没有 --no-banner，带上它 cobra 会把 -c 的值当成子命令，
-    // 报 `unknown command "<config path>"`。只传 -c 即可。
-    let child = Command::new(&frpc)
-        .arg("-c")
-        .arg(&cfg_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log2))
-        .spawn()
-        .map_err(|e| format!("启动 frpc 失败: {e}"))?;
-    // 绑进 Job：启动器无论怎么退出，frpc 都会跟着结束，不会留下管不到的孤儿
-    job::adopt(&child);
-
-    {
-        let mut m = running_map();
-        let map = m.get_or_insert_with(HashMap::new);
-        // 同名隧道先停掉旧的
-        if let Some(mut old) = map.remove(&safe) {
-            let _ = old.kill();
-        }
-        map.insert(safe.clone(), child);
-    }
-
-    Ok(json!({ "name": safe, "log": log_path.to_string_lossy() }))
+    let name = if cfg.tunnel_name.is_empty() { format!("tunnel_{tunnel_id}") } else { cfg.tunnel_name };
+    let dir = frp_dir(&state).join("panel");
+    let mut runtime = runtime();
+    runtime.check_panel(generation)?;
+    let path = dir.join(format!("{tunnel_id}.toml"));
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    crate::fsutil::atomic_write(&path, cfg.config.as_bytes()).map_err(|err| format!("写入隧道配置失败: {err}"))?;
+    let run_id = key.wire_id();
+    let log = start_process(&mut runtime, &state, key, &path)?;
+    Ok(json!({ "runId": run_id, "name": name, "log": log }))
 }
 
-/// 停止一条隧道
-///
-/// 登记时用的是 `safe_name`（空格等会被替换），这里必须做同样转换，
-/// 否则面板上带空格的隧道名永远匹配不上、停不掉。
 #[tauri::command]
-pub fn frp_stop(name: String) -> Result<(), String> {
-    let key = safe_name(&name);
-    let mut m = running_map();
-    if let Some(map) = m.as_mut() {
-        if let Some(mut c) = map.remove(&key) {
-            let _ = c.kill();
-            let _ = c.wait();
-        }
-    }
-    Ok(())
+pub fn frp_stop(run_id: String) -> Result<(), String> {
+    runtime().stop(&TunnelKey::parse(&run_id)?)
 }
 
 /// 去掉 ANSI 颜色转义（`\x1b[...m` 之类），日志要给人看而不是给终端
@@ -318,49 +351,35 @@ fn strip_ansi(s: &str) -> String {
 
 /// 读取隧道日志尾部（默认 300 行）
 #[tauri::command]
-pub fn frp_logs(
-    state: State<'_, AppState>,
-    name: String,
-    lines: Option<usize>,
-) -> Result<String, String> {
-    let path = frp_dir(&state)
-        .join("logs")
-        .join(format!("{}.log", safe_name(&name)));
-    let text = std::fs::read_to_string(&path)
-        .map_err(|_| "还没有日志（这条隧道可能没启动过）".to_string())?;
-    let n = lines.unwrap_or(300).clamp(1, 2000);
-    let all: Vec<&str> = text.lines().collect();
-    let start = all.len().saturating_sub(n);
-    // frpc 往 stderr 写的是带颜色的日志，文件里留着 ESC 序列，直接显示是一堆 [1;34m
-    let tail = strip_ansi(&all[start..].join("\n"));
-    if tail.trim().is_empty() {
-        return Ok("（日志为空，可能是进程刚启动就被拒绝了）".to_string());
-    }
-    Ok(tail)
+pub async fn frp_logs(state: State<'_, AppState>, run_id: String, lines: Option<usize>) -> Result<String, String> {
+    let path = TunnelKey::parse(&run_id)?.log_path(&frp_dir(&state));
+    tokio::task::spawn_blocking(move || {
+        if !path.is_file() { return Err("还没有日志（这条隧道可能没启动过）".into()); }
+        let all = crate::server_logs::tail(&path).map_err(|err| format!("读取隧道日志失败: {err}"))?;
+        let start = all.len().saturating_sub(lines.unwrap_or(300).clamp(1, 2000));
+        let text = strip_ansi(&all[start..].join("\n"));
+        if text.trim().is_empty() { return Ok("（日志为空，可能是进程刚启动就被拒绝了）".into()); }
+        Ok(text)
+    }).await.map_err(|err| err.to_string())?
 }
 
-/// 退出登录：清 Token + 停掉所有隧道
+/// 面板退出时只停止该来源的隧道。
 #[tauri::command]
 pub fn frp_logout(state: State<'_, AppState>) -> Result<(), String> {
-    {
-        let mut m = running_map();
-        if let Some(map) = m.as_mut() {
-            for (_, mut c) in map.drain() {
-                let _ = c.kill();
-            }
-        }
+    let mut runtime = runtime();
+    match std::fs::remove_file(auth_path(&state)) {
+        Ok(()) => {}
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => return Err(format!("清除面板登录失败: {err}")),
     }
-    let _ = std::fs::remove_file(auth_path(&state));
-    Ok(())
+    runtime.generation = runtime.generation.wrapping_add(1);
+    runtime.pending = None;
+    runtime.stop_matching(|key| matches!(key, TunnelKey::Panel(_)))
 }
 
-/// 退出启动器时清理（由 lib.rs 的退出钩子调用）
 pub fn cleanup() {
-    let mut m = running_map();
-    if let Some(map) = m.as_mut() {
-        for (_, mut c) in map.drain() {
-            let _ = c.kill();
-        }
+    if let Err(err) = runtime().stop_matching(|_| true) {
+        eprintln!("[frp] {err}");
     }
 }
 
@@ -369,6 +388,10 @@ pub fn cleanup() {
 /// 本地隧道（不经过面板创建，配置由启动器自己拼）
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LocalTunnel {
+    #[serde(default)]
+    pub id: String,
+    #[serde(default)]
+    pub running: bool,
     pub name: String,
     pub protocol: String,
     pub local_port: u32,
@@ -380,6 +403,7 @@ pub struct LocalTunnel {
 /// 本地隧道配置的自有标记：只有带这行的文件才算「本地隧道」，
 /// 既能过滤面板下发的老文件，也方便以后排查。
 const LOCAL_MARKER: &str = "本地自定义隧道";
+const LABEL_MARKER: &str = "# qookix-name: ";
 
 fn local_dir(state: &AppState) -> std::path::PathBuf {
     frp_dir(state).join("tunnels")
@@ -393,9 +417,11 @@ pub fn frp_local_list(state: State<'_, AppState>) -> Result<Vec<LocalTunnel>, St
         return Ok(Vec::new());
     };
     let mut out = Vec::new();
+    let mut runtime = runtime();
+    runtime.reap();
     for e in entries.flatten() {
         let path = e.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("toml") {
+        if path.extension().and_then(|s| s.to_str()) != Some("toml") || !e.file_type().is_ok_and(|kind| kind.is_file()) {
             continue;
         }
         let Ok(text) = std::fs::read_to_string(&path) else { continue };
@@ -403,11 +429,11 @@ pub fn frp_local_list(state: State<'_, AppState>) -> Result<Vec<LocalTunnel>, St
         if !text.contains(LOCAL_MARKER) {
             continue;
         }
-        let name = path
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or_default()
-            .to_string();
+        let Some(id) = path.file_stem().and_then(|s| s.to_str()) else { continue };
+        if crate::fsutil::validate_id(id, "本地隧道").is_err() { continue; }
+        let name = text.lines().find_map(|line| line.strip_prefix(LABEL_MARKER))
+            .and_then(|line| serde_json::from_str::<String>(line).ok())
+            .unwrap_or_else(|| id.to_owned());
         let pick = |key: &str| -> String {
             text.lines()
                 .find_map(|l| {
@@ -418,6 +444,8 @@ pub fn frp_local_list(state: State<'_, AppState>) -> Result<Vec<LocalTunnel>, St
                 .unwrap_or_default()
         };
         out.push(LocalTunnel {
+            id: id.into(),
+            running: runtime.processes.contains_key(&TunnelKey::Local(id.into())),
             name,
             protocol: {
                 let p = pick("type");
@@ -432,96 +460,82 @@ pub fn frp_local_list(state: State<'_, AppState>) -> Result<Vec<LocalTunnel>, St
     Ok(out)
 }
 
-/// 新建或覆盖一条本地隧道：认证 token 用面板 JWT（文档 §8 的第三优先级）
-#[tauri::command]
-pub fn frp_local_save(state: State<'_, AppState>, tunnel: LocalTunnel) -> Result<String, String> {
-    let token = load_token(&state).ok_or_else(|| "请先登录面板（需要它作为 frp 认证 token）".to_string())?;
-    if tunnel.host.trim().is_empty() {
-        return Err("节点地址不能为空".into());
-    }
-    if tunnel.local_port == 0 {
-        return Err("本地端口不能为 0".into());
-    }
-    // 只允许 tcp/udp，避免拼出任意 frp 类型
-    let proto = match tunnel.protocol.as_str() {
-        "udp" => "udp",
-        _ => "tcp",
-    };
-    let name = safe_name(&tunnel.name);
-
-    let toml = format!(
-        "# 本地自定义隧道（启动器生成）\n\
-         serverAddr = \"{host}\"\n\
-         serverPort = {port}\n\
-         auth.method = \"token\"\n\
-         auth.token = \"{token}\"\n\
-         \n\
-         [log]\n\
-         to = \"console\"\n\
-         level = \"info\"\n\
-         \n\
-         [[proxies]]\n\
-         name = \"{name}\"\n\
-         type = \"{proto}\"\n\
-         localIP = \"127.0.0.1\"\n\
-         localPort = {local}\n\
-         remotePort = {remote}\n",
-        host = tunnel.host.trim().replace('"', ""),
-        port = tunnel.port,
-        token = token.replace('"', ""),
-        name = name,
-        proto = proto,
-        local = tunnel.local_port,
-        remote = tunnel.remote_port,
-    );
-
-    let dir = local_dir(&state);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败: {e}"))?;
-    std::fs::write(dir.join(format!("{name}.toml")), toml)
-        .map_err(|e| format!("写入配置失败: {e}"))?;
-    Ok(name)
-}
-
-/// 删除一条本地隧道（只删本地文件，不影响面板）
-#[tauri::command]
-pub fn frp_local_delete(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    let path = local_dir(&state).join(format!("{}.toml", safe_name(&name)));
-    let _ = std::fs::remove_file(path);
-    Ok(())
-}
-
-/// 直接启动一个本地隧道文件
-#[tauri::command]
-pub fn frp_local_start(state: State<'_, AppState>, name: String) -> Result<(), String> {
-    let safe = safe_name(&name);
-    let cfg_path = local_dir(&state).join(format!("{safe}.toml"));
-    if !cfg_path.is_file() {
+fn local_config(state: &AppState, id: &str) -> Result<PathBuf, String> {
+    crate::fsutil::validate_id(id, "本地隧道")?;
+    let path = local_dir(state).join(format!("{id}.toml"));
+    if !std::fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_file()) {
         return Err("隧道配置不存在".into());
     }
-    let log_dir = frp_dir(&state).join("logs");
-    std::fs::create_dir_all(&log_dir).map_err(|e| e.to_string())?;
-    let log = std::fs::File::create(log_dir.join(format!("{safe}.log")))
-        .map_err(|e| format!("建日志失败: {e}"))?;
-    let log2 = log.try_clone().map_err(|e| e.to_string())?;
-    let frpc = find_frpc(&state)?;
-    // 注意：frp 0.6x 没有 --no-banner，带上它 cobra 会把 -c 的值当成子命令，
-    // 报 `unknown command "<config path>"`。只传 -c 即可。
-    let child = Command::new(&frpc)
-        .arg("-c")
-        .arg(&cfg_path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::from(log))
-        .stderr(Stdio::from(log2))
-        .spawn()
-        .map_err(|e| format!("启动 frpc 失败: {e}"))?;
-    // 绑进 Job：启动器无论怎么退出，frpc 都会跟着结束，不会留下管不到的孤儿
-    job::adopt(&child);
-    let mut m = running_map();
-    let map = m.get_or_insert_with(HashMap::new);
-    if let Some(mut old) = map.remove(&safe) {
-        let _ = old.kill();
+    let text = std::fs::read_to_string(&path).map_err(|err| format!("读取隧道配置失败: {err}"))?;
+    if !text.lines().next().is_some_and(|line| line.starts_with('#') && line.contains(LOCAL_MARKER)) {
+        return Err("该文件不是启动器的本地隧道".into());
     }
-    map.insert(safe, child);
+    Ok(path)
+}
+
+#[tauri::command]
+pub fn frp_local_save(state: State<'_, AppState>, tunnel: LocalTunnel) -> Result<String, String> {
+    let _runtime = runtime();
+    let token = load_token(&state).ok_or("请先登录面板（需要它作为 frp 认证 token）")?;
+    let host = tunnel.host.trim();
+    if host.is_empty() || host.len() > 255 || host.chars().any(|c| c.is_whitespace() || c.is_control()) {
+        return Err("节点地址无效".into());
+    }
+    if [tunnel.port, tunnel.local_port, tunnel.remote_port].into_iter().any(|port| !(1..=65535).contains(&port)) {
+        return Err("端口必须在 1 到 65535 之间".into());
+    }
+    let label = tunnel.name.trim();
+    if label.is_empty() || label.chars().count() > 128 {
+        return Err("隧道名称必须为 1 到 128 个字符".into());
+    }
+    let dir = local_dir(&state);
+    let (id, path) = if tunnel.id.is_empty() {
+        let id = format!("l-{}", uuid::Uuid::new_v4().simple());
+        let path = dir.join(format!("{id}.toml"));
+        (id, path)
+    } else {
+        let path = local_config(&state, &tunnel.id)?;
+        (tunnel.id, path)
+    };
+    let proto = if tunnel.protocol == "udp" { "udp" } else { "tcp" };
+    let quote = |value: &str| serde_json::to_string(value).map_err(|err| err.to_string());
+    let toml = format!(r#"# 本地自定义隧道（启动器生成）
+{LABEL_MARKER}{label}
+serverAddr = {host}
+serverPort = {port}
+auth.method = "token"
+auth.token = {token}
+
+[log]
+to = "console"
+level = "info"
+
+[[proxies]]
+name = {name}
+type = "{proto}"
+localIP = "127.0.0.1"
+localPort = {local}
+remotePort = {remote}
+"#, label = quote(label)?, host = quote(host)?, port = tunnel.port, token = quote(&token)?,
+        name = quote(&id)?, local = tunnel.local_port, remote = tunnel.remote_port);
+    std::fs::create_dir_all(&dir).map_err(|err| err.to_string())?;
+    crate::fsutil::atomic_write(&path, toml.as_bytes()).map_err(|err| format!("写入隧道配置失败: {err}"))?;
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn frp_local_delete(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let mut runtime = runtime();
+    let path = local_config(&state, &id)?;
+    runtime.stop(&TunnelKey::Local(id))?;
+    std::fs::remove_file(path).map_err(|err| format!("移除隧道配置失败: {err}"))
+}
+
+#[tauri::command]
+pub fn frp_local_start(state: State<'_, AppState>, id: String) -> Result<(), String> {
+    let mut runtime = runtime();
+    let path = local_config(&state, &id)?;
+    start_process(&mut runtime, &state, TunnelKey::Local(id), &path)?;
     Ok(())
 }
 
@@ -530,10 +544,38 @@ mod tests {
     use super::*;
 
     #[test]
-    fn safe_name_strips_separators() {
-        assert_eq!(safe_name("my tunnel"), "my_tunnel");
-        // 只替换字符，不删长度：`..` + `/` + `..` + `/` 共 6 个字符
-        assert_eq!(safe_name("../../etc/passwd"), "______etc_passwd");
-        assert!(!safe_name("").is_empty());
+    fn tunnel_source_and_id_determine_logs_independent_of_labels() {
+        let remote = TunnelKey::parse("panel:7").unwrap();
+        let local = TunnelKey::parse("local:7").unwrap();
+        assert_ne!(local, remote);
+        assert_ne!(local.log_path(Path::new("frp")), remote.log_path(Path::new("frp")));
+        assert_ne!(remote, TunnelKey::parse("panel:8").unwrap());
+        assert!(TunnelKey::parse("local:../other").is_err());
+    }
+
+    #[test]
+    #[ignore = "subprocess fixture"]
+    fn owned_test_tunnel() {
+        std::thread::sleep(std::time::Duration::from_secs(10));
+    }
+
+    #[test]
+    fn panel_logout_keeps_a_running_local_tunnel_with_the_same_id() {
+        let launch = || Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "frp::tests::owned_test_tunnel"])
+            .stdout(Stdio::null()).stderr(Stdio::null()).spawn().unwrap();
+        let mut runtime = Runtime::default();
+        let panel = TunnelKey::Panel(7);
+        let local = TunnelKey::Local("7".into());
+        runtime.processes.insert(panel.clone(), launch());
+        runtime.processes.insert(local.clone(), launch());
+        let result = runtime.stop_matching(|key| matches!(key, TunnelKey::Panel(_)));
+        let panel_stopped = !runtime.processes.contains_key(&panel);
+        let local_running = runtime.processes.get_mut(&local)
+            .is_some_and(|child| matches!(child.try_wait(), Ok(None)));
+        runtime.stop_matching(|_| true).unwrap();
+        result.unwrap();
+        assert!(panel_stopped);
+        assert!(local_running);
     }
 }

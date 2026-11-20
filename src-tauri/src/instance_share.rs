@@ -856,130 +856,139 @@ pub struct PendingDownload {
     pub name: Option<String>,
 }
 
-/// 从分享包导入：新建实例、还原包内内容文件与记录。
+fn share_payload_path(name: &str, is_dir: bool) -> Result<Option<String>, String> {
+    let relative = if is_dir { name.strip_suffix('/').unwrap_or(name) } else { name };
+    if !relative.split('/').all(crate::fsutil::is_portable_filename) {
+        return Err(format!("分享包含有无效路径: {name}"));
+    }
+    let Some((category, rest)) = relative.split_once('/') else {
+        return Ok(None);
+    };
+    let first = rest.split('/').next().unwrap_or_default();
+    let mapped = match category {
+        "files" if matches!(first, "mods" | "resourcepacks" | "shaderpacks" | "screenshots" | "datapacks") => {
+            if !is_dir && !rest.contains('/') {
+                return Err(format!("分享包文件缺少内容目录: {name}"));
+            }
+            rest.to_string()
+        }
+        "worlds" => {
+            if !is_dir && !rest.contains('/') {
+                return Err(format!("分享包存档缺少世界目录: {name}"));
+            }
+            format!("saves/{rest}")
+        }
+        "config" => format!("config/{rest}"),
+        "folders" => {
+            if first.eq_ignore_ascii_case("qookix.json") {
+                return Err("分享包附加内容不能替换实例元数据".into());
+            }
+            if !is_dir && !rest.contains('/') {
+                return Err(format!("分享包附加文件缺少目录: {name}"));
+            }
+            rest.to_string()
+        }
+        "instance" if matches!(rest, "options.txt" | "servers.dat") && !is_dir => rest.to_string(),
+        _ => return Ok(None),
+    };
+    Ok(Some(if is_dir { format!("{mapped}/") } else { mapped }))
+}
+
+fn valid_reference(provider: &str, id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && match provider {
+        "curseforge" => id.bytes().all(|byte| byte.is_ascii_digit()),
+        "modrinth" => id.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        _ => false,
+    }
+}
+
+/// Validate and restore a share pack into a private directory before publishing the instance.
 pub fn import_pack(state: &AppState, src: &Path) -> Result<(String, Vec<PendingDownload>), String> {
     let file = std::fs::File::open(src).map_err(|e| format!("打开分享包失败: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("解析分享包失败: {e}"))?;
-
+    const MAX_META: u64 = 8 * 1024 * 1024;
     let mut meta_buf = Vec::new();
     {
-        let mut entry = archive
-            .by_name("qookix-instance.json")
-            .map_err(|_| "不是有效的 QookiX 实例分享包（缺少 qookix-instance.json）".to_string())?;
-        entry.read_to_end(&mut meta_buf).map_err(|e| e.to_string())?;
+        let entry = archive.by_name("qookix-instance.json")
+            .map_err(|_| "不是有效的 QookiX 实例分享包（缺少 qookix-instance.json）")?;
+        if entry.is_dir() || entry.is_symlink() || entry.size() > MAX_META {
+            return Err("分享包元数据不是有效的普通文件或超过大小限制".into());
+        }
+        entry.take(MAX_META + 1).read_to_end(&mut meta_buf).map_err(|e| e.to_string())?;
+        if meta_buf.len() as u64 > MAX_META {
+            return Err("分享包元数据超过大小限制".into());
+        }
     }
     let meta: ShareMeta = serde_json::from_slice(&meta_buf).map_err(|e| format!("分享包元信息解析失败: {e}"))?;
     if meta.format > 3 {
         return Err(format!("不支持的分享包格式版本: {}（请升级启动器）", meta.format));
     }
-
-    let loader: crate::models::LoaderType = meta.loader.parse()?;
-    let inst = crate::instances::create_instance(
-        state,
-        meta.name.clone(),
-        meta.mc_version.clone(),
-        loader,
-        meta.loader_version.clone(),
+    if !crate::fsutil::is_portable_filename(&meta.mc_version)
+        || meta.loader_version.as_deref().is_some_and(|version| !version.is_empty() && !crate::fsutil::is_portable_filename(version))
+    {
+        return Err("分享包的 Minecraft 或加载器版本无效".into());
+    }
+    let mut instance = crate::instances::new_instance(
+        state, meta.name, meta.mc_version, meta.loader.parse()?, meta.loader_version,
     )?;
-    let inst_dir = state.instances_dir().join(&inst.id);
-
-    // 先按内容记录还原（保持启用/禁用态），在线来源缺失的列入待下载
-    let mut by_kind: std::collections::HashMap<String, Vec<InstalledContent>> =
-        std::collections::HashMap::new();
-    let mut pending: Vec<PendingDownload> = Vec::new();
-    let mut restored: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for item in &meta.items {
-        let folder = crate::modrinth::kind_folder(&item.kind);
-        let enabled = item.record.enabled;
-        let disk_name = if enabled {
+    // The asynchronous follow-up installation marks the game installed on success.
+    instance.installed = false;
+    let mut contents = Vec::with_capacity(meta.items.len());
+    let mut record_names = std::collections::HashSet::new();
+    for item in meta.items {
+        if !matches!(item.kind.as_str(), "mod" | "mods" | "resourcepack" | "shader" | "datapack")
+            || !crate::fsutil::is_safe_filename(&item.record.filename)
+        {
+            return Err("分享包中有无效的内容类型或文件名".into());
+        }
+        let filename = if item.record.enabled {
             item.record.filename.clone()
         } else {
             format!("{}.disabled", item.record.filename)
         };
-        let zip_name = format!("files/{folder}/{disk_name}");
-        if archive.by_name(&zip_name).is_err() {
-            let is_remote = (item.record.source == "modrinth" || item.record.source == "curseforge")
-                && item.record.project_id.is_some()
-                && item.record.version_id.is_some();
-            if is_remote {
-                pending.push(PendingDownload {
-                    kind: item.kind.clone(),
-                    provider: item.record.source.clone(),
-                    project_id: item.record.project_id.clone().unwrap_or_default(),
-                    version_id: item.record.version_id.clone().unwrap_or_default(),
-                    name: item.record.name.clone(),
-                });
-            }
-            continue;
+        let folder = crate::modrinth::kind_folder(&item.kind);
+        let logical_file = format!("{folder}/{filename}");
+        if !record_names.insert(logical_file.to_lowercase()) {
+            return Err(format!("分享包包含重复内容记录: {logical_file}"));
         }
-        let dest_dir = inst_dir.join(&folder);
-        std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
-        let mut out = std::fs::File::create(dest_dir.join(&disk_name))
-            .map_err(|e| format!("写入 {disk_name} 失败: {e}"))?;
-        let mut entry = archive.by_name(&zip_name).map_err(|e| e.to_string())?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| format!("复制 {disk_name} 失败: {e}"))?;
-        restored.insert(zip_name);
-        by_kind
-            .entry(item.kind.clone())
-            .or_default()
-            .push(item.record.clone());
-    }
-    for (kind, records) in by_kind {
-        crate::instances::add_content_batch(state, &inst.id, &kind, records)?;
+        contents.push((logical_file, item));
     }
 
-    // 再遍历包内其余条目：目录式资源包/光影、截图、存档、实例子目录、设置文件
-    for i in 0..archive.len() {
-        let name = archive.by_index(i).map(|e| e.name().to_string()).unwrap_or_default();
-        if name == "qookix-instance.json" || restored.contains(&name) || name.ends_with('/') {
-            continue;
+    std::fs::create_dir_all(state.instances_dir()).map_err(|e| e.to_string())?;
+    let stage = tempfile::Builder::new().prefix(".qookix-share-import-").tempdir_in(&state.root)
+        .map_err(|error| format!("创建分享包暂存目录失败: {error}"))?;
+    let mut files = std::collections::HashSet::new();
+    crate::archive::extract_zip_mapped(&mut archive, stage.path(), |name, is_dir| {
+        let path = share_payload_path(name, is_dir)?;
+        if let Some(path) = &path {
+            if !is_dir && !files.insert(path.to_lowercase()) {
+                return Err(format!("分享包含有重复目标文件: {name}"));
+            }
         }
-        let (dest_root, rel) = if let Some(rest) = name.strip_prefix("files/") {
-            // files/<folder>/<...> → <folder>/<...>
-            (inst_dir.clone(), rest.to_string())
-        } else if let Some(rest) = name.strip_prefix("worlds/") {
-            let Some(slash) = rest.find('/') else { continue };
-            let world = &rest[..slash];
-            if !is_safe_name(world) {
-                continue;
-            }
-            (inst_dir.join("saves").join(world), rest[slash + 1..].to_string())
-        } else if let Some(rest) = name.strip_prefix("folders/") {
-            if rest.is_empty() {
-                continue;
-            }
-            (inst_dir.clone(), rest.to_string())
-        } else if let Some(rest) = name.strip_prefix("config/") {
-            // 旧包（format ≤2）的 config 布局
-            if rest.is_empty() {
-                continue;
-            }
-            (inst_dir.join("config"), rest.to_string())
-        } else if name == "instance/options.txt" {
-            (inst_dir.clone(), "options.txt".to_string())
-        } else if name == "instance/servers.dat" {
-            (inst_dir.clone(), "servers.dat".to_string())
+        Ok(path)
+    })?;
+
+    let mut pending = Vec::new();
+    for (file, item) in contents {
+        if stage.path().join(&file).is_file() {
+            crate::instances::content_records_mut(&mut instance, &item.kind).push(item.record);
         } else {
-            continue;
-        };
-        let mut clean: Vec<&str> = rel.split('/').filter(|s| !s.is_empty() && *s != "." && *s != "..").collect();
-        if clean.is_empty() {
-            continue;
+            let (project, version) = item.record.project_id.as_deref().zip(item.record.version_id.as_deref())
+                .ok_or_else(|| format!("分享包缺少文件或下载引用: {file}"))?;
+            if !valid_reference(&item.record.source, project) || !valid_reference(&item.record.source, version) {
+                return Err(format!("分享包的在线资源引用无效: {file}"));
+            }
+            pending.push(PendingDownload {
+                kind: item.kind,
+                provider: item.record.source,
+                project_id: project.to_owned(),
+                version_id: version.to_owned(),
+                name: item.record.name,
+            });
         }
-        let file_name = clean.pop().unwrap_or_default();
-        let mut dest = dest_root;
-        for seg in &clean {
-            dest.push(seg);
-        }
-        std::fs::create_dir_all(&dest).map_err(|e| e.to_string())?;
-        dest.push(file_name);
-        let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-        std::fs::create_dir_all(dest.parent().unwrap_or(&inst_dir)).ok();
-        let mut out = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
-        std::io::copy(&mut entry, &mut out).map_err(|e| format!("还原 {} 失败: {e}", name))?;
     }
-
-    Ok((inst.id, pending))
+    crate::instances::publish_staged_instance(state, &instance, stage.path())?;
+    Ok((instance.id, pending))
 }
 
 #[cfg(test)]
@@ -995,17 +1004,15 @@ mod tests {
             db: Mutex::new(rusqlite::Connection::open_in_memory().unwrap()),
             client: crate::settings::http_client("system", None),
             semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
-            game_pids: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            server_pids: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            server_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            task_counter: std::sync::atomic::AtomicU64::new(1),
-            install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            jobs: crate::runtime_jobs::RuntimeJobs::default(),
+
+
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
-            pending_update: Mutex::new(None),
+            pending_update: Mutex::new(crate::updater::UpdateCache::default()),
             lan_sync: Mutex::new(None),
             qookix: Mutex::new(crate::qookix::QookixSession::default()),
             qookix_refresh: tokio::sync::Mutex::new(()),
@@ -1030,6 +1037,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn rejected_share_pack_never_publishes_an_instance() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().join("data");
+        std::fs::create_dir(&root).unwrap();
+        let state = test_state(&root);
+        let package = temp.path().join("invalid.qkxinst");
+        let metadata = serde_json::json!({
+            "format": 3, "name": "Bad share", "version": "", "mc_version": "1.20.1",
+            "loader": "vanilla", "loader_version": null, "exported_at": 0, "count": 0, "items": [],
+        });
+        for invalid in ["files/mods/../outside.jar", "folders/qookix.json/override", "files/mods/CON.jar"] {
+            use std::io::Write;
+            let mut package_file = zip::ZipWriter::new(std::fs::File::create(&package).unwrap());
+            let options = zip::write::SimpleFileOptions::default();
+            package_file.start_file("qookix-instance.json", options).unwrap();
+            serde_json::to_writer(&mut package_file, &metadata).unwrap();
+            package_file.start_file("files/mods/first.jar", options).unwrap();
+            package_file.write_all(b"valid prefix").unwrap();
+            package_file.start_file(invalid, options).unwrap();
+            package_file.write_all(b"invalid").unwrap();
+            package_file.finish().unwrap();
+            assert!(import_pack(&state, &package).is_err(), "{invalid}");
+            assert!(crate::instances::load_instances(&state).is_empty());
+            assert_eq!(std::fs::read_dir(state.instances_dir()).unwrap().count(), 0);
+        }
+    }
+
+    #[test]
+    fn concurrent_settings_and_content_changes_keep_both_records() {
+        let temp = tempfile::tempdir().unwrap();
+        let state = test_state(temp.path());
+        let instance = crate::instances::create_instance(
+            &state, "Old name".into(), "1.20.1".into(), LoaderType::Fabric, None,
+        ).unwrap();
+        let gate = std::sync::Barrier::new(2);
+        let record: InstalledContent = serde_json::from_value(serde_json::json!({
+            "filename": "example.jar", "source": "manual", "installed_at": 10, "size": 8, "enabled": true,
+        })).unwrap();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                gate.wait();
+                crate::instances::add_content(&state, &instance.id, "mod", record).unwrap();
+            });
+            gate.wait();
+            crate::instances::update_instance(
+                &state, serde_json::json!({ "id": instance.id, "name": "Updated name" }),
+            ).unwrap();
+        });
+        let stored = crate::instances::get_instance(&state, &instance.id).unwrap();
+        assert_eq!(stored.name, "Updated name");
+        assert_eq!(stored.mods[0].filename, "example.jar");
     }
 
     /// 完整往返：造实例内容 → 预览 → 全量导出 → 导入 → 校验每类都还原

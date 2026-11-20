@@ -1,70 +1,146 @@
 #!/usr/bin/env node
-/**
- * 统一版本号脚本。
- * 用法：node scripts/update-version.mjs 0.3.0
- * 或：  npm run version -- 0.3.0
- *
- * 会将新版本号同步到以下文件：
- *  - package.json            (前端版本，关于页直接读取该值)
- *  - src-tauri/Cargo.toml    (Rust 包版本)
- *  - src-tauri/tauri.conf.json (应用版本)
- *  - src-tauri/Cargo.lock    (本包版本)
- */
-import { readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { normalizeReleaseVersion } from './shared/release-version.mjs'
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const root = join(__dirname, "..");
+const scriptPath = fileURLToPath(import.meta.url)
+const root = path.resolve(path.dirname(scriptPath), '..')
+const RELEASE_FILES = [
+  'package.json',
+  'package-lock.json',
+  'src-tauri/Cargo.toml',
+  'src-tauri/Cargo.lock',
+  'src-tauri/tauri.conf.json',
+]
 
-// ---- 解析新版本号 ----
-const arg = process.argv[2];
-if (!arg || !/^\d+\.\d+\.\d+/.test(arg)) {
-  console.error("用法: node scripts/update-version.mjs <版本号，如 0.3.0>");
-  process.exit(1);
+function requireVersion(version, label) {
+  const parsed = normalizeReleaseVersion(version)
+  if (!parsed) throw new Error(`${label}: invalid SemVer ${JSON.stringify(version)}`)
+  return parsed
 }
-const newVersion = arg.replace(/^v/, "");
 
-// ---- 当前版本来源（package.json）----
-const pkgPath = join(root, "package.json");
-const pkg = JSON.parse(readFileSync(pkgPath, "utf8"));
-const oldVersion = pkg.version;
-console.log(`版本号: ${oldVersion} -> ${newVersion}`);
+function jsonVersion(file, text, newVersion, keys) {
+  const document = JSON.parse(text)
+  const versions = []
+  for (const [label, getOwner] of keys) {
+    const owner = getOwner(document)
+    const version = requireVersion(owner?.version, `${file} ${label}`)
+    if (owner.version !== version) throw new Error(`${file} ${label}: version must be normalized`)
+    versions.push([label, version])
+    if (newVersion) owner.version = newVersion
+  }
+  if (!newVersion || versions.every(([, version]) => version === newVersion)) {
+    return { versions, content: text }
+  }
+  const newline = text.includes('\r\n') ? '\r\n' : '\n'
+  const content = JSON.stringify(document, null, 2).replaceAll('\n', newline) + newline
+  return { versions, content }
+}
 
-// ---- 逐个更新 ----
-function patch(file, replaceFn) {
-  const path = join(root, file);
-  let content = readFileSync(path, "utf8");
-  const next = replaceFn(content);
-  if (next !== content) {
-    writeFileSync(path, next);
-    console.log(`  已更新 ${file}`);
-  } else {
-    console.log(`  (未匹配) ${file}`);
+function cargoVersion(file, text, newVersion) {
+  const sections = text.split(/(?=^\[)/m)
+  const candidates = sections.map((section, index) => ({ section, index })).filter(({ section }) =>
+    file.endsWith('Cargo.toml')
+      ? /^\[package\]\s*\r?\n/.test(section)
+      : /^\[\[package\]\]\r?\n[^\[]*?^name\s*=\s*"qookix-launcher"\s*$/m.test(section))
+  if (candidates.length !== 1) throw new Error(`${file}: expected exactly one QookiX Launcher package`)
+  const { section, index } = candidates[0]
+  const versionLine = /^(version\s*=\s*")([^"]+)(")/gm
+  const versions = [...section.matchAll(versionLine)]
+  if (versions.length !== 1) throw new Error(`${file}: expected exactly one package version`)
+  const version = requireVersion(versions[0][2], file)
+  if (version !== versions[0][2]) throw new Error(`${file}: version must be normalized`)
+  if (newVersion) {
+    sections[index] = section.replace(versionLine, (_, prefix, _previous, suffix) => prefix + newVersion + suffix)
+  }
+  return { versions: [['version', version]], content: sections.join('') }
+}
+
+function planVersionFiles(directory, newVersion) {
+  return RELEASE_FILES.map((file) => {
+    const filename = path.join(directory, file)
+    const previous = fs.readFileSync(filename, 'utf8')
+    let next
+    if (file.endsWith('.json')) {
+      const fields = [['version', (document) => document]]
+      if (file === 'package-lock.json') {
+        fields.push(['packages[""].version', (document) => document.packages?.['']])
+      }
+      next = jsonVersion(file, previous, newVersion, fields)
+    } else {
+      next = cargoVersion(file, previous, newVersion)
+    }
+    return { filename, file, previous, ...next }
+  })
+}
+
+export function verifyReleaseVersion(directory, reference) {
+  const files = planVersionFiles(directory)
+  const version = reference == null ? files[0].versions[0][1] : requireVersion(reference, 'Release reference')
+  const mismatches = files.flatMap(({ file, versions }) => versions
+    .filter(([, value]) => value !== version)
+    .map(([field, value]) => `${file} ${field}=${value}`))
+  if (mismatches.length) throw new Error(`Expected ${version}. Mismatches: ${mismatches.join(', ')}`)
+  return version
+}
+
+export function synchronizeReleaseVersion(directory, input) {
+  const version = requireVersion(input, 'New version')
+  const changes = planVersionFiles(directory, version).filter(({ previous, content }) => previous !== content)
+  if (changes.length === 0) return version
+
+  const staged = fs.mkdtempSync(path.join(directory, '.version-update-'))
+  const committed = []
+  let keepRecovery = false
+  try {
+    for (const [index, change] of changes.entries()) {
+      const mode = fs.statSync(change.filename).mode & 0o777
+      change.backup = path.join(staged, `${index}.original`)
+      change.next = path.join(staged, `${index}.next`)
+      fs.writeFileSync(change.backup, change.previous, { mode, flag: 'wx' })
+      fs.writeFileSync(change.next, change.content, { mode, flag: 'wx' })
+    }
+    for (const change of changes) {
+      if (fs.readFileSync(change.filename, 'utf8') !== change.previous) {
+        throw new Error(`${change.file} was modified while preparing the update`)
+      }
+    }
+    for (const change of changes) {
+      fs.renameSync(change.next, change.filename)
+      committed.push(change)
+    }
+    verifyReleaseVersion(directory, version)
+  } catch (error) {
+    const failed = []
+    for (const change of committed.reverse()) {
+      try {
+        fs.renameSync(change.backup, change.filename)
+      } catch {
+        failed.push(change.file)
+      }
+    }
+    if (failed.length) {
+      keepRecovery = true
+      throw new Error(`Rollback failed for ${failed.join(', ')}. Originals are retained at ${staged}`, { cause: error })
+    }
+    throw error
+  } finally {
+    if (!keepRecovery) fs.rmSync(staged, { recursive: true, force: true })
+  }
+  return version
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === scriptPath) {
+  try {
+    const [first, second, ...extra] = process.argv.slice(2)
+    if (!first || extra.length || (first !== '--check' && second !== undefined)) {
+      throw new Error('Usage: node scripts/update-version.mjs <version> | --check [tag]')
+    }
+    const version = first === '--check' ? verifyReleaseVersion(root, second) : synchronizeReleaseVersion(root, first)
+    console.log(version)
+  } catch (error) {
+    console.error(error.message)
+    process.exitCode = 1
   }
 }
-
-// 1. package.json（保留格式）
-pkg.version = newVersion;
-writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n");
-console.log("  已更新 package.json");
-
-// 2. Cargo.toml 顶层 [package] version
-patch("src-tauri/Cargo.toml", (c) =>
-  c.replace(/^(version\s*=\s*")[^"]+(")/m, `$1${newVersion}$2`),
-);
-
-// 3. tauri.conf.json 顶层 version
-patch("src-tauri/tauri.conf.json", (c) =>
-  c.replace(/^(\s*"version"\s*:\s*")[^"]+(")/m, `$1${newVersion}$2`),
-);
-
-// 4. Cargo.lock 里本包的 version
-patch("src-tauri/Cargo.lock", (c) =>
-  c.replace(
-    /(\[\[package\]\]\r?\nname = "qookix-launcher"\r?\nversion = ")[^"]+(")/,
-    `$1${newVersion}$2`,
-  ),
-);
-
-console.log("完成。");

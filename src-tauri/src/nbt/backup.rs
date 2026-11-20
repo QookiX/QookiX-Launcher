@@ -6,6 +6,7 @@
 //! 每个源文件保留最近 KEEP 份。
 
 use serde_json::{json, Value as Json};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// 每个源文件保留的备份份数
@@ -151,12 +152,26 @@ fn backup_path(world_dir: &Path, file: &str, name: &str) -> Result<PathBuf, Stri
 pub fn restore_backup(world_dir: &Path, file: &str, name: &str) -> Result<String, String> {
     let src = backup_path(world_dir, file, name)?;
     let target = world_dir.join(file);
+    let destination = super::level::write_target(&target)?;
+    let parent = destination.parent().ok_or("无法确定恢复目录")?;
+    let mut staged = tempfile::NamedTempFile::new_in(parent).map_err(|e| e.to_string())?;
+    let source = std::fs::File::open(&src).map_err(|e| e.to_string())?;
+    let length = source.metadata().map_err(|e| e.to_string())?.len();
+    if length > super::region::MAX_REGION_BYTES {
+        return Err("备份超过可恢复的大小限制".into());
+    }
+    let copied = std::io::copy(&mut source.take(length + 1), staged.as_file_mut())
+        .map_err(|e| format!("无法读取完整备份: {e}"))?;
+    if copied != length {
+        return Err("备份在恢复过程中发生变化".into());
+    }
+    staged.as_file().sync_all().map_err(|e| e.to_string())?;
     let safety = if target.is_file() {
         backup_file(&target)?
     } else {
         String::new()
     };
-    std::fs::copy(&src, &target).map_err(|e| format!("恢复备份失败: {e}"))?;
+    staged.persist(&destination).map_err(|e| format!("恢复备份失败: {e}"))?;
     Ok(safety)
 }
 

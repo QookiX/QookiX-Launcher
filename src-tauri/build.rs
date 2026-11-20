@@ -5,10 +5,16 @@ fn main() {
     // 种子地图的瓦片生成会慢 5~10 倍（dev 下尤其明显）。
     let cubiomes_dir = std::path::Path::new("vendor/cubiomes");
     let mut cubiomes = cc::Build::new();
-    cubiomes
+    let mut bridge = cc::Build::new();
+    bridge
         .include(cubiomes_dir)
         .include(cubiomes_dir.join("tables"))
         .file("src/cubiomes_bridge.c")
+        .opt_level(3)
+        .extra_warnings(true);
+    cubiomes
+        .include(cubiomes_dir)
+        .include(cubiomes_dir.join("tables"))
         .files([
             "vendor/cubiomes/biomenoise.c",
             "vendor/cubiomes/biomes.c",
@@ -28,23 +34,23 @@ fn main() {
     // 非 MSVC 编译器默认就按 UTF-8 解析源码，无需该选项。
     if std::env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
         cubiomes.flag("/source-charset:utf-8");
+        bridge.flag("/source-charset:utf-8");
     }
 
+    // 静态链接时先列出调用方，再列出它依赖的 cubiomes。
+    bridge.compile("qookix-cubiomes-bridge");
     cubiomes.compile("qookix-cubiomes");
 
     println!("cargo:rerun-if-changed=src/cubiomes_bridge.c");
     println!("cargo:rerun-if-changed=vendor/cubiomes");
 
     // 这些变量由 Rust 侧 `option_env!` 在**编译期**读取。cargo 默认不会因为
-    // 环境变量变化而重编译，于是「改了变量却拿到旧值」——必须显式声明依赖，
-    // 否则构建脚本改了 secret 后还得手动 cargo clean 才生效。
+    // 环境变量变化而重编译，所以在此声明依赖。
     for key in [
         "MS_CLIENT_ID",
         "CURSEFORGE_API_KEY",
-        "SHIMU_CLIENT_ID",
-        "SHIMU_CLIENT_SECRET",
-        "LITTLESKIN_CLIENT_ID",
-        "LITTLESKIN_CLIENT_SECRET",
+        "SHIMU_OAUTH_BROKER_PATH",
+        "LITTLESKIN_DEVICE_CLIENT_ID",
         "QOOKIX_BUCKET_UPDATE_URL",
         "QOOKIX_GITHUB_REPOSITORY",
         "GITHUB_REPOSITORY",

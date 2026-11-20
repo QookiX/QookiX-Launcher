@@ -332,10 +332,7 @@ pub async fn install_content(
     // modpack creates its own new instance; no existing instance needed
     if kind == "modpack" {
         return match provider.as_str() {
-            "modrinth" => {
-                let ver = modrinth::version(&state, &version_id).await?;
-                modrinth::install_modpack(app, &state, &ver).await
-            }
+            "modrinth" => modrinth::install_modpack(app, &state, &version_id).await,
             "curseforge" => curseforge::install_modpack(app, &state, &project_id, &version_id).await,
             _ => Err("未知内容源".into()),
         };
@@ -532,19 +529,22 @@ pub async fn apply_update(
         let res: Result<Value, String> = async {
             let state2 = app2.state::<crate::state::AppState>();
             let instance = crate::instances::get_instance(&state2, &instance_id2)?;
-            // install new version first (adds a new record)
-            let result = match provider2.as_str() {
+            let replacement = crate::content_replacement::Replacement::prepare(
+                &state2, &instance, &kind2, &old_filename2, &provider2, &project_id2,
+            )?;
+            match provider2.as_str() {
                 "modrinth" => {
-                    modrinth::install_version(app2.clone(), &state2, &instance, &new_version_id2, &kind2).await?
+                    modrinth::install_version_replacing(
+                        app2.clone(), &state2, &instance, &new_version_id2, &kind2, Some(replacement),
+                    ).await
                 }
                 "curseforge" => {
-                    curseforge::install_file(app2.clone(), &state2, &instance, &project_id2, &new_version_id2, &kind2).await?
+                    curseforge::install_file_replacing(
+                        app2.clone(), &state2, &instance, &project_id2, &new_version_id2, &kind2, Some(replacement),
+                    ).await
                 }
-                _ => return Err("未知内容源".into()),
-            };
-            // remove the old file + record only after the new one succeeded
-            let _ = crate::util::log_best_effort("uninstall_content", modrinth::uninstall(&state2, &instance, &kind2, &old_filename2));
-            Ok(result)
+                _ => Err("未知内容源".into()),
+            }
         }
         .await;
         let payload = match &res {
@@ -579,93 +579,36 @@ pub fn toggle_content_enabled(
     crate::instances::set_content_enabled(&state, &instance.id, &kind, &filename, enabled)
 }
 
-/// Import a local file (jar/zip) into an instance folder as manual content.
+/// Read a disk inventory and catalog without changing either one.
 #[tauri::command]
-pub fn list_content(
-    state: State<AppState>,
+pub async fn list_content(
+    state: State<'_, AppState>,
     instance_id: String,
     kind: String,
-) -> Result<Value, String> {
+) -> Result<crate::content_inventory::ContentInventory, String> {
     let instance = crate::instances::get_instance(&state, &instance_id)?;
-    let folder = modrinth::kind_folder(&kind);
-    let dir = state.instances_dir().join(&instance.id).join(folder);
-    let mut records = crate::instances::list_content(&state, &instance_id, &kind);
-    let mut on_disk: Vec<String> = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&dir) {
-        for entry in entries.flatten() {
-            if let Some(fname) = entry.file_name().to_str() {
-                if entry.path().is_file() {
-                    on_disk.push(fname.to_string());
-                }
-            }
-        }
-    }
-    // auto-register mods that exist on disk but have no record
-    let ext = if kind == "mod" { ".jar" } else { ".zip" };
-    let mut new_records: Vec<InstalledContent> = Vec::new();
-    for fname in &on_disk {
-        if !fname.ends_with(ext) {
-            continue;
-        }
-        if records.iter().any(|r: &InstalledContent| r.filename == *fname) {
-            continue;
-        }
-        let size = std::fs::metadata(dir.join(fname)).map(|m| m.len()).unwrap_or(0);
-        let mut rec = InstalledContent {
-            filename: fname.clone(),
-            source: "manual".into(),
-            project_id: None,
-            slug: None,
-            version_id: None,
-            name: None,
-            version: None,
-            mod_id: None,
-            authors: None,
-            description: None,
-            installed_at: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_secs())
-                .unwrap_or(0),
-            size,
-            icon: None,
-            enabled: true,
-        };
-        crate::util::fill_content_from_jar(&mut rec, &dir.join(fname));
-        new_records.push(rec);
-    }
-    if !new_records.is_empty() {
-        let _ = crate::util::log_best_effort("add_content_batch", crate::instances::add_content_batch(&state, &instance_id, &kind, new_records.clone()));
-        records.extend(new_records);
-    }
-    let mut updated = false;
-    for rec in &mut records {
-        let abs = dir.join(&rec.filename);
-        if abs.is_file() {
-            let before = rec.clone();
-            crate::util::fill_content_from_jar(rec, &abs);
-            if rec.name != before.name || rec.description != before.description || rec.icon != before.icon {
-                updated = true;
-            }
-        }
-    }
+    let folder = state.instances_dir().join(&instance.id).join(modrinth::kind_folder(&kind));
+    let registered = crate::instances::into_content_records(instance, &kind);
+    tokio::task::spawn_blocking(move || crate::content_inventory::list(&folder, &kind, registered))
+        .await
+        .map_err(|error| error.to_string())?
+}
 
-    if updated {
-        let _ = crate::util::log_best_effort("add_content_batch", crate::instances::add_content_batch(&state, &instance_id, &kind, records.clone()));
-    }
-    let items: Vec<Value> = records
-        .iter()
-        .map(|r| {
-            let exists = dir.join(&r.filename).is_file()
-                || dir.join(format!("{}.disabled", r.filename)).is_file();
-            let cn = crate::mcmod::cn_name_for_record(&r.source, r.slug.as_deref(), r.name.as_deref());
-            let mut rec_val = serde_json::to_value(r).unwrap_or(Value::Null);
-            if let Some(obj) = rec_val.as_object_mut() {
-                obj.insert("cn_name".to_string(), serde_json::to_value(&cn).unwrap_or(Value::Null));
-            }
-            json!({ "record": rec_val, "exists": exists })
-        })
-        .collect();
-    Ok(json!({ "items": items, "onDisk": on_disk }))
+/// Inspect local archives and commit missing metadata against the current instance.
+#[tauri::command]
+pub async fn reconcile_content(
+    state: State<'_, AppState>,
+    instance_id: String,
+    kind: String,
+) -> Result<Vec<String>, String> {
+    let instance = crate::instances::get_instance(&state, &instance_id)?;
+    let folder = state.instances_dir().join(&instance.id).join(modrinth::kind_folder(&kind));
+    let registered = crate::instances::into_content_records(instance, &kind);
+    let inspect_kind = kind.clone();
+    let pending = tokio::task::spawn_blocking(move || {
+        crate::content_inventory::inspect_archives(&folder, &inspect_kind, registered)
+    }).await.map_err(|error| error.to_string())??;
+    crate::content_inventory::commit(&state, &instance_id, &kind, pending)
 }
 
 /// Asynchronously identify unidentified content via Modrinth.
@@ -695,7 +638,7 @@ pub async fn identify_content(
                 let jar_path = dir.join(&rec.filename);
                 // 从 jar 重新提取图标（现在会存成 data URL）
                 new_rec.icon = if jar_path.is_file() {
-                    crate::util::extract_archive_icon(&jar_path, &kind)
+                    crate::content_metadata::extract_archive_icon(&jar_path, &kind)
                 } else {
                     None
                 };
@@ -848,7 +791,7 @@ pub fn import_local_file(
     std::fs::create_dir_all(dest.parent().ok_or("目标路径无效")?).map_err(|e| e.to_string())?;
     std::fs::copy(source, &dest).map_err(|e| format!("复制文件失败: {e}"))?;
     let size = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
-    let icon = crate::util::extract_archive_icon(&dest, &kind);
+    let icon = crate::content_metadata::extract_archive_icon(&dest, &kind);
     let mut record = InstalledContent {
         filename,
         source: "manual".into(),
@@ -868,7 +811,7 @@ pub fn import_local_file(
         icon,
         enabled: true,
     };
-    crate::util::fill_content_from_jar(&mut record, &dest);
+    crate::content_metadata::fill_content_from_jar(&mut record, &dest);
     crate::instances::add_content(&state, &instance_id, &kind, record)?;
     Ok(json!({ "ok": true }))
 }

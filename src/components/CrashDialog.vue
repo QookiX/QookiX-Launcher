@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref, computed } from "vue";
 import { useRouter } from "vue-router";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { NButton, NModal } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import DiagnosticsDialog from "./DiagnosticsDialog.vue";
+
+const { listen } = useTauriListenerScope();
 
 interface CrashInfo {
   instanceId: string;

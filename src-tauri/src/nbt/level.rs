@@ -14,15 +14,27 @@ use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::path::Path;
 
+const MAX_LEVEL_BYTES: u64 = 128 * 1024 * 1024;
+
 /// 读取 level.dat，返回整个 Data compound（Value::Compound）。
 pub fn read_level(path: &Path) -> Result<Value, String> {
+    let metadata = path.metadata().map_err(|e| format!("读取 NBT 文件元数据失败: {e}"))?;
+    if !metadata.is_file() {
+        return Err(format!("{} 不是普通文件", path.display()));
+    }
     let file = std::fs::File::open(path).map_err(|e| format!("打开 level.dat 失败: {e}"))?;
-    let mut dec = GzDecoder::new(file);
+    let meta = file.metadata().map_err(|e| format!("读取 level.dat 元数据失败: {e}"))?;
+    if !meta.is_file() || meta.len() > MAX_LEVEL_BYTES {
+        return Err("level.dat 不是普通文件或超过 128 MiB 限制".into());
+    }
+    let mut dec = GzDecoder::new(file.take(MAX_LEVEL_BYTES + 1)).take(MAX_LEVEL_BYTES + 1);
     let mut raw = Vec::new();
     dec.read_to_end(&mut raw)
         .map_err(|e| format!("解压 level.dat 失败（不是有效的 gzip？）: {e}"))?;
-    let v: Value = fastnbt::from_bytes(&raw).map_err(|e| format!("解析 NBT 失败: {e}"))?;
-    Ok(v)
+    if raw.len() as u64 > MAX_LEVEL_BYTES {
+        return Err("level.dat 解压后超过 128 MiB 限制".into());
+    }
+    super::bounded::decode(&raw, "level.dat")
 }
 
 /// 把 NBT 写回文件（gzip 压缩）。
@@ -41,26 +53,20 @@ pub fn write_level(path: &Path, data: &Value) -> Result<(), String> {
 
 /// 整体写回文件：先写同目录临时文件再替换，避免中途失败留下半个文件。
 ///
-/// 路径可能是符号链接（有些存档会把 level.dat 链到别处）：rename 会把链接
-/// 本身换成普通文件，这种情况改成写穿链接（copy 会跟随链接写入目标）。
+/// 符号链接解析到实际文件后再替换，保留存档目录中的链接。
 pub fn write_bytes(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .ok_or_else(|| "无法确定文件名".to_string())?;
-    let mut tmp = path.to_path_buf();
-    tmp.set_file_name(format!("{name}.qookix_tmp"));
-    std::fs::write(&tmp, bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    let target = write_target(path)?;
+    crate::fsutil::atomic_write(&target, bytes).map_err(|e| format!("替换文件失败: {e}"))
+}
 
-    let is_link = std::fs::symlink_metadata(path)
-        .map(|m| m.file_type().is_symlink())
-        .unwrap_or(false);
-    if is_link {
-        std::fs::copy(&tmp, path).map_err(|e| format!("写入文件失败: {e}"))?;
-        let _ = std::fs::remove_file(&tmp);
-        return Ok(());
+pub(super) fn write_target(path: &Path) -> Result<std::path::PathBuf, String> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if crate::fsutil::is_link_or_reparse_point(&meta) => path.canonicalize()
+            .map_err(|e| format!("解析存档文件链接失败: {e}")),
+        Ok(_) => Ok(path.to_path_buf()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(path.to_path_buf()),
+        Err(e) => Err(format!("读取存档文件状态失败: {e}")),
     }
-    std::fs::rename(&tmp, path).map_err(|e| format!("替换文件失败: {e}"))
 }
 
 /// 取"世界数据层"。
@@ -161,22 +167,23 @@ pub fn kind_of(v: &Value) -> &'static str {
 
 fn as_i64(v: &Json) -> Option<i64> {
     match v {
-        Json::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
-        Json::Bool(b) => Some(if *b { 1 } else { 0 }),
-        Json::String(s) => s.trim().parse::<i64>().ok().or_else(|| {
-            s.trim().parse::<f64>().ok().map(|f| f as i64)
-        }),
+        Json::Number(n) => n.as_i64(),
+        Json::String(s) => s.trim().parse().ok(),
         _ => None,
     }
 }
 
+pub(super) fn long_from_json(value: &Json) -> Result<i64, String> {
+    as_i64(value).ok_or_else(|| "需要 -9223372036854775808 ~ 9223372036854775807 的整数".into())
+}
+
 fn as_f64(v: &Json) -> Option<f64> {
-    match v {
+    let number = match v {
         Json::Number(n) => n.as_f64(),
-        Json::Bool(b) => Some(if *b { 1.0 } else { 0.0 }),
-        Json::String(s) => s.trim().parse::<f64>().ok(),
+        Json::String(s) => s.trim().parse().ok(),
         _ => None,
-    }
+    };
+    number.filter(|n| n.is_finite())
 }
 
 fn as_text(v: &Json) -> Option<String> {
@@ -188,33 +195,55 @@ fn as_text(v: &Json) -> Option<String> {
     }
 }
 
+fn integers<T: TryFrom<i64>>(value: &Json) -> Result<Vec<T>, String> {
+    value
+        .as_array()
+        .ok_or("需要整数数组")?
+        .iter()
+        .enumerate()
+        .map(|(index, item)| {
+            as_i64(item)
+                .and_then(|number| T::try_from(number).ok())
+                .ok_or_else(|| format!("数组第 {} 项超出整数范围或格式无效", index + 1))
+        })
+        .collect()
+}
+
 /// JSON → NBT Value，按 `kind` 指定目标类型。
 /// 树形模式改值必须走这里：让 `byte` 字段保持 `Byte` 而不是退化成 `Int`，
 /// 否则游戏按结构化反序列化读 level.dat 时会因类型不符报错。
 pub fn typed_value(kind: &str, v: &Json) -> Result<Value, String> {
     match kind {
         "byte" => as_i64(v)
-            .map(|n| Value::Byte(n as i8))
+            .and_then(|n| i8::try_from(n).ok())
+            .map(Value::Byte)
             .ok_or_else(|| "需要 -128 ~ 127 的整数".to_string()),
         "short" => as_i64(v)
-            .map(|n| Value::Short(n as i16))
-            .ok_or_else(|| "需要整数".to_string()),
+            .and_then(|n| i16::try_from(n).ok())
+            .map(Value::Short)
+            .ok_or_else(|| "需要 -32768 ~ 32767 的整数".to_string()),
         "int" => as_i64(v)
-            .map(|n| Value::Int(n as i32))
-            .ok_or_else(|| "需要整数".to_string()),
-        "long" => as_i64(v)
-            .map(Value::Long)
-            .ok_or_else(|| "需要整数".to_string()),
+            .and_then(|n| i32::try_from(n).ok())
+            .map(Value::Int)
+            .ok_or_else(|| "需要 -2147483648 ~ 2147483647 的整数".to_string()),
+        "long" => long_from_json(v).map(Value::Long),
         "float" => as_f64(v)
-            .map(|n| Value::Float(n as f32))
-            .ok_or_else(|| "需要数字".to_string()),
+            .map(|n| n as f32)
+            .filter(|n| n.is_finite())
+            .map(Value::Float)
+            .ok_or_else(|| "需要有限的 32 位浮点数".to_string()),
         "double" => as_f64(v)
             .map(Value::Double)
-            .ok_or_else(|| "需要数字".to_string()),
+            .ok_or_else(|| "需要有限的 64 位浮点数".to_string()),
         "string" => as_text(v)
             .map(Value::String)
             .ok_or_else(|| "需要文本".to_string()),
-        "byte_array" | "int_array" | "long_array" | "list" | "compound" => json_to_value(v),
+        "byte_array" => integers(v).map(fastnbt::ByteArray::new).map(Value::ByteArray),
+        "int_array" => integers(v).map(fastnbt::IntArray::new).map(Value::IntArray),
+        "long_array" => integers(v).map(fastnbt::LongArray::new).map(Value::LongArray),
+        "list" if v.is_array() => json_to_value(v),
+        "compound" if v.is_object() => json_to_value(v),
+        "list" | "compound" => Err(format!("{kind} 节点的数据形态不匹配")),
         other => Err(format!("不支持的类型: {other}")),
     }
 }
@@ -300,4 +329,22 @@ pub fn remove_child(parent: &mut Value, key: &str) -> Result<(), String> {
 /// 空 compound（写回可选子结构时用）
 pub fn empty_compound() -> Value {
     Value::Compound(HashMap::new())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn typed_integer_preserves_precision_and_rejects_out_of_range_values() {
+        assert_eq!(typed_value("long", &json!("9007199254740993")), Ok(Value::Long(9007199254740993)));
+        assert_eq!(typed_value("long", &json!("-9223372036854775808")), Ok(Value::Long(i64::MIN)));
+        assert_eq!(typed_value("byte", &json!("127")), Ok(Value::Byte(127)));
+        assert!(typed_value("byte", &json!(128)).is_err());
+        assert!(typed_value("short", &json!("-32769")).is_err());
+        assert!(typed_value("int", &json!("1.9")).is_err());
+        assert!(typed_value("int", &json!(1.9)).is_err());
+        assert!(typed_value("long", &json!("9223372036854775808")).is_err());
+    }
 }

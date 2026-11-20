@@ -142,14 +142,12 @@ async function commitEdit() {
   if (!editing.value) return;
   if (blocked()) return;
   const { path, node } = editing.value;
-  const numeric = NUMERIC_TYPES.includes(node.type);
-  const value: unknown = numeric ? Number(editValue.value) : editValue.value;
-  if (numeric && !Number.isFinite(value as number)) {
+  if (NUMERIC_TYPES.includes(node.type) && !editValue.value.trim()) {
     message.error(t("nbt.invalidNumber"));
     return;
   }
   try {
-    const r = await target().set(path, value, node.type);
+    const r = await target().set(path, editValue.value, node.type);
     emit("backed-up", r.backup);
     editing.value = null;
     await load();
@@ -178,11 +176,11 @@ async function commitAdd() {
   const type = newType.value;
   let value: unknown;
   if (NUMERIC_TYPES.includes(type)) {
-    value = Number(newValue.value);
-    if (!Number.isFinite(value as number)) {
+    if (!newValue.value.trim()) {
       message.error(t("nbt.invalidNumber"));
       return;
     }
+    value = newValue.value;
   } else if (type === "string") {
     value = newValue.value;
   } else if (type === "compound") {
@@ -283,7 +281,7 @@ watch(
         <input
           v-model="editValue"
           class="input"
-          :type="NUMERIC_TYPES.includes(editing.node.type) ? 'number' : 'text'"
+          :inputmode="NUMERIC_TYPES.includes(editing.node.type) ? 'decimal' : 'text'"
         />
       </template>
       <button class="mini-btn" @click="editing = null">{{ t("nbt.reset") }}</button>
@@ -300,7 +298,7 @@ watch(
         v-if="NUMERIC_TYPES.includes(newType)"
         v-model="newValue"
         class="input narrow"
-        type="number"
+        inputmode="decimal"
         :placeholder="t('nbt.newValuePlaceholder')"
       />
       <input

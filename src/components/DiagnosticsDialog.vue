@@ -5,7 +5,7 @@
  * 报告已自动脱敏（系统用户名 / UUID / token）。
  */
 import { ref, watch } from "vue";
-import { NButton, NModal, NScrollbar, useMessage } from "naive-ui";
+import { NButton, NCollapse, NCollapseItem, NModal, NScrollbar, useMessage } from "naive-ui";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import type { DiagnosticReport, DiagnosticReportEntry } from "../types";
@@ -157,10 +157,11 @@ async function saveAs() {
               <ul class="dg-lines">
                 <li v-for="(l, i) in s.lines" :key="i">{{ l }}</li>
               </ul>
-              <details v-if="s.block" class="dg-block">
-                <summary>{{ t("diagnostics.viewDetails") }}</summary>
-                <pre>{{ s.block }}</pre>
-              </details>
+              <NCollapse v-if="s.block" class="dg-block">
+                <NCollapseItem :name="s.key" :title="t('diagnostics.viewDetails')">
+                  <pre>{{ s.block }}</pre>
+                </NCollapseItem>
+              </NCollapse>
             </section>
           </div>
           <pre v-else class="dg-markdown">{{ report.markdown }}</pre>
@@ -281,11 +282,6 @@ async function saveAs() {
 }
 .dg-block {
   margin-top: 6px;
-}
-.dg-block summary {
-  font-size: var(--fs-2xs);
-  color: var(--accent);
-  cursor: pointer;
 }
 .dg-block pre,
 .dg-markdown {

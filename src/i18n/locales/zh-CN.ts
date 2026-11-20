@@ -54,6 +54,11 @@ export default {
   serverDetail,
   downloads,
   common: {
+    imagePreview: "图片预览",
+    viewMode: "显示方式",
+    skinModel: "皮肤模型",
+    editorMode: "编辑模式",
+    versionType: "版本类型",
     confirm: "确认",
     cancel: "取消",
     save: "保存",

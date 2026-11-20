@@ -1,0 +1,1939 @@
+.settings-view {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.settings-view .settings-side {
+  flex-shrink: 0;
+  width: 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  position: sticky;
+  top: 0;
+  align-self: flex-start;
+}
+.settings-view .nav-search-card {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 11px;
+  background: var(--panel);
+  border-radius: var(--r-md);
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+  transition: box-shadow 0.12s;
+}
+.settings-view .nav-search-card:focus-within {
+  box-shadow: 0 0 0 1px var(--accent-35);
+}
+.settings-view .nav-search-icon {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+  opacity: 0.6;
+  color: var(--text-2);
+}
+.settings-view .nav-search-input {
+  width: 100%;
+  border: none;
+  background: transparent;
+  outline: none;
+  color: var(--text-1);
+  font-size: var(--fs-sm);
+  font-family: inherit;
+}
+.settings-view .nav-search-input::placeholder {
+  color: var(--text-3);
+}
+.settings-view .settings-nav {
+  background: var(--panel);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+  padding: 8px 6px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+}
+.settings-view .nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-view .nav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.settings-view .nav-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 10px 4px;
+  color: var(--text-3);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.settings-view .nav-group-icon {
+  width: 13px;
+  height: 13px;
+  flex-shrink: 0;
+  opacity: 0.7;
+}
+.settings-view .nav-item {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  padding: 9px 12px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+.settings-view .nav-icon {
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  opacity: 0.85;
+}
+.settings-view .nav-item:hover {
+  background: var(--panel-hover);
+  color: var(--text-1);
+}
+.settings-view .nav-item.active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
+}
+.settings-view .nav-result {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  border: none;
+  background: transparent;
+  color: var(--text-2);
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s;
+}
+.settings-view .nav-result-title {
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-view .nav-result-sub {
+  font-size: var(--fs-2xs);
+  font-weight: 400;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-view .nav-result:hover {
+  background: var(--panel-hover);
+}
+.settings-view .nav-result.current {
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+.settings-view .nav-result.active {
+  background: var(--accent-soft);
+}
+.settings-view .hl {
+  background: var(--accent-soft);
+  color: var(--accent);
+  border-radius: var(--r-xs);
+  padding: 0 2px;
+}
+.settings-view .nav-empty {
+  padding: 14px 10px;
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+  text-align: center;
+}
+.settings-view .nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel);
+  border-radius: var(--r-lg);
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+}
+.settings-view .nav-brand-logo {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r-sm);
+  object-fit: contain;
+  flex-shrink: 0;
+}
+.settings-view .nav-brand-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.settings-view .nav-brand-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.settings-view .nav-brand-ver {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+.settings-view .setting-flash {
+  animation: settings-page-highlight 1.2s ease-out;
+}
+@keyframes settings-page-highlight {
+  0% {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  100% {
+    outline: 2px solid transparent;
+    outline-offset: 2px;
+  }
+}
+.settings-view .settings-body {
+  flex: 1;
+  min-width: 0;
+}
+/* 子标签页切换动画：方向跟随侧边栏排序。
+   forward（目标在侧边栏更下方）：新面板从下方升起、旧面板向上离开；
+   back（目标在侧边栏更上方）：新面板从上方落下、旧面板向下离开。
+   ⚠ 入场动画绝对不能带 opacity（也不能用 transform）：
+   - transform 会让元素创建独立合成层，backdrop-filter 采样不到背后内容；
+   - opacity < 1 同样会把元素变成 backdrop root，磨砂被隔离在面板内部、
+     采样不到页面背景——磨砂在动画期间直接消失（实测两者都会触发）。
+   所以入场只做 position:relative + top 位移（仅触发 layout，无层隔离），
+   面板全程不透明、磨砂全程有效。出场面板本来就在淡出变透明，
+   磨砂异常被透明度掩盖，仍用 opacity+transform 保性能。 */
+.settings-view .settings-pane-forward-enter-active {
+  transition: top 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  top: 0;
+}
+.settings-view .settings-pane-forward-leave-active {
+  transition: opacity 0.13s ease, transform 0.13s ease-in;
+}
+.settings-view .settings-pane-forward-enter-from {
+  top: 10px;
+}
+.settings-view .settings-pane-forward-leave-to {
+  opacity: 0;
+  transform: translateY(-6px);
+}
+.settings-view .settings-pane-back-enter-active {
+  transition: top 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+  position: relative;
+  top: 0;
+}
+.settings-view .settings-pane-back-leave-active {
+  transition: opacity 0.13s ease, transform 0.13s ease-in;
+}
+.settings-view .settings-pane-back-enter-from {
+  top: -10px;
+}
+.settings-view .settings-pane-back-leave-to {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.settings-view .settings-pane {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.settings-view .settings-pane > .grid {
+  margin-top: 0;
+}
+.settings-view .grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+  margin-top: 14px;
+}
+.settings-view .card {
+  padding: 18px;
+}
+/* 卡片标题统一纯文字：不再放图标，避免有的有有的没有 */
+.settings-view .card h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+  font-size: var(--fs-base);
+}
+.settings-view .text-input {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+}
+.settings-view textarea.text-input {
+  resize: vertical;
+  width: 100%;
+}
+.settings-view .btn-icon {
+  width: 14px;
+  height: 14px;
+}
+.settings-view .storage-grid {
+  grid-template-columns: 1fr;
+}
+.settings-view .storage-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.settings-view .storage-header h3 {
+  margin: 0;
+}
+.settings-view .storage-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-view .storage-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.settings-view .storage-footer .hint {
+  margin: 0;
+  flex: 1;
+  min-width: 200px;
+}
+.settings-view .storage-body {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+}
+.settings-view .donut-wrap {
+  position: relative;
+  flex: none;
+  width: 190px;
+  height: 190px;
+}
+.settings-view .donut {
+  width: 100%;
+  height: 100%;
+}
+.settings-view .donut-center {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.settings-view .donut-total {
+  font-size: var(--fs-lg);
+  font-weight: 700;
+  color: var(--text-1);
+  line-height: 1.2;
+}
+.settings-view .donut-label {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin-top: 2px;
+}
+.settings-view .storage-legend {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  min-width: 0;
+}
+.settings-view .storage-legend li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+}
+.settings-view .legend-dot {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+.settings-view .legend-name {
+  color: var(--text-2);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-view .legend-size {
+  color: var(--text-1);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.settings-view .legend-pct {
+  color: var(--text-3);
+  width: 48px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.settings-view .instance-storage {
+  margin-top: 18px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.settings-view .instance-storage-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 10px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-2);
+}
+.settings-view .instance-storage-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-view .instance-storage-list li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--fs-sm);
+}
+.settings-view .instance-name {
+  color: var(--text-1);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-view .java-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.settings-view .hint-inline {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+.settings-view .java-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+.settings-view .java-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 12px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--w-03);
+  color: var(--text-2);
+  font-family: inherit;
+  text-align: left;
+}
+.settings-view .java-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.settings-view .java-path {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+:is(.settings-view, .settings-dialog) .hint {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin: 10px 0 0;
+}
+.settings-view .mem-row {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.settings-view .mem-row label {
+  display: block;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+.settings-view .mem-val {
+  font-size: var(--fs-sm);
+  color: var(--accent);
+  font-weight: 600;
+  margin-top: 4px;
+}
+.settings-view .mem-mode-row {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 14px;
+}
+.settings-view .mem-gauge {
+  margin-top: 14px;
+}
+.settings-view .mem-gauge-track {
+  position: relative;
+  height: 10px;
+  border-radius: var(--r-xs);
+  background: var(--w-08);
+  overflow: hidden;
+}
+.settings-view .mem-gauge-used,
+.settings-view .mem-gauge-alloc {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  height: 100%;
+  transition: width 0.2s, left 0.2s;
+}
+.settings-view .mem-gauge-used {
+  left: 0;
+  background: linear-gradient(90deg, var(--info), var(--info-22));
+}
+.settings-view .mem-gauge-alloc {
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+}
+.settings-view .mem-gauge-labels {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  margin-top: 6px;
+}
+.settings-view .mem-gauge-labels span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.settings-view .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+.settings-view .dot.used {
+  background: var(--info);
+}
+.settings-view .dot.alloc {
+  background: var(--accent);
+}
+.settings-view .dot.total {
+  background: #9aa4b2;
+}
+.settings-view .row-label {
+  display: block;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  margin-bottom: 10px;
+}
+.settings-view .row-label-text {
+  display: block;
+  margin-bottom: 4px;
+}
+.settings-view .choice-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 14px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.settings-view .choice-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-view .choice-label {
+  color: var(--text-1);
+  font-weight: 500;
+}
+.settings-view .choice-hint {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  margin: 0;
+  line-height: 1.5;
+}
+/* 分段控件外观走全局 .qx-seg--sm；下面只保留各行的布局变体 */
+.settings-view .theme-color-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-view .color-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  transition: transform 0.12s ease, border-color 0.12s ease;
+}
+.settings-view .color-swatch:hover {
+  transform: scale(1.12);
+}
+.settings-view .color-swatch.active {
+  border-color: var(--text-1);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.settings-view .color-custom {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  cursor: pointer;
+  padding: 0;
+  position: relative;
+  background: conic-gradient(from 0deg, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+  border: none;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.settings-view .color-custom:hover {
+  transform: scale(1.12);
+}
+.settings-view .color-custom.active {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+.settings-view .color-custom-ring {
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.18);
+}
+.settings-view .dir-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+:is(.settings-view, .settings-dialog) .dir {
+  flex: 1;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  background: var(--w-05);
+  padding: 8px 10px;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 卡片内的按钮行（自定义主页 / 开发者工具共用）：按钮走全局 .qx-btn，这里只排一行 */
+.settings-view .settings-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-top: var(--sp-4);
+}
+.settings-view .settings-actions svg {
+  width: 14px;
+  height: 14px;
+}
+.settings-view .home-layout-error {
+  margin-top: var(--sp-4);
+}
+:is(.settings-view, .settings-dialog) .migrate-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+:is(.settings-view, .settings-dialog) .migrate-label {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  margin: 10px 0 2px;
+}
+:is(.settings-view, .settings-dialog) .migrate-modes {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+:is(.settings-view, .settings-dialog) .migrate-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  line-height: inherit;
+  text-align: left;
+  color: var(--text-2);
+  background: var(--w-03);
+  transition: border-color 0.15s, background 0.15s;
+}
+:is(.settings-view, .settings-dialog) .migrate-mode:hover {
+  border-color: var(--accent-05);
+}
+:is(.settings-view, .settings-dialog) .migrate-mode.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+:is(.settings-view, .settings-dialog) .mm-title {
+  font-weight: 600;
+  color: var(--text-1);
+  flex: 1;
+}
+:is(.settings-view, .settings-dialog) .mm-desc {
+  width: 100%;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+:is(.settings-view, .settings-dialog) .migrate-warn {
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  margin-top: 10px;
+}
+:is(.settings-view, .settings-dialog) .migrate-ok {
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  margin-bottom: 4px;
+}
+:is(.settings-view, .settings-dialog) .migrate-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+.settings-view .about-update {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-view .about-license-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-view .about-license-card .about-link,
+.settings-view .about-coop-card .about-link {
+  margin-bottom: 0;
+}
+.settings-view .about-coop-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-view .about-coop-card h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--text-1);
+}
+.settings-view .about-license-card h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--text-1);
+}
+:is(.settings-view, .settings-dialog) .license-text {
+  margin: 0;
+  font-size: var(--fs-sm);
+  line-height: 1.6;
+  color: var(--text-3);
+}
+.settings-view .legal-privacy-note {
+  margin: 0;
+  padding: 10px 12px;
+  font-size: var(--fs-xs);
+  line-height: 1.65;
+  color: var(--text-2);
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r-xs);
+}
+.settings-view .license-accent {
+  color: var(--accent);
+  font-weight: 600;
+}
+.settings-view .update-source {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--border);
+}
+/* 竖排布局里 seg 默认会被 stretch 拉满整行，只把它拦回内容宽度；
+   别再给按钮加 flex:1 拉宽——按钮一旦比文字宽，右侧就空出一大块。 */
+.settings-view .update-source .seg {
+  align-self: flex-start;
+}
+.settings-view .about-grid {
+  grid-template-columns: 1fr 1fr;
+}
+.settings-view .about-card {
+  display: flex;
+  flex-direction: column;
+}
+/* 顶部展示卡：画布与卡片保持留白，桌布做斜向动画 + 曲奇咬口 */
+.settings-view .about-showcase {
+  padding: 16px;
+}
+.settings-view .about-showcase .about-show-wrap {
+  height: 200px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.settings-view .about-hero-title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+.settings-view .about-hero-name {
+  font-size: var(--fs-lg);
+}
+.settings-view .about-hero-slogan {
+  text-align: center;
+  margin: 6px 0 2px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+  letter-spacing: 0.2px;
+}
+.settings-view .about-replay-card {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 20px;
+}
+.settings-view .about-replay-title {
+  font-size: var(--fs-base);
+  font-weight: 700;
+  color: var(--text-1);
+}
+.settings-view .about-replay-desc {
+  margin: 4px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.5;
+}
+.settings-view .about-deps-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-view .about-deps-card h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--text-1);
+}
+.settings-view .deps-groups {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+  margin-top: 4px;
+}
+.settings-view .deps-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-view .deps-group-title {
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 2px;
+}
+.settings-view .about-dep-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  transition: border-color 0.15s;
+  flex-wrap: wrap;
+}
+.settings-view .about-dep-row:hover {
+  border-color: var(--accent);
+}
+.settings-view .dep-info {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+.settings-view .about-dep-row .dep-name {
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-1);
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  white-space: nowrap;
+}
+.settings-view .dep-ver {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  font-weight: 400;
+}
+.settings-view .dep-license {
+  font-size: var(--fs-2xs);
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  font-weight: 500;
+  white-space: nowrap;
+}
+.settings-view .dep-links {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.settings-view .dep-link {
+  font-size: var(--fs-2xs);
+  font-family: inherit;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-xs);
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.settings-view .dep-link:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.settings-view .about-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.settings-view .about-ver {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-soft);
+  padding: 2px 8px;
+  border-radius: var(--r-xs);
+}
+.settings-view .dev-role {
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  line-height: 1.3;
+}
+/* 开发者区块：一人一行，不套卡片 */
+.settings-view .about-devs-title {
+  font-size: var(--fs-xs);
+  font-weight: 700;
+  color: var(--text-3);
+  margin: 0 0 10px;
+  letter-spacing: 0.3px;
+}
+.settings-view .dev-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.settings-view .dev-line {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-view .dev-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-view .dev-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-view .dev-avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--accent-35);
+  flex-shrink: 0;
+}
+.settings-view .dev-name {
+  font-size: var(--fs-base);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.settings-view .dev-github-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-sm);
+  cursor: pointer;
+  transition: color 0.14s, border-color 0.14s, background 0.14s;
+}
+.settings-view .dev-github-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent-35);
+  background: var(--accent-soft);
+}
+.settings-view .about-links-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+}
+.settings-view .about-links-row .about-link {
+  justify-content: flex-start;
+  padding: 18px 16px;
+  min-height: 56px;
+  font-size: var(--fs-base);
+}
+.settings-view .about-link {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  /* 与 .card.glass 一致的磨砂背景，避免和卡片质感不一致 */
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
+  backdrop-filter: blur(var(--glass-blur, 8px));
+  color: var(--text-2);
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  cursor: pointer;
+  font-family: inherit;
+  margin-bottom: 8px;
+  transition: all 0.15s;
+}
+.settings-view .about-link:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-1);
+}
+.settings-view .link-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-view .link-left svg {
+  font-size: var(--fs-md);
+  color: var(--accent);
+  flex-shrink: 0;
+}
+.settings-view .link-arrow {
+  color: var(--text-3);
+  font-size: var(--fs-base);
+  transition: transform 0.15s;
+}
+.settings-view .about-link:hover .link-arrow {
+  transform: translateX(3px);
+  color: var(--accent);
+}
+.settings-view .appearance-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px 0 14px;
+}
+/* 动态场景选择：缩略图卡片网格 */
+.settings-view .scene-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.settings-view .scene-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--w-03);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+.settings-view .scene-card:hover {
+  border-color: var(--w-14);
+  background: var(--w-05);
+}
+.settings-view .scene-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.settings-view .scene-thumb {
+  display: block;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--r-sm);
+  overflow: hidden;
+}
+.settings-view .scene-thumb svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+/* 缩略图用固定配色而不是跟随主题：它是「这个场景长什么样」的图示，不是界面元素 */
+.settings-view .scene-thumb--island {
+  background: linear-gradient(to bottom, #123a5c 0%, #3f7fa8 56%, #0d4256 100%);
+}
+.settings-view .scene-thumb--train {
+  background: linear-gradient(to bottom, #2a1b3d 0%, #7a4457 54%, #c07a4a 100%);
+}
+.settings-view .sc-sun {
+  fill: #ffe0a8;
+}
+.settings-view .sc-sun--warm {
+  fill: #ffc47a;
+}
+.settings-view .sc-sea {
+  fill: #0a3346;
+  opacity: 0.6;
+}
+.settings-view .sc-land {
+  fill: #1f4a34;
+}
+.settings-view .sc-tree {
+  fill: #16392a;
+}
+.settings-view .sc-cloud {
+  fill: #efd3cb;
+  opacity: 0.6;
+}
+.settings-view .sc-cloud--far {
+  opacity: 0.38;
+}
+.settings-view .sc-deck,
+.settings-view .sc-tower,
+.settings-view .sc-train {
+  fill: #17111c;
+}
+.settings-view .sc-cable {
+  stroke: #17111c;
+  stroke-width: 1.2;
+}
+.settings-view .scene-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-view .scene-label {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.settings-view .scene-desc {
+  font-size: var(--fs-xs);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+.settings-view .bg-mode-row {
+  display: flex;
+  margin-bottom: 14px;
+}
+.settings-view .bg-preview {
+  margin-bottom: 12px;
+  border-radius: var(--r-md);
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.settings-view .bg-preview img {
+  display: block;
+  width: 100%;
+  height: 92px;
+  object-fit: cover;
+}
+.settings-view .bg-actions {
+  display: flex;
+  gap: 8px;
+}
+.settings-view .tune-block {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+.settings-view .tune-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+.settings-view .tune-row label {
+  flex-shrink: 0;
+  width: 96px;
+}
+.settings-view .tune-row .tune-slider {
+  flex: 1;
+  min-width: 0;
+}
+/* 场景画质分段控件：紧跟 label 之后，靠右对齐到 tune-val 的位置 */
+.settings-view .bg-quality-seg {
+  flex: none;
+  margin-left: auto;
+}
+.settings-view .tune-val {
+  flex-shrink: 0;
+  width: 46px;
+  text-align: right;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
+}
+.settings-view .toggle {
+  position: relative;
+  width: 42px;
+  height: 24px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--w-08);
+  cursor: pointer;
+  transition: background 0.18s, border-color 0.18s;
+  flex-shrink: 0;
+}
+.settings-view .toggle .knob {
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.18s, background 0.18s;
+}
+.settings-view .toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.settings-view .toggle.on .knob {
+  transform: translateX(18px);
+  background: #fff;
+}
+.settings-view .mirror-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-view .mirror-item,
+.settings-view .mirror-custom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--w-03);
+  color: var(--text-2);
+  cursor: pointer;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s;
+}
+.settings-view .mirror-item:hover,
+.settings-view .mirror-custom:hover {
+  border-color: var(--accent-05);
+}
+.settings-view .mirror-item.active,
+.settings-view .mirror-custom.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.settings-view .mirror-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.settings-view .mirror-name {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.settings-view .mirror-base {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.settings-view .mirror-side {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+.settings-view .mirror-ms {
+  font-size: var(--fs-xs);
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.settings-view .mirror-ms.bad {
+  color: var(--danger);
+}
+.settings-view .mirror-btn {
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+  background: transparent;
+  padding: 4px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  flex-shrink: 0;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.settings-view .mirror-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.settings-view .mirror-btn.disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+/* 下载代理「测试连接」：跟随主题色 */
+.settings-view .proxy-test-btn {
+  color: var(--accent);
+  border-color: var(--accent-35);
+  background: var(--accent-soft);
+  font-weight: 600;
+  transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.settings-view .proxy-test-btn:hover:not(.disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+.settings-view .proxy-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-view .switch-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+/* 账号页里的隐私开关：夹在账号行之间，靠内边距与行对齐 */
+.settings-view .acct-switch {
+  margin-top: 2px;
+  padding: 0 4px;
+  font-size: var(--fs-xs);
+  color: var(--text-2);
+}
+.settings-view .acct-switch-hint {
+  margin: 4px 4px 0;
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+  color: var(--text-3);
+}
+/* 我的皮肤：左侧 3D 预览，右侧操作 */
+.settings-view .skin-box {
+  display: flex;
+  gap: 14px;
+  padding: 12px;
+  border-radius: 10px;
+  background: var(--w-04);
+}
+.settings-view .skin-preview {
+  flex: none;
+  width: 88px;
+  height: 150px;
+  border-radius: 8px;
+  background: var(--w-06);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.settings-view .skin-preview canvas {
+  width: 88px;
+  height: 150px;
+}
+.settings-view .skin-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-view .skin-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.settings-view .skin-hint {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-3);
+}
+.settings-view .skin-ops {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-view .skin-file {
+  display: none;
+}
+
+/* 配置云同步：独立一小块，和上面三条账号行拉开距离 */
+.settings-view .sync-box {
+  margin-top: 6px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--w-04);
+}
+.settings-view .sync-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.settings-view .sync-title {
+  font-size: var(--fs-xs);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.settings-view .sync-ops {
+  display: flex;
+  gap: 6px;
+  flex: none;
+}
+.settings-view .sync-hint {
+  margin: 6px 0 0;
+  font-size: var(--fs-2xs);
+  line-height: 1.6;
+  color: var(--text-3);
+}
+.settings-view .proxy-row .seg {
+  flex: 1;
+  min-width: 0;
+}
+.settings-view .proxy-row + .text-input {
+  margin-top: 8px;
+}
+.settings-view .mirror-custom {
+  flex-wrap: wrap;
+}
+.settings-view .mirror-custom-head {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  padding: 0;
+  font-family: inherit;
+  font-size: var(--fs-sm);
+  line-height: inherit;
+  font-weight: 600;
+  color: var(--text-1);
+  cursor: pointer;
+  transition: color 0.15s;
+}
+.settings-view .mirror-custom-head:hover {
+  color: var(--accent);
+}
+.settings-view .mirror-custom .text-input {
+  flex: 1;
+  min-width: 150px;
+}
+/* GitHub 用户名：账号页里作为可点开的链接 */
+.settings-view .gh-user {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  font-weight: 500;
+  font-family: inherit;
+  cursor: pointer;
+}
+.settings-view .gh-user:hover {
+  text-decoration: underline;
+}
+/* 存储页：GitHub 账户已挪到账号页，这里只留提示与跳转 */
+.settings-view .gh-moved {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+
+/* 账号弹窗（改邮箱 / 转移码）的输入行 */
+:is(.settings-view, .settings-dialog) .ms-cid-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border);
+  background: var(--w-06);
+  color: var(--text-1);
+  font-size: var(--fs-xs);
+  font-family: Menlo, Consolas, monospace;
+}
+:is(.settings-view, .settings-dialog) .ms-cid-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* 账号页弹窗（改邮箱 / 转移码） */
+:is(.settings-view, .settings-dialog) .acct-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+:is(.settings-view, .settings-dialog) .acct-modal-hint {
+  margin: 0;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-3);
+}
+:is(.settings-view, .settings-dialog) .acct-modal-ops {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+/* 修改密码 / 两步验证弹窗 */
+:is(.settings-view, .settings-dialog) .tfa-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--fs-xs);
+  color: var(--text-3);
+}
+:is(.settings-view, .settings-dialog) .tfa-setup {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+}
+:is(.settings-view, .settings-dialog) .tfa-qr {
+  width: 130px;
+  height: 130px;
+  flex: none;
+  padding: 4px;
+  border-radius: 8px;
+  background: #fff;
+}
+:is(.settings-view, .settings-dialog) .tfa-secret {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-width: 0;
+}
+:is(.settings-view, .settings-dialog) .tfa-label {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+:is(.settings-view, .settings-dialog) .tfa-secret-value {
+  font-size: var(--fs-xs);
+  color: var(--text-1);
+  word-break: break-all;
+}
+:is(.settings-view, .settings-dialog) .tfa-recovery {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+:is(.settings-view, .settings-dialog) .tfa-codes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+}
+:is(.settings-view, .settings-dialog) .tfa-codes code {
+  padding: 3px 6px;
+  border-radius: var(--r-xs);
+  background: var(--bg-2, rgba(255, 255, 255, 0.04));
+  font-size: var(--fs-2xs);
+  color: var(--text-2);
+  text-align: center;
+}
+/* 服务状态卡片 */
+.settings-view .about-status-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-view .svc-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.settings-view .svc-dot {
+  width: 9px;
+  height: 9px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+.settings-view .svc-dot.ok {
+  background: var(--success, #4ec9a0);
+  box-shadow: 0 0 0 3px rgba(78, 201, 160, 0.15);
+}
+.settings-view .svc-dot.warn {
+  background: var(--accent, #e89a4b);
+}
+.settings-view .svc-dot.bad {
+  background: var(--danger, #e5534b);
+}
+.settings-view .svc-text {
+  margin-right: auto;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+/* 账号页：第三方账号列表（QookiX / 拾木 / GitHub） */
+.settings-view .acct-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+.settings-view .gh-avatar svg {
+  width: 18px;
+  height: 18px;
+}
+/* QookiX 行：和 GitHub 行同款「深色圆角块 + 居中品牌图标」，
+   app-icon.png 是透明底的像素画，缩小后要保持硬边不能糊掉 */
+.settings-view .qk-avatar img {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--r-xs);
+  image-rendering: pixelated;
+}
+
+/* 账号页：第三方账号行（头像 + 名称/状态 + 右侧操作） */
+.settings-view .acct-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--r-md);
+  background: var(--w-04);
+  flex-wrap: wrap;
+}
+.settings-view .acct-avatar {
+  width: 38px;
+  height: 38px;
+  border-radius: var(--r-md);
+  object-fit: cover;
+  flex: none;
+  background: var(--w-06);
+}
+.settings-view .acct-avatar-ph {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--fs-md);
+  color: var(--text-3);
+}
+.settings-view .acct-info {
+  flex: 1;
+  min-width: 150px;
+}
+.settings-view .acct-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  color: var(--text-1);
+}
+.settings-view .acct-badge {
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  border: 1px solid var(--border);
+  background: var(--w-04);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  color: var(--text-3);
+}
+.settings-view .acct-badge.on {
+  color: var(--accent);
+  border-color: var(--accent-35);
+  background: var(--accent-08);
+}
+.settings-view .acct-badge.expired {
+  color: var(--danger);
+  border-color: var(--danger-35);
+  background: var(--danger-08);
+}
+.settings-view .acct-meta {
+  margin-top: 3px;
+  font-size: var(--fs-2xs);
+  line-height: 1.5;
+  color: var(--text-3);
+}
+.settings-view .acct-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-left: auto;
+}
+.settings-view .acct-warn {
+  margin: 8px 0 0;
+  font-size: var(--fs-xs);
+  color: var(--accent);
+}
+/* 贴在对应账号行下面时，间距交给 .acct-list 的 gap */
+.settings-view .acct-warn.inline {
+  margin: 0;
+  padding-left: 50px;
+  font-size: var(--fs-2xs);
+}
+
+:is(.settings-view, .settings-dialog) .update-modal-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+:is(.settings-view, .settings-dialog) .update-modal-ver {
+  margin: 0;
+  font-size: var(--fs-sm);
+  color: var(--text-2);
+}
+:is(.settings-view, .settings-dialog) .update-modal-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.settings-view .about-changelog-card {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+/* 开发者工具页：卡片 / 标题 / 按钮 / 提示条 / 开关全部走设置页通用类，
+   这里只留表单行的布局与状态色。 */
+.settings-view .dev-mode-warning {
+  align-items: center;
+}
+.settings-view .dev-mode-warning__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+}
+.settings-view .dev-mode-warning__text strong {
+  color: var(--danger-text);
+  font-weight: var(--fw-semi);
+}
+.settings-view .dev-mode-warning__text span {
+  color: var(--text-2);
+}
+.settings-view .dev-cred-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+}
+.settings-view .dev-cred-group .hint {
+  margin: 0;
+}
+.settings-view .dev-cred-row {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+.settings-view .dev-cred-row .n-input {
+  flex: 1;
+  min-width: 0;
+}
+.settings-view .dev-cred-ok {
+  color: var(--success);
+}
+.settings-view .dev-cred-no {
+  color: var(--danger-text);
+}
+.settings-view .about-changelog-card h3 {
+  margin: 0;
+  font-size: var(--fs-md);
+  font-weight: 700;
+  color: var(--text-1);
+}
+.settings-view .changelog-loading {
+  font-size: var(--fs-sm);
+  color: var(--text-3);
+  padding: 20px 0;
+  text-align: center;
+}
+
+.settings-view .cl-releases {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.settings-view .cl-release {
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  overflow: hidden;
+  transition: border-color 0.15s;
+}
+.settings-view .cl-release.expanded {
+  border-color: var(--accent-35);
+}
+.settings-view .cl-release-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  color: var(--text-1);
+  transition: background 0.12s;
+}
+.settings-view .cl-release-header:hover {
+  background: var(--panel-hover);
+}
+.settings-view .cl-release-header:active {
+  transform: none;
+}
+.settings-view .cl-version {
+  font-size: var(--fs-sm);
+  font-weight: 700;
+  color: var(--accent);
+}
+.settings-view .cl-date {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
+.settings-view .cl-count {
+  margin-left: auto;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  background: var(--bg-3, rgba(128, 128, 128, 0.12));
+  border-radius: var(--r-sm);
+  padding: 1px 7px;
+}
+.settings-view .cl-arrow {
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+  transition: transform 0.2s;
+}
+.settings-view .cl-release.expanded .cl-arrow {
+  transform: rotate(180deg);
+}
+.settings-view .cl-release-body {
+  padding: 8px 12px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.settings-view .cl-entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: var(--fs-sm);
+  line-height: 1.5;
+}
+.settings-view .cl-tag {
+  flex-shrink: 0;
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+  padding: 2px 7px;
+  border-radius: var(--r-xs);
+  white-space: nowrap;
+}
+.settings-view .cl-tag.cat-fix {
+  color: var(--danger);
+  background: rgba(229, 83, 75, 0.12);
+}
+.settings-view .cl-tag.cat-feature {
+  color: var(--success);
+  background: rgba(63, 185, 80, 0.12);
+}
+.settings-view .cl-tag.cat-improve {
+  color: var(--text-2);
+  background: rgba(68, 147, 248, 0.12);
+}
+.settings-view .cl-tag.cat-refactor {
+  color: var(--text-2);
+  background: rgba(163, 113, 247, 0.12);
+}
+.settings-view .cl-tag.cat-other {
+  color: var(--text-2);
+  background: var(--bg-3, rgba(128, 128, 128, 0.12));
+}
+.settings-view .cl-text {
+  color: var(--text-1);
+  word-break: break-word;
+  flex: 1;
+  min-width: 0;
+}

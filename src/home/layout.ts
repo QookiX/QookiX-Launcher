@@ -363,20 +363,12 @@ export function loadUserVars(): HomeVars {
 }
 
 export function saveUserVars(vars: HomeVars) {
-  try {
-    localStorage.setItem(USER_VARS_KEY, JSON.stringify(vars));
-  } catch {
-    /* 存储不可用时变量只在本次会话生效 */
-  }
+  localStorage.setItem(USER_VARS_KEY, JSON.stringify(vars));
 }
 
 /** 恢复默认布局时一并清掉用户改过的变量 */
 export function clearUserVars() {
-  try {
-    localStorage.removeItem(USER_VARS_KEY);
-  } catch {
-    /* 忽略 */
-  }
+  localStorage.removeItem(USER_VARS_KEY);
 }
 
 /** 把 `{name}` 换成变量值；未知占位符原样保留，方便用户发现自己写错了。 */

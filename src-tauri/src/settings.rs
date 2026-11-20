@@ -1,6 +1,7 @@
 use crate::models::Settings;
 use crate::state::AppState;
 use directories::BaseDirs;
+use std::path::{Path, PathBuf};
 use sysinfo::System;
 
 pub fn default_root() -> String {
@@ -67,17 +68,107 @@ pub fn recommended_memory(available_mb: u64, mod_count: usize) -> (u32, u32) {
     (max as u32, min as u32)
 }
 
-pub fn load_settings(root: &std::path::Path) -> Settings {
-    // 数据库不存在说明是首次启动（或从旧版 JSON 迁移前的首次运行）
-    let fresh = !crate::db::db_path(root).exists();
-    let mut settings = match crate::db::open(root) {
-        Ok(conn) => {
-            let raw = crate::db::get_setting(&conn, "app");
-            raw.and_then(|s| serde_json::from_str::<Settings>(&s).ok())
-                .unwrap_or_default()
+pub(crate) const DATA_ROOT_POINTER: &str = "data-root.json";
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct DataRootPointer {
+    data_dir: PathBuf,
+}
+
+pub(crate) fn portable_data_dir() -> Option<PathBuf> {
+    let exe = std::env::current_exe().ok()?;
+    let dir = exe.parent()?;
+    dir.join("portable.txt").is_file().then(|| dir.join("data"))
+}
+
+pub(crate) fn bootstrap_root(portable: Option<PathBuf>) -> PathBuf {
+    std::env::var_os("QOOKIX_DATA_DIR")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+        .or(portable)
+        .unwrap_or_else(|| PathBuf::from(default_root()))
+}
+
+fn parse_data_root(raw: &str) -> Option<PathBuf> {
+    let pointer: DataRootPointer = serde_json::from_str(raw).ok()?;
+    let path = pointer.data_dir;
+    (path.is_absolute() && !is_disk_root(&path) && !is_system_dir(&path)).then_some(path)
+}
+
+pub fn configured_data_dir(root: &Path) -> Option<PathBuf> {
+    match std::fs::read_to_string(root.join(DATA_ROOT_POINTER)) {
+        Ok(raw) => match parse_data_root(&raw) {
+            Some(path) => return Some(path),
+            None => eprintln!("启动数据目录指针无效，尝试读取旧配置"),
+        },
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => eprintln!("无法读取启动数据目录指针: {error}"),
+    }
+    // 老安装器写入 JSON 引导信息，可能比默认库里的设置更新。
+    std::fs::read_to_string(root.join("settings.json"))
+        .ok()
+        .and_then(|raw| parse_data_root(&raw))
+        .or_else(|| crate::db::existing_app_settings(root).and_then(|raw| parse_data_root(&raw)))
+}
+
+pub(crate) fn write_data_root_pointer(bootstrap: &Path, target: &Path) -> Result<(), String> {
+    let pointer = DataRootPointer { data_dir: target.to_path_buf() };
+    let bytes = serde_json::to_vec_pretty(&pointer).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(bootstrap).map_err(|e| format!("无法创建引导目录: {e}"))?;
+    let path = bootstrap.join(DATA_ROOT_POINTER);
+    crate::fsutil::atomic_write(&path, &bytes).map_err(|e| format!("无法写入数据目录指针: {e}"))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+pub(crate) fn commit_install_data(bootstrap: &Path, data: &Path, install: &Path) -> Result<(), String> {
+    if !bootstrap.is_absolute() || is_disk_root(bootstrap) || is_system_dir(bootstrap)
+        || !data.is_absolute() || is_disk_root(data) || is_system_dir(data)
+    {
+        return Err("请选择普通的绝对数据目录".into());
+    }
+    if let Some(existing) = configured_data_dir(bootstrap) {
+        let matches = existing == data || existing.canonicalize().ok()
+            .zip(data.canonicalize().ok()).is_some_and(|(previous, target)| previous == target);
+        if !matches {
+            return Err(format!("已配置数据目录 {}，请使用该目录。启动器可在设置中迁移数据。", existing.display()));
         }
-        Err(_) => Default::default(),
-    };
+    }
+    crate::data_root_migration::ensure_no_pending(bootstrap)?;
+    let install = install.canonicalize().map_err(|error| format!("安装目录无法访问: {error}"))?;
+    std::fs::create_dir_all(data).map_err(|err| format!("当前账号无法创建数据目录: {err}"))?;
+    let resolved = data.canonicalize().map_err(|err| format!("无法确认实际数据目录: {err}"))?;
+    if !resolved.is_dir() || is_disk_root(&resolved) || is_system_dir(&resolved)
+        || resolved.starts_with(&install) || install.starts_with(&resolved)
+    {
+        return Err("安装目录和实际数据目录不能互相包含".into());
+    }
+    tempfile::NamedTempFile::new_in(&resolved).and_then(tempfile::NamedTempFile::close)
+        .map_err(|err| format!("当前账号无法写入数据目录: {err}"))?;
+    write_data_root_pointer(bootstrap, data)?;
+    let actual = configured_data_dir(bootstrap).and_then(|path| path.canonicalize().ok());
+    if actual.as_ref() != Some(&resolved) {
+        return Err("数据目录引导文件写入后验证失败".into());
+    }
+    Ok(())
+}
+
+pub fn load_settings(root: &std::path::Path, conn: &rusqlite::Connection, fresh: bool) -> Settings {
+    let stored = crate::db::get_setting(conn, "app")
+        .or_else(|| std::fs::read_to_string(root.join("settings.json")).ok());
+    let mut json: serde_json::Map<String, serde_json::Value> = stored.as_deref()
+        .and_then(|raw| serde_json::from_str(raw).ok()).unwrap_or_default();
+    let legacy_credentials = SECRET_FIELDS.iter().any(|field| json.get(*field).is_some_and(|v| v.is_string()));
+    for field in SECRET_FIELDS {
+        let Some(protected) = crate::db::get_setting(conn, &credential_key(field)) else { continue };
+        match crate::secret::unprotect(&protected) {
+            Ok(secret) => {
+                if secret.is_empty() { json.remove(field); } else { json.insert(field.into(), secret.into()); }
+            }
+            Err(error) => eprintln!("[credentials] 无法读取设置凭据 {field}: {error}"),
+        }
+    }
+    let mut settings: Settings = serde_json::from_value(serde_json::Value::Object(json)).unwrap_or_default();
     // 兼容迁移：旧版本只有 proxy 没有 proxy_mode。
     // 若缺少 proxy_mode 但配置了自定义 proxy，则视为自定义模式。
     if settings.proxy_mode.is_empty() {
@@ -90,16 +181,24 @@ pub fn load_settings(root: &std::path::Path) -> Settings {
     // 兼容迁移：旧版本的「关闭窗口时」默认值是 "minimize"，新默认值是「每次询问」。
     // 用户从未明确选择过（close_behavior_prompted 为 false）时迁移为 "ask"，
     // 让老用户也能用上新默认；显式选择过则保留原值。
-    if !settings.close_behavior_prompted && settings.close_behavior == "minimize" {
+    let update_close_behavior = !settings.close_behavior_prompted && settings.close_behavior == "minimize";
+    if update_close_behavior {
         settings.close_behavior = "ask".into();
-        let _ = save_settings(root, &settings);
     }
-    if settings.data_dir.is_empty() {
-        settings.data_dir = root.to_string_lossy().to_string();
+    settings.data_dir = root.to_string_lossy().into_owned();
+    if (legacy_credentials || update_close_behavior) && crate::db::require_persistent(conn).is_ok() {
+        if let Err(error) = save_settings(conn, &settings, None) {
+            eprintln!("[credentials] 无法迁移启动器设置: {error}");
+        } else if legacy_credentials {
+            let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+        }
+    }
+    if crate::db::get_setting(conn, "app").is_some() {
+        scrub_legacy_settings_copies(root, conn);
     }
     // First launch: auto-detect memory with a single snapshot (previously two
     // separate full-system refreshes).
-    if fresh {
+    if fresh && stored.is_none() {
         if let Some((_, _, available)) = memory_mb() {
             let (max, min) = recommended_memory(available, 0);
             settings.max_memory_mb = max;
@@ -109,19 +208,7 @@ pub fn load_settings(root: &std::path::Path) -> Settings {
     settings
 }
 
-pub fn save_settings(root: &std::path::Path, settings: &Settings) -> Result<(), String> {
-    let conn = crate::db::open(root)?;
-    let json = serde_json::to_string(settings).map_err(|e| e.to_string())?;
-    crate::db::set_setting(&conn, "app", &json)
-}
-
-/// Persist current settings from state.
-pub fn persist(state: &AppState) -> Result<(), String> {
-    let settings = state.settings().clone();
-    save_settings(&state.root, &settings)
-}
-
-/// 只落库、不下发前端的敏感字段。
+/// 由系统密钥保护的设置字段。
 ///
 /// 命令返回值在前端 DevTools 里一条 `await api.getSettings()` 就能拿到，
 /// 所以 API Key 这类东西绝不能出现在 `get_settings` / `set_settings` 的返回体里。
@@ -131,6 +218,76 @@ const SECRET_FIELDS: [&str; 4] = [
     "shimu_client_secret",
     "littleskin_client_secret",
 ];
+
+fn credential_key(field: &str) -> String {
+    format!("credentials.{field}")
+}
+
+fn save_settings(conn: &rusqlite::Connection, settings: &Settings, patch: Option<&serde_json::Value>) -> Result<(), String> {
+    let mut json = serde_json::to_value(settings).map_err(|err| err.to_string())?;
+    let settings = json.as_object_mut().ok_or("启动器设置格式无效")?;
+    let tx = conn.unchecked_transaction().map_err(|err| err.to_string())?;
+    for field in SECRET_FIELDS {
+        let value = settings.remove(field);
+        let key = credential_key(field);
+        let explicit = patch.and_then(|patch| patch.get(field)).is_some_and(|value| value.is_string());
+        if explicit || crate::db::get_setting(&tx, &key).is_none() {
+            if let Some(value) = value.as_ref().and_then(|v| v.as_str()).filter(|v| !v.is_empty()) {
+                crate::db::set_setting(&tx, &key, &crate::secret::protect(value)?)?;
+            } else if explicit {
+                crate::db::set_setting(&tx, &key, "")?;
+            }
+        }
+    }
+    crate::db::set_setting(&tx, "app", &json.to_string())?;
+    tx.commit().map_err(|err| err.to_string())
+}
+
+pub(crate) fn import_legacy_settings(conn: &rusqlite::Connection, mut settings: serde_json::Map<String, serde_json::Value>) -> Result<(), String> {
+    for field in SECRET_FIELDS {
+        if let Some(value) = settings.remove(field).and_then(|v| v.as_str().map(str::to_owned)).filter(|v| !v.is_empty()) {
+            crate::db::set_setting(conn, &credential_key(field), &crate::secret::protect(&value)?)?;
+        }
+    }
+    crate::db::set_setting(conn, "app", &serde_json::Value::Object(settings).to_string())
+}
+
+pub(crate) fn scrub_legacy_settings_copy(conn: &rusqlite::Connection, path: &Path) -> Result<(), String> {
+    let bytes = std::fs::read(path).map_err(|err| err.to_string())?;
+    let mut json: serde_json::Map<String, serde_json::Value> = serde_json::from_slice(&bytes).map_err(|err| err.to_string())?;
+    let mut changed = false;
+    for field in SECRET_FIELDS {
+        let Some(value) = json.get(field).and_then(|v| v.as_str()) else { continue };
+        let persisted = crate::db::get_setting(conn, &credential_key(field))
+            .and_then(|secret| crate::secret::unprotect(&secret).ok());
+        if persisted.as_deref() == Some(value) {
+            json.remove(field);
+            changed = true;
+        }
+    }
+    if changed {
+        let sanitized = serde_json::to_vec_pretty(&json).map_err(|err| err.to_string())?;
+        crate::fsutil::atomic_write(path, &sanitized).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn scrub_legacy_settings_copies(root: &Path, conn: &rusqlite::Connection) {
+    let Ok(entries) = std::fs::read_dir(root) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let known_backup = name.strip_prefix("settings.json.migrated-").and_then(|name| name.strip_suffix(".bak"))
+            .is_some_and(|id| uuid::Uuid::parse_str(id).is_ok());
+        if (matches!(name, "settings.json" | "settings.json.migrated.bak") || known_backup)
+            && entry.file_type().is_ok_and(|file| file.is_file())
+        {
+            if let Err(error) = scrub_legacy_settings_copy(conn, &entry.path()) {
+                eprintln!("[credentials] 旧设置副本整理失败: {error}");
+            }
+        }
+    }
+}
 
 /// 给前端的设置视图：敏感字段替换成「是否已配置 + 掩码尾号」。
 ///
@@ -189,7 +346,10 @@ fn set_secret(slot: &mut Option<String>, value: &serde_json::Value) {
 
 /// Update settings with a partial patch (values from frontend).
 pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Settings, String> {
-    let mut settings = state.settings_mut();
+    let conn = state.db();
+    crate::db::require_persistent(&conn)?;
+    let mut current = state.settings_mut();
+    let mut settings = current.clone();
     // NOTE: `data_dir` is intentionally ignored here. The data root is fixed at
     // startup (honoring the value the installer seeds into settings.json) and
     // existing data is not migrated; applying a runtime change would silently
@@ -384,10 +544,9 @@ pub fn update_settings(state: &AppState, patch: serde_json::Value) -> Result<Set
     if let Some(v) = patch.get("share_activity").and_then(|v| v.as_bool()) {
         settings.share_activity = v;
     }
-    let cloned = settings.clone();
-    drop(settings);
-    persist(state)?;
-    Ok(cloned)
+    save_settings(&conn, &settings, Some(&patch))?;
+    *current = settings.clone();
+    Ok(settings)
 }
 
 /// Check if a path is a filesystem root (e.g. `C:\` on Windows, `/` on Unix).
@@ -424,169 +583,37 @@ pub fn is_system_dir(path: &std::path::Path) -> bool {
     false
 }
 
-/// Migrate the launcher data root to `new_dir`.
-///
-/// `mode`:
-/// - `"move"`: move all data into the new dir, update the seed
-/// - `"copy"`: copy all data into the new dir (keep old as backup), update seed
-/// - `"pointer"`: only update the seed — the user is responsible for the data
-///
-/// Symlink-imported instances (junctions) are recreated at the destination
-/// pointing at their original external `.minecraft` instead of being
-/// dereferenced, so they keep working after the move.
-///
-/// On success the in-memory `settings.data_dir` is updated and a seed
-/// `settings.json` is written into the default root so the next launch picks
-/// up the new location. The caller must restart for the change to fully take
-/// effect (the running process still holds the old root).
+/// Publish a pointer immediately or schedule an offline directory migration for restart.
 pub fn change_data_dir(state: &AppState, new_dir: &str, mode: &str) -> Result<String, String> {
-    let new_root = std::path::PathBuf::from(new_dir);
-    if new_root.as_os_str().is_empty() {
-        return Err("新数据目录不能为空".into());
+    let root = Path::new(new_dir);
+    if !root.is_absolute() || is_disk_root(root) || is_system_dir(root) {
+        return Err("请选择绝对路径下的普通目录".into());
     }
-    if is_disk_root(&new_root) {
-        return Err("不能选择磁盘根目录，请选一个普通文件夹".into());
+    let target = root.canonicalize().map_err(|error| format!("无法找到目标数据目录: {error}"))?;
+    if !target.is_dir() || is_disk_root(&target) || is_system_dir(&target) {
+        return Err("请选择普通的数据目录".into());
     }
-    if is_system_dir(&new_root) {
-        return Err("不能选择系统目录作为数据目录".into());
-    }
-    let _ = std::fs::create_dir_all(&new_root);
-    // For move/copy modes, reject non-empty target directories to avoid
-    // mixing launcher data with existing files. Pointer mode just updates
-    // the seed, so an existing non-empty directory is fine.
-    if mode != "pointer"
-        && std::fs::read_dir(&new_root)
-            .ok()
-            .and_then(|mut r| r.next())
-            .is_some()
-    {
-        return Err("目标目录不为空，请选择一个空目录或新建一个文件夹".into());
-    }
-    let new_clean = new_root
-        .canonicalize()
-        .map_err(|e| format!("无法解析新目录路径: {e}"))?;
-    // Bug ③: if the current root can't be canonicalized (drive unplugged,
-    // directory deleted), fall back to the raw path so the user can still
-    // migrate away instead of being permanently stuck.
-    let cur_clean = state.root.canonicalize().unwrap_or_else(|_| state.root.clone());
-    if new_clean == cur_clean {
+    if state.root.canonicalize().as_ref().ok() == Some(&target) {
         return Err("新目录与当前数据目录相同".into());
     }
-    // Bug ②: only block subdirectories when the current root is NOT a disk
-    // root. If the current root IS a disk root (e.g. D:\), the user is
-    // trying to escape it — allow the move and skip the destination entry
-    // in the migration loop below.
-    if !is_disk_root(&cur_clean) && new_clean.starts_with(&cur_clean) {
-        return Err("新目录不能位于当前数据目录内".into());
-    }
-    if cur_clean.starts_with(&new_clean) {
-        return Err("新目录不能包含当前数据目录".into());
-    }
 
-    ensure_layout(&new_root).map_err(|e| format!("创建目录布局失败: {e}"))?;
-
-    let instances_name = std::ffi::OsStr::new("instances");
-    let skip = |name: &std::ffi::OsStr| name == "settings.json";
-
-    let migrate_instance = |src: &std::path::Path, dst: &std::path::Path| -> Result<(), String> {
-        let json_path = src.join("instance.json");
-        if let Ok(text) = std::fs::read_to_string(&json_path) {
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&text) {
-                if val.get("is_symlink").and_then(|v| v.as_bool()).unwrap_or(false) {
-                    if let Some(source) = val.get("source_path").and_then(|v| v.as_str()) {
-                        let target = std::path::PathBuf::from(source);
-                        let mut fb = false;
-                        crate::util::link_dir(&target, dst, &mut fb)?;
-                        return Ok(());
-                    }
-                }
-            }
-        }
-        match mode {
-            "move" => crate::util::move_entry(src, dst),
-            _ => crate::util::copy_tree(src, dst),
-        }
-    };
-
-    for e in std::fs::read_dir(&state.root).map_err(|e| e.to_string())?.flatten() {
-        let name = e.file_name();
-        if skip(&name) {
-            continue;
-        }
-        let src = e.path();
-        // Bug ②: when escaping from a disk root (e.g. D:\ → D:\QookiX),
-        // the destination directory itself appears as an entry in read_dir.
-        // Skip it and anything inside it to avoid moving the destination
-        // into itself.
-        if let Ok(src_clean) = src.canonicalize() {
-            if src_clean == new_clean || src_clean.starts_with(&new_clean) {
-                continue;
-            }
-        }
-        let dst = new_root.join(&name);
-        if name == instances_name && src.is_dir() {
-            std::fs::create_dir_all(&dst).map_err(|e| e.to_string())?;
-            for inst in std::fs::read_dir(&src).map_err(|e| e.to_string())?.flatten() {
-                let iname = inst.file_name();
-                let isrc = inst.path();
-                let idst = dst.join(&iname);
-                migrate_instance(&isrc, &idst)?;
-            }
-            if mode == "move" {
-                let _ = std::fs::remove_dir_all(&src);
-            }
-            continue;
-        }
-        match mode {
-            "move" => {
-                if src.is_dir() {
-                    crate::util::move_entry(&src, &dst)?;
-                } else if src.is_file() {
-                    std::fs::rename(&src, &dst)
-                        .or_else(|_| {
-                            std::fs::copy(&src, &dst).and_then(|_| std::fs::remove_file(&src))
-                        })
-                        .map_err(|e| format!("移动 {} 失败: {e}", name.to_string_lossy()))?;
-                }
-            }
-            "copy" => {
-                if src.is_dir() {
-                    crate::util::copy_tree(&src, &dst)?;
-                } else if src.is_file() {
-                    std::fs::copy(&src, &dst).map_err(|e| e.to_string())?;
-                }
-            }
-            "pointer" => {}
-            other => return Err(format!("未知迁移模式: {other}")),
-        }
-    }
-
-    // Bug ⑥: normalize the path once — trim trailing separators — and use it
-    // consistently for both settings files so they don't disagree.
+    let bootstrap = bootstrap_root(portable_data_dir());
     let normalized = new_dir.trim_end_matches(['\\', '/']).to_string();
-
-    // Write the full settings.json into the new root with data_dir updated.
-    {
-        let mut s = state.settings().clone();
-        s.data_dir = normalized.clone();
-        save_settings(&new_root, &s)?;
+    match mode {
+        "pointer" => {
+            state.jobs.queue_relocation(|| {
+                crate::data_root_migration::ensure_no_pending(&bootstrap)?;
+                write_data_root_pointer(&bootstrap, Path::new(&normalized))
+            })?;
+            state.settings_mut().data_dir = normalized.clone();
+        }
+        "copy" | "move" => {
+            use crate::data_root_migration::{self, MigrationMode};
+            let mode = if mode == "move" { MigrationMode::Move } else { MigrationMode::Copy };
+            state.jobs.queue_relocation(|| data_root_migration::schedule(&bootstrap, &state.root, &target, mode))?;
+        }
+        other => return Err(format!("未知迁移模式: {other}")),
     }
-    // Seed the default root so the next launch honors the new location.
-    let default_root = std::path::PathBuf::from(default_root());
-    let _ = std::fs::create_dir_all(&default_root);
-    let seed = serde_json::json!({ "data_dir": normalized.replace('\\', "/") });
-    let _ = std::fs::write(
-        default_root.join("settings.json"),
-        serde_json::to_string_pretty(&seed).unwrap_or_default(),
-    );
-
-    // Reflect the new path in memory immediately (UI); the actual file I/O
-    // still uses the old root until restart.
-    {
-        let mut s = state.settings_mut();
-        s.data_dir = normalized.clone();
-    }
-
     Ok(normalized)
 }
 
@@ -627,14 +654,31 @@ pub fn http_client_timed(
     connect_timeout: std::time::Duration,
     total_timeout: std::time::Duration,
 ) -> reqwest::Client {
+    build_http_client(proxy_mode, proxy, connect_timeout, total_timeout, true)
+}
+
+pub(crate) fn oauth_http_client(state: &AppState) -> reqwest::Client {
+    let settings = state.settings();
+    build_http_client(&settings.proxy_mode, settings.proxy.as_deref(),
+        std::time::Duration::from_secs(12), std::time::Duration::from_secs(25), false)
+}
+
+fn build_http_client(
+    proxy_mode: &str,
+    proxy: Option<&str>,
+    connect_timeout: std::time::Duration,
+    total_timeout: std::time::Duration,
+    follow_redirects: bool,
+) -> reqwest::Client {
     let user_agent = format!("QookiX-Launcher/{} (desktop)", env!("CARGO_PKG_VERSION"));
     let base = || {
-        reqwest::Client::builder()
+        let builder = reqwest::Client::builder()
             .user_agent(&user_agent)
             .gzip(true)
             .brotli(true)
             .connect_timeout(connect_timeout)
-            .timeout(total_timeout)
+            .timeout(total_timeout);
+        if follow_redirects { builder } else { builder.redirect(reqwest::redirect::Policy::none()) }
     };
     let mut builder = base();
     match proxy_mode {
@@ -680,8 +724,48 @@ pub fn with_settings<T>(state: &AppState, f: impl FnOnce(&Settings) -> T) -> T {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(windows)]
+    #[test]
+    fn installer_commits_and_rereads_the_actual_user_data_pointer() {
+        let root = tempfile::tempdir().unwrap();
+        let (bootstrap, data, install) = (root.path().join("bootstrap"), root.path().join("data"), root.path().join("app"));
+        std::fs::create_dir(&install).unwrap();
+        commit_install_data(&bootstrap, &data, &install).unwrap();
+        assert!(data.is_dir());
+        assert_eq!(configured_data_dir(&bootstrap).unwrap(), data);
+        assert!(commit_install_data(&bootstrap, &root.path().join("other"), &install).is_err());
+        assert_eq!(configured_data_dir(&bootstrap).unwrap(), data);
+    }
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn separate_pointer_beats_stale_sqlite_and_leaves_target_contents_untouched() {
+        let temp = tempfile::tempdir().unwrap();
+        let bootstrap = temp.path().join("boot");
+        let target = temp.path().join("target");
+        std::fs::create_dir_all(&bootstrap).unwrap();
+        std::fs::create_dir_all(&target).unwrap();
+        std::fs::write(target.join("sentinel"), "keep").unwrap();
+
+        let conn = crate::db::open(&bootstrap).unwrap();
+        let stale = temp.path().join("outdated");
+        save_settings(&conn, &Settings { data_dir: stale.to_string_lossy().into_owned(), ..Settings::default() }, None).unwrap();
+        assert_eq!(configured_data_dir(&bootstrap), Some(stale));
+
+        write_data_root_pointer(&bootstrap, &target).unwrap();
+        assert_eq!(configured_data_dir(&bootstrap), Some(target.clone()));
+        assert_eq!(std::fs::read_dir(&target).unwrap().count(), 1);
+        assert_eq!(std::fs::read_to_string(target.join("sentinel")).unwrap(), "keep");
+    }
+
+    #[test]
+    fn pointer_write_reports_a_failed_publish() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join(DATA_ROOT_POINTER)).unwrap();
+        assert!(write_data_root_pointer(temp.path(), temp.path()).is_err());
+        assert!(temp.path().join(DATA_ROOT_POINTER).is_dir());
+    }
 
     /// 下发给前端的设置里不能带任何 Key，但要告诉前端「配没配」和尾号
     #[test]
@@ -788,3 +872,23 @@ mod tests {
         assert!(!is_system_dir(std::path::Path::new("D:\\Games")));
     }
 }
+    #[test]
+    fn saved_credentials_are_separate_and_legacy_copy_is_sanitized() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let key = "fixture-key-1234";
+        let original = serde_json::json!({ "language": "en-US", "curseforge_api_key": key });
+        std::fs::write(root.join("settings.json"), original.to_string()).unwrap();
+        let conn = crate::db::initialize(root).unwrap();
+        let app = crate::db::get_setting(&conn, "app").unwrap();
+        assert!(!app.contains(key));
+        let protected = crate::db::get_setting(&conn, &credential_key("curseforge_api_key")).unwrap();
+        assert_ne!(protected, key);
+        assert_eq!(crate::secret::unprotect(&protected).unwrap(), key);
+        assert!(!std::fs::read_to_string(root.join("settings.json.migrated.bak")).unwrap().contains(key));
+        let settings = load_settings(root, &conn, false);
+        assert_eq!(settings.curseforge_api_key.as_deref(), Some(key));
+        let reset = Settings { curseforge_api_key: None, ..settings };
+        save_settings(&conn, &reset, Some(&serde_json::json!({ "curseforge_api_key": "" }))).unwrap();
+        assert!(load_settings(root, &conn, false).curseforge_api_key.is_none());
+    }

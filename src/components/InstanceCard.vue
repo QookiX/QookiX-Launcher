@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, ref } from "vue";
 import { openMenuId, bindMenuOutside } from "../composables/instanceMenu";
-import { useRouter } from "vue-router";
 import { useInstancesStore } from "../stores/instances";
 import { usePinsStore, type PinTarget } from "../stores/pins";
 import { useMessage, NModal, NButton } from "naive-ui";
@@ -24,7 +23,6 @@ const props = defineProps<{ instance: Instance; animationDelay?: string }>();
 const emit = defineEmits<{ move: [instance: Instance] }>();
 const instances = useInstancesStore();
 const pins = usePinsStore();
-const router = useRouter();
 const message = useMessage();
 const { t } = useI18n();
 
@@ -82,7 +80,7 @@ const sidebarPinId = computed(() =>
 );
 function togglePin(target: PinTarget) {
   const i = props.instance;
-  pins.toggle({
+  void pins.toggle({
     id: pins.makeId("instance", i.id, i.id, target),
     type: "instance",
     target,
@@ -93,7 +91,7 @@ function togglePin(target: PinTarget) {
     loader: i.loader,
     name: i.name,
     icon: null,
-  });
+  }).catch((error) => message.error(String(error)));
 }
 
 // ——「更多」下拉菜单（全局单例：同一时刻只开一个）——
@@ -145,11 +143,11 @@ function confirmDelete() {
 </script>
 
 <template>
-  <div class="inst-card glass clickable" :class="{ 'menu-open': menuOpen }" :style="animationDelay ? { animationDelay } : undefined" @click="router.push(`/instance/${instance.id}`)">
+  <div class="inst-card glass clickable" :class="{ 'menu-open': menuOpen, 'qx-card-enter': animationDelay !== undefined }" :style="{ animationDelay }">
     <div class="card-top">
       <div class="icon"><AppIcon :name="instance.icon" /></div>
       <div class="title-wrap">
-        <div class="name text-ellipsis">{{ instance.name }}</div>
+        <RouterLink class="name text-ellipsis" :to="`/instance/${instance.id}`">{{ instance.name }}</RouterLink>
         <div class="meta">
           <span class="badge">{{ loaderBadge(instance.loader) }}</span>
           <span class="mc">{{ instance.mc_version }}</span>
@@ -167,7 +165,7 @@ function confirmDelete() {
           {{ t("instanceCard.played", { duration: fmtDuration(instance.total_play_time) }) }}
         </span>
       </div>
-      <div class="actions" @click.stop>
+      <div class="actions">
         <button
           class="icon-btn play"
           :title="t('instanceCard.launch')"
@@ -184,6 +182,7 @@ function confirmDelete() {
             class="icon-btn"
             :class="{ active: menuOpen }"
             :title="t('instanceCard.more')"
+            :aria-expanded="menuOpen"
             @click="toggleMenu"
           >
             <IconMoreVertical />
@@ -284,9 +283,23 @@ function confirmDelete() {
   min-width: 0;
 }
 .name {
+  display: block;
+  color: inherit;
+  text-decoration: none;
   font-weight: 600;
   font-size: var(--fs-md);
   margin-bottom: 5px;
+}
+.name::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: var(--r-lg);
+}
+.name:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 .meta {
   display: flex;
@@ -337,6 +350,8 @@ function confirmDelete() {
 .actions {
   display: flex;
   gap: 6px;
+  position: relative;
+  z-index: 2;
 }
 .icon-btn {
   width: 32px;

@@ -1,9 +1,14 @@
 mod accounts;
+mod archive;
 mod cloud_sync;
 mod commands;
+mod content_inventory;
+mod content_metadata;
+mod content_replacement;
 mod instance_share;
 mod lan_sync;
 mod crash;
+mod data_root_migration;
 mod db;
 mod diagnostics;
 mod timemachine;
@@ -11,11 +16,23 @@ mod curseforge;
 mod deps;
 mod download;
 mod fsutil;
+mod image_files;
+
+#[cfg(windows)]
+pub fn commit_install_data(data: &std::path::Path, install: &std::path::Path) -> Result<(), String> {
+    if unsafe { windows_sys::Win32::UI::Shell::IsUserAnAdmin() } != 0 {
+        return Err("请由原启动用户提交数据目录。安装程序本身可以单独提权。".into());
+    }
+    let bootstrap = settings::bootstrap_root(settings::portable_data_dir());
+    settings::commit_install_data(&bootstrap, data, install)
+}
 mod install;
 mod instances;
 mod keybinds_lang;
 mod java;
 mod launch;
+mod maven;
+mod oauth_broker;
 mod mcmeta;
 mod nbt;
 mod options;
@@ -30,23 +47,27 @@ mod paths;
 mod frp;
 mod qookix;
 mod room_pack;
+mod runtime_jobs;
 mod servers;
 mod secret;
+mod server_logs;
 mod settings;
 mod shimu;
 mod state;
 mod storage;
+mod task_events;
 mod terracotta;
 mod translate;
 mod updater;
 mod util;
+#[cfg(windows)]
+pub mod uninstall_data;
 mod world_backup;
 mod yggdrasil;
 mod yggdrasil_oauth;
 mod cubiomes;
 
 use state::AppState;
-use std::collections::HashMap;
 use std::sync::{Arc, Mutex, RwLock};
 use tauri::{
     menu::{Menu, MenuBuilder, MenuItemBuilder},
@@ -192,53 +213,28 @@ pub fn run() {
     //
     // 便携模式：exe 同目录放一个 portable.txt（内容随意），数据全部落在
     // <exe 目录>\data，不碰 %APPDATA%。复制整个文件夹即可带走配置与实例。
-    let portable_root = std::env::current_exe().ok().and_then(|exe| {
-        let dir = exe.parent()?;
-        dir.join("portable.txt")
-            .is_file()
-            .then(|| dir.join("data"))
-    });
+    let portable_root = settings::portable_data_dir();
     let portable = portable_root.is_some();
-    let default_root = std::env::var("QOOKIX_DATA_DIR")
-        .map(std::path::PathBuf::from)
-        .ok()
-        .or(portable_root)
-        .unwrap_or_else(|| std::path::PathBuf::from(settings::default_root()));
-    let _ = settings::ensure_layout(&default_root);
-
-    // The installer seeds a custom data directory for fresh installs by writing
-    // `settings.json` (with `data_dir`) into the default root. Honor it: all
-    // launcher data (instances, libraries, assets, settings) then lives under
-    // the chosen folder. Existing installs keep their current data root.
-    let seeded = settings::load_settings(&default_root);
-    let root = if seeded.data_dir.is_empty() {
-        default_root
-    } else {
-        let p = std::path::PathBuf::from(&seeded.data_dir);
-        // Bug ⑦: validate data_dir on startup — reject disk roots and system
-        // directories that may have been set by a buggy older version or
-        // edited manually. Fall back to the default root silently.
-        if settings::is_disk_root(&p) || settings::is_system_dir(&p) {
-            eprintln!("data_dir {:?} is invalid (disk root or system dir), falling back to default", p);
-            default_root
-        } else {
-            p
-        }
-    };
+    let bootstrap = settings::bootstrap_root(portable_root);
+    let _bootstrap_lock = data_root_migration::open_bootstrap(&bootstrap)
+        .map_err(|error| eprintln!("无法协调数据目录迁移: {error}"))
+        .ok();
+    let root = settings::configured_data_dir(&bootstrap).unwrap_or(bootstrap);
     let _ = settings::ensure_layout(&root);
-    let loaded = settings::load_settings(&root);
-
-    let proxy_mode = loaded.proxy_mode.clone();
-    let proxy = loaded.proxy.clone();
+    let fresh = !db::db_path(&root).exists();
     // 应用数据库（SQLite）：打不开时退化为内存库（应用可用但本次不持久化）
-    let conn = match db::open(&root) {
+    let conn = match db::initialize(&root) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("[db] 无法打开数据库，退化为内存模式: {e}");
-            rusqlite::Connection::open_in_memory().expect("内存数据库也打不开")
+            db::open_in_memory().expect("内存数据库也打不开")
         }
     };
+    let loaded = settings::load_settings(&root, &conn, fresh);
+    let proxy_mode = loaded.proxy_mode.clone();
+    let proxy = loaded.proxy.clone();
     // 拾木空间登录态：在 root 被 move 进 AppState 之前读盘
+    secret::migrate_saved_sessions(&root);
     let shimu_auth = shimu::load_saved(&root);
     // LittleSkin OAuth2 待校验 state：同样在 root 被 move 之前读盘
     let ygg_oauth_pending = yggdrasil_oauth::load_saved(&root);
@@ -250,17 +246,15 @@ pub fn run() {
         db: Mutex::new(conn),
         client: settings::http_client(&proxy_mode, proxy.as_deref()),
         semaphore: Arc::new(tokio::sync::Semaphore::new(8)),
-        game_pids: Arc::new(Mutex::new(HashMap::new())),
-        server_pids: Arc::new(Mutex::new(HashMap::new())),
-        server_senders: Arc::new(Mutex::new(HashMap::new())),
-        task_counter: std::sync::atomic::AtomicU64::new(1),
-        install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        jobs: crate::runtime_jobs::RuntimeJobs::default(),
+
+
         ms_flow: Arc::new(Mutex::new(None)),
         shimu: Mutex::new(shimu_auth),
         ygg_oauth: Mutex::new(ygg_oauth_pending),
         java_cache: Mutex::new(None),
         terracotta: Mutex::new(None),
-        pending_update: Mutex::new(None),
+        pending_update: Mutex::new(crate::updater::UpdateCache::default()),
         lan_sync: Mutex::new(None),
         qookix: Mutex::new(qookix_auth),
         qookix_refresh: tokio::sync::Mutex::new(()),
@@ -276,7 +270,7 @@ pub fn run() {
         // 事件（载荷为 URL 字符串数组，见 tauri-plugin-deep-link 源码），
         // 从二次实例的 argv 中取出 qookix:// 链接原样重发该事件即可。
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, args, _cwd| {
-            println!("[single-instance] 二次启动 args={:?}", args);
+            println!("[single-instance] second_launch");
             // 官方范式：交给 deep-link 插件处理 argv——它自己找出 qookix://
             // 链接、更新内部状态并 emit 一次 deep-link://new-url。
             // （此前手写 emit 与之重复，导致同一链接被处理多次、实例连开三次）
@@ -338,6 +332,7 @@ pub fn run() {
             // nbt 存档编辑
             commands::nbt_list_worlds,
             commands::nbt_open_world,
+            commands::nbt_validate_world_patch,
             commands::nbt_save_world,
             commands::nbt_tree_view,
             commands::nbt_list_players,
@@ -379,6 +374,8 @@ pub fn run() {
             // 开发者工具：程序化打开 DevTools（F12 由前端开关控制是否调用）
             commands::open_devtools,
             commands::change_data_dir,
+            commands::data_root_migration_error,
+            commands::cancel_failed_data_root_migration,
             commands::reveal_data_dir,
             commands::auto_detect_memory,
             commands::detect_java,
@@ -437,6 +434,7 @@ pub fn run() {
             commands::install_content,
             commands::uninstall_content,
             commands::list_content,
+            commands::reconcile_content,
             commands::identify_content,
             commands::import_local_file,
             commands::toggle_content_enabled,
@@ -459,12 +457,13 @@ pub fn run() {
             // 外置登录（Yggdrasil 第三方验证服务器）
             yggdrasil::yggdrasil_login,
             yggdrasil::yggdrasil_add_account,
-            yggdrasil::yggdrasil_ensure_token,
             yggdrasil::yggdrasil_textures,
             // LittleSkin OAuth2（Yggdrasil Connect）：授权码流登录皮肤站账号
             yggdrasil_oauth::yggdrasil_oauth_config,
             yggdrasil_oauth::yggdrasil_set_credentials,
             yggdrasil_oauth::yggdrasil_oauth_start,
+            yggdrasil_oauth::yggdrasil_oauth_poll,
+            yggdrasil_oauth::yggdrasil_oauth_cancel,
             yggdrasil_oauth::yggdrasil_oauth_complete,
             yggdrasil_oauth::yggdrasil_oauth_add_account,
             // 拾木空间（www.mcimg.com）OAuth 登录 + 开放 API
@@ -554,6 +553,8 @@ pub fn run() {
             // crash analysis
             commands::list_crash_logs,
             commands::analyze_crash_log,
+            commands::ai_analyze_crash,
+            commands::submit_crash_ai_feedback,
             commands::get_crash_report_content,
             // pinned items (首页 / 侧边栏)
             commands::get_pins,
@@ -591,8 +592,11 @@ pub fn run() {
             commands::resourcepack_list_instance_packs,
             // QookiX 账号（可选）：好友 + 陶瓦联机房间目录
             qookix::qookix_status,
+            qookix::qookix_service_status,
             qookix::qookix_login,
+            qookix::qookix_login_2fa,
             qookix::qookix_register,
+            qookix::qookix_register_policy,
             qookix::qookix_resend_verification,
             qookix::qookix_forgot_password,
             qookix::qookix_logout,
@@ -601,6 +605,11 @@ pub fn run() {
             qookix::qookix_bind_mc,
             qookix::qookix_unbind_mc,
             qookix::qookix_change_email,
+            qookix::qookix_change_password,
+            qookix::qookix_2fa_status,
+            qookix::qookix_2fa_setup,
+            qookix::qookix_2fa_enable,
+            qookix::qookix_2fa_disable,
             qookix::qookix_user_profiles,
             qookix::qookix_search_users,
             qookix::qookix_friends,
@@ -768,7 +777,6 @@ pub fn run() {
 #[cfg(test)]
 mod smoke {
     use crate::models::{maven_to_path, LoaderMetaEntry, VersionManifest, VersionJson};
-    use std::collections::HashMap;
 
     #[tokio::test]
     async fn mojang_manifest_and_version_json_parse() {
@@ -944,17 +952,15 @@ mod smoke {
             db: Mutex::new(rusqlite::Connection::open_in_memory().unwrap()),
             client: crate::settings::http_client("system", None),
             semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
-            game_pids: Arc::new(Mutex::new(HashMap::new())),
-            server_pids: Arc::new(Mutex::new(HashMap::new())),
-        server_senders: Arc::new(Mutex::new(HashMap::new())),
-            task_counter: std::sync::atomic::AtomicU64::new(1),
-            install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            jobs: crate::runtime_jobs::RuntimeJobs::default(),
+
+
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
-            pending_update: Mutex::new(None),
+            pending_update: Mutex::new(crate::updater::UpdateCache::default()),
             lan_sync: Mutex::new(None),
             qookix: Mutex::new(crate::qookix::QookixSession::default()),
             qookix_refresh: tokio::sync::Mutex::new(()),
@@ -994,17 +1000,15 @@ mod smoke {
             db: Mutex::new(rusqlite::Connection::open_in_memory().unwrap()),
             client: crate::settings::http_client("system", None),
             semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
-            game_pids: Arc::new(Mutex::new(HashMap::new())),
-            server_pids: Arc::new(Mutex::new(HashMap::new())),
-            server_senders: Arc::new(Mutex::new(HashMap::new())),
-            task_counter: std::sync::atomic::AtomicU64::new(1),
-            install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            jobs: crate::runtime_jobs::RuntimeJobs::default(),
+
+
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
-            pending_update: Mutex::new(None),
+            pending_update: Mutex::new(crate::updater::UpdateCache::default()),
             lan_sync: Mutex::new(None),
             qookix: Mutex::new(crate::qookix::QookixSession::default()),
             qookix_refresh: tokio::sync::Mutex::new(()),
@@ -1045,17 +1049,15 @@ mod smoke {
             db: Mutex::new(rusqlite::Connection::open_in_memory().unwrap()),
             client: crate::settings::http_client("system", None),
             semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
-            game_pids: Arc::new(Mutex::new(HashMap::new())),
-            server_pids: Arc::new(Mutex::new(HashMap::new())),
-        server_senders: Arc::new(Mutex::new(HashMap::new())),
-            task_counter: std::sync::atomic::AtomicU64::new(1),
-            install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            jobs: crate::runtime_jobs::RuntimeJobs::default(),
+
+
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
-            pending_update: Mutex::new(None),
+            pending_update: Mutex::new(crate::updater::UpdateCache::default()),
             lan_sync: Mutex::new(None),
             qookix: Mutex::new(crate::qookix::QookixSession::default()),
             qookix_refresh: tokio::sync::Mutex::new(()),

@@ -2,11 +2,14 @@ use crate::download::{download_many, DownloadItem};
 use crate::mcmeta;
 use crate::models::*;
 use crate::state::AppState;
-use crate::util::{extract_zip, rules_allow, sort_mc_versions};
+use crate::task_events::InstallProgress;
+use crate::archive::extract_zip;
+use crate::maven::sort_mc_versions;
+use crate::util::rules_allow;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::time::timeout;
 
 /// Entry point: install (or repair) the game files for an instance.
@@ -27,34 +30,11 @@ impl<'a, R: tauri::Runtime> TaskCtx<'a, R> {
     /// 新建任务（分配新的 task id）
     pub fn new(
         app: &'a tauri::AppHandle<R>,
-        state: &AppState,
-        instance: &'a Instance,
-        source: &'a str,
-    ) -> Self {
-        Self {
-            app,
-            instance,
-            source,
-            id: state.next_task_id(),
-            closed: false,
-        }
-    }
-
-    /// 复用已有 task id（跨函数传递任务时用）
-    #[allow(dead_code)]
-    pub fn with_id(
-        app: &'a tauri::AppHandle<R>,
         instance: &'a Instance,
         source: &'a str,
         id: u64,
     ) -> Self {
         Self { app, instance, source, id, closed: false }
-    }
-
-    /// 任务是否已显式收尾（测试与内部判断用）
-    #[allow(dead_code)]
-    pub fn is_closed(&self) -> bool {
-        self.closed
     }
 
     pub fn emit(&self, stage: &str, message: &str, done: usize, total: usize) {
@@ -89,48 +69,67 @@ impl<R: tauri::Runtime> Drop for TaskCtx<'_, R> {
 
 /// 构造任务收尾（`stage = "done"`）的事件载荷。
 /// 抽成纯函数：收尾语义（成功/失败/中断）在这里集中定义，且可被单测锁定。
-pub fn done_event_payload(
+fn done_event_payload<'a>(
     task_id: u64,
-    instance: &Instance,
-    source: &str,
+    instance: &'a Instance,
+    source: &'a str,
     ok: bool,
-    message: &str,
-) -> serde_json::Value {
-    let mut payload = serde_json::json!({
-        "taskId": task_id,
-        "stage": "done",
-        "message": message,
-        "done": if ok { 1 } else { 0 },
-        "total": if ok { 1 } else { 0 },
-        "instanceId": instance.id,
-        "instanceName": instance.name,
-        "source": source,
-    });
-    // 只有失败才带 ok=false：前端以此区分「完成」与「失败」
-    if !ok {
-        payload["ok"] = serde_json::json!(false);
+    message: &'a str,
+) -> InstallProgress<'a> {
+    let completed = if ok { 1 } else { 0 };
+    InstallProgress {
+        task_id,
+        stage: "done",
+        message,
+        done: completed,
+        total: completed,
+        instance_id: &instance.id,
+        instance_name: &instance.name,
+        source,
+        cancellable: None,
+        ok: (!ok).then_some(false),
     }
-    payload
 }
 
 pub async fn install_game(
     app: tauri::AppHandle,
     state: &AppState,
     instance: &Instance,
+    parent: Option<&tokio_util::sync::CancellationToken>,
 ) -> Result<InstallPlan, String> {
     let source = format!(
         "游戏安装 {} {}",
         instance.mc_version,
         if instance.loader == LoaderType::Vanilla { "" } else { instance.loader.as_str() }
     );
-    let mut ctx = TaskCtx::new(&app, state, instance, &source);
-    let task_id = ctx.id;
-    let result = install_game_inner(&app, state, instance, task_id, &source).await;
+    let task_id = state.next_task_id();
+    let _lease = state.jobs.register_install(task_id, &instance.id, parent)?;
+    let mut ctx = TaskCtx::new(&app, instance, &source, task_id);
+    let result = install_game_for_task(&app, state, instance, task_id, &source).await;
     match &result {
         Ok(_) => ctx.finish_ok("游戏文件就绪"),
         Err(e) => ctx.finish_err(&format!("游戏安装失败：{e}")),
     }
     result
+}
+
+pub(crate) async fn install_game_for_task(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    instance: &Instance,
+    task_id: u64,
+    source: &str,
+) -> Result<InstallPlan, String> {
+    let cancel = state.jobs.install_token(task_id);
+    if cancel.is_cancelled() {
+        return Err("安装已取消".into());
+    }
+    let plan = install_game_inner(app, state, instance, task_id, source).await?;
+    if cancel.is_cancelled() {
+        return Err("安装已取消".into());
+    }
+    crate::instances::mark_installed(state, &instance.id)?;
+    Ok(plan)
 }
 
 async fn install_game_inner(
@@ -172,13 +171,13 @@ async fn install_game_inner(
     } else {
         false
     };
-    let (patched, patched_path) = match (existing_json_obj, need_repatch) {
-        (Some(json), false) => (json, existing_json),
+    let patched = match (existing_json_obj, need_repatch) {
+        (Some(json), false) => json,
         _ => {
             let vanilla = mcmeta::fetch_version_json(state, &instance.mc_version).await?;
             let patched = patch_version(&app, state, &vanilla, instance, task_id, &source).await?;
-            let patched_path = mcmeta::cache_version_json(state, &patched).await?;
-            (patched, patched_path)
+            mcmeta::cache_version_json(state, &patched).await?;
+            patched
         }
     };
 
@@ -200,31 +199,23 @@ async fn install_game_inner(
         download_many(app.clone(), state, task_id, "client", items).await?;
     }
 
-// ---- Forge 1.17+ 新版安装器：原版 jar 就位后执行 processors 任务链 ----
+    // 原版客户端就位后执行 Forge/NeoForge 的客户端处理器。
     if let Some(full_ver) = &loader_full {
         let tool_name = if instance.loader == LoaderType::NeoForge { "neoforge" } else { "forge" };
         let installer_path =
             state.root.join("runtimes").join(format!("{tool_name}-{full_ver}-installer.jar"));
-        if installer_path.exists() {
-            emit_progress(&app, task_id, "forge-install", "正在安装 Forge…", 0, 0, instance, &source);
-            let profile: serde_json::Value = {
-                let file = std::fs::File::open(&installer_path).map_err(|e| e.to_string())?;
-                let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-                let mut entry = archive
-                    .by_name("install_profile.json")
-                    .map_err(|e| e.to_string())?;
-                let mut buf = Vec::new();
-                std::io::Read::read_to_end(&mut entry, &mut buf).map_err(|e| e.to_string())?;
-                serde_json::from_slice(&buf).map_err(|e| e.to_string())?
-            };
-            // Forge processors 失败不应阻止后续 natives 提取——打印警告但继续
-            if let Err(e) = run_forge_processors(&app, state, instance, &installer_path, &profile, task_id, &source).await {
-                crate::util::log_line(&format!("[install] Forge processors 警告: {e}"));
-            }
-            emit_progress(&app, task_id, "forge-install", "Forge 安装完成", 1, 1, instance, &source);
-        } else {
-            emit_progress(&app, task_id, "forge-install", "Forge 安装器未找到，跳过", 1, 1, instance, &source);
+        emit_progress(app, task_id, "forge-install", "正在安装加载器…", 0, 0, instance, source);
+        let profile_bytes = crate::archive::read_zip_entry(&installer_path, "install_profile.json")
+            .map_err(|e| format!("读取 {tool_name} 安装配置失败: {e}"))?;
+        let profile = serde_json::from_slice(&profile_bytes)
+            .map_err(|e| format!("解析 {tool_name} 安装配置失败: {e}"))?;
+        run_forge_processors(app, state, instance, &patched, &installer_path, &profile, task_id, source)
+            .await
+            .map_err(|e| format!("{tool_name} 安装处理器失败: {e}"))?;
+        if let Some(missing) = version_json_missing_local_lib(&patched, &crate::paths::libraries_dir(state)) {
+            return Err(format!("{tool_name} 安装缺少必需的本地库: {missing}"));
         }
+        emit_progress(app, task_id, "forge-install", "加载器安装完成", 1, 1, instance, source);
     }
 
     // ---- libraries + natives ----
@@ -354,7 +345,7 @@ async fn install_game_inner(
             // 否则「重新安装游戏」永远补不上缺失的类（表现为模组启动时崩溃）。
             // 这里只做 zip 结构校验，不比对 sha1/size —— Forge/NeoForge 的
             // processor 产物路径相同但内容与 maven 原件不同。
-            if dest.exists() && crate::util::zip_readable(&dest) {
+            if dest.exists() && crate::archive::zip_readable(&dest) {
                 continue;
             }
             lib_items.push(DownloadItem {
@@ -399,7 +390,7 @@ async fn install_game_inner(
         for entry in std::fs::read_dir(&natives_dir).map_err(|e| e.to_string())? {
             let p = entry.map_err(|e| e.to_string())?.path();
             if p.is_file() {
-                crate::util::fs_best_effort("remove_file", &p, std::fs::remove_file(&p));
+                crate::fsutil::fs_best_effort("remove_file", &p, std::fs::remove_file(&p));
             }
         }
         for (i, (jar, exclude)) in native_jars.iter().enumerate() {
@@ -453,7 +444,7 @@ async fn install_game_inner(
             // 资源对象（音效/贴图等）缺失不影响游戏启动，失败时降级为警告
             // 而不是让整个安装报失败；缺的文件下次安装时会按 dest 存在性补齐。
             if let Err(e) = download_many(app.clone(), state, task_id, "assets", asset_items).await {
-                if state.install_cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                if state.jobs.install_token(task_id).is_cancelled() {
                     return Err("下载已取消".into());
                 }
                 crate::util::log_line(&format!(
@@ -491,7 +482,7 @@ async fn install_game_inner(
     // create standard game folders so the instance detail tabs show up
     for sub in ["mods", "shaderpacks", "resourcepacks", "saves", "screenshots", "config"] {
         let dir = state.instances_dir().join(&instance.id).join(sub);
-        crate::util::fs_best_effort("create_dir_all", &dir, std::fs::create_dir_all(&dir));
+        crate::fsutil::fs_best_effort("create_dir_all", &dir, std::fs::create_dir_all(&dir));
     }
     let plan = InstallPlan {
         instance_id: instance.id.clone(),
@@ -499,8 +490,6 @@ async fn install_game_inner(
         file_count: total.max(1),
         symlink_fallback: false,
     };
-    let _ = patched_path;
-    emit_progress(&app, task_id, "done", "安装完成", 1, 1, instance, &source);
     Ok(plan)
 }
 
@@ -799,47 +788,30 @@ async fn run_forge_processors(
     app: &tauri::AppHandle,
     state: &AppState,
     instance: &Instance,
+    version_json: &VersionJson,
     installer_path: &std::path::Path,
     profile: &serde_json::Value,
     task_id: u64,
     source: &str,
 ) -> Result<(), String> {
-    let settings = state.settings().clone();
-    let java: String = match settings.java_path.as_deref().filter(|s| !s.is_empty()) {
-        Some(p) => p.to_string(),
-        None => {
-            let now = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs();
-            let (.., list) = crate::java::cached_detect(&state.root, &state.root.join("runtimes"), now, false);
-            list.first()
-                .map(|j| j.path.clone())
-                .ok_or("执行 Forge 安装任务需要 Java，但未检测到可用的 Java")?
-        }
+    let Some(processors) = profile.get("processors") else {
+        return Ok(());
+    };
+    let processors = processors.as_array().ok_or("processors 必须为数组")?;
+    if processors.is_empty() {
+        return Ok(());
+    }
+    let cancel = state.jobs.install_token(task_id);
+    let java = tokio::select! {
+        _ = cancel.cancelled() => return Err("安装已取消".into()),
+        java = crate::launch::ensure_java(app, state, instance, version_json) => java?.path,
     };
 
     let work_dir = crate::paths::resolve_version_dir(state, &instance.id).join("forge_processors");
     std::fs::create_dir_all(&work_dir).map_err(|e| e.to_string())?;
 
     // 1. 解压安装器内 data/ 目录（binpatch、args 模板等）
-    {
-        let file = std::fs::File::open(installer_path).map_err(|e| e.to_string())?;
-        let mut archive = zip::ZipArchive::new(file).map_err(|e| e.to_string())?;
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i).map_err(|e| e.to_string())?;
-            let name = entry.name().to_string();
-            if !name.starts_with("data/") || entry.is_dir() {
-                continue;
-            }
-            let dest = work_dir.join(&name);
-            if let Some(p) = dest.parent() {
-                std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-            }
-            let mut out = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
-            std::io::copy(&mut entry, &mut out).map_err(|e| e.to_string())?;
-        }
-    }
+    crate::archive::extract_zip_strip(installer_path, &work_dir.join("data"), "data/", &[])?;
 
     // 2. 下载 processors 的依赖库（仅供安装期 classpath 使用）
     if let Some(installer_libs) = profile.get("libraries").and_then(|v| v.as_array()) {
@@ -954,14 +926,7 @@ async fn run_forge_processors(
         Ok(s)
     };
 
-    // 4. 逐条执行 client 侧 processors（老版 Forge ≤1.16 可能没有 processors）
-    let Some(processors) = profile.get("processors").and_then(|v| v.as_array()) else {
-        // 老版 Forge：没有 processors，仅靠 versionInfo 已经完成了版本信息配置
-        return Ok(());
-    };
-    if processors.is_empty() {
-        return Ok(());
-    }
+    // 4. 逐条执行客户端处理器
     let total = processors.len();
     for (i, proc_entry) in processors.iter().enumerate() {
         if let Some(sides) = proc_entry.get("sides").and_then(|v| v.as_array()) {
@@ -1007,8 +972,13 @@ async fn run_forge_processors(
         let processor_future = tokio::process::Command::new(&java)
             .args(&cmd_args)
             .current_dir(&work_dir)
+            .kill_on_drop(true)
             .output();
-        let output = match timeout(Duration::from_secs(300), processor_future).await {
+        let result = tokio::select! {
+            _ = cancel.cancelled() => return Err("安装已取消".into()),
+            result = timeout(Duration::from_secs(300), processor_future) => result,
+        };
+        let output = match result {
             Ok(Ok(output)) => output,
             Ok(Err(e)) => return Err(format!("运行 processor 失败: {e}")),
             Err(_) => return Err(format!("processor {main_jar} 执行超时（5 分钟）")),
@@ -1092,18 +1062,25 @@ pub fn version_json_has_classpath(json: &VersionJson) -> bool {
 ///
 /// 返回缺失的第一个库的 maven 坐标（用于日志提示），全部存在则返回 None。
 pub fn version_json_missing_local_lib(json: &VersionJson, libs_dir: &std::path::Path) -> Option<String> {
+    let features = HashMap::new();
     for lib in &json.libraries {
-        // 只检查无下载来源的本地库（processor 产物）
-        if lib.url.is_some() {
+        if !rules_allow(lib.rules.as_deref().unwrap_or(&[]), &features) {
             continue;
         }
-        if let Some(dl) = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref()) {
-            let _ = dl;
+        let base = lib.url.as_deref();
+        let artifact = lib.downloads.as_ref().and_then(|d| d.artifact.as_ref());
+        if base.is_some_and(|url| !url.trim().is_empty())
+            || artifact.is_some_and(|file| !file.url.trim().is_empty())
+            || (artifact.is_none() && lib.natives.is_some())
+        {
             continue;
         }
         if let Some(rel) = crate::models::maven_to_path(&lib.name) {
             let path = libs_dir.join(&rel);
-            if !path.exists() {
+            let usable = path.is_file()
+                && (path.extension().and_then(|ext| ext.to_str()) != Some("jar")
+                    || crate::archive::zip_readable(&path));
+            if !usable {
                 return Some(lib.name.clone());
             }
         }
@@ -1222,7 +1199,7 @@ async fn forge_patch(
         );
     }
 
-    let profile_bytes = crate::util::read_zip_entry(&installer_path, "install_profile.json")
+    let profile_bytes = crate::archive::read_zip_entry(&installer_path, "install_profile.json")
         .map_err(|e| format!("读取 install_profile.json 失败: {e}"))?;
     let profile_text = String::from_utf8_lossy(&profile_bytes).to_string();
     // substitute common placeholders
@@ -1244,9 +1221,8 @@ async fn forge_patch(
     let is_legacy_spec0 = profile.get("spec").and_then(|v| v.as_i64()) == Some(0);
     if is_legacy_spec0 {
         let libs_root = crate::paths::libraries_dir(state);
-        if let Err(e) = crate::util::extract_zip_strip(&installer_path, &libs_root, "maven/", &[]) {
-            crate::util::log_line(&format!("[forge_patch] 解压内嵌 maven 依赖失败: {e}"));
-        }
+        crate::archive::extract_zip_strip(&installer_path, &libs_root, "maven/", &[])
+            .map_err(|e| format!("解压内嵌 maven 依赖失败: {e}"))?;
     }
     let version_info = if let Some(v) = profile.get("versionInfo") {
         v.clone()
@@ -1257,7 +1233,7 @@ async fn forge_patch(
             .and_then(|v| v.as_str())
             .unwrap_or("/version.json")
             .trim_start_matches('/');
-        let bytes = crate::util::read_zip_entry(&installer_path, entry)
+        let bytes = crate::archive::read_zip_entry(&installer_path, entry)
             .map_err(|e| format!("读取版本 json（{entry}）失败: {e}"))?;
         serde_json::from_slice::<serde_json::Value>(&bytes).map_err(|e| format!("解析版本 json 失败: {e}"))?
     };
@@ -1481,7 +1457,7 @@ pub async fn loader_versions(
                 .into_iter()
                 .filter_map(|e| e.get("loader")?.get("version")?.as_str().map(|s| s.to_string()))
                 .collect();
-            Ok(crate::util::sort_version_desc(versions))
+            Ok(crate::maven::sort_version_desc(versions))
         }
         LoaderType::Forge | LoaderType::NeoForge => {
             let (url, prefix) = match loader {
@@ -1499,7 +1475,7 @@ pub async fn loader_versions(
             };
             let url = crate::mirror::rewrite(state, url);
             let xml = crate::download::get_text(&state.client, &url).await?;
-            let versions = crate::util::parse_maven_versions(&xml);
+            let versions = crate::maven::parse_maven_versions(&xml);
             if loader == LoaderType::Forge {
                 Ok(sort_mc_versions(versions, &prefix))
             } else {
@@ -1508,7 +1484,7 @@ pub async fn loader_versions(
                     .into_iter()
                     .filter(|v| v.starts_with(&prefix))
                     .collect();
-                Ok(crate::util::sort_version_desc(kept))
+                Ok(crate::maven::sort_version_desc(kept))
             }
         }
         LoaderType::Vanilla => Ok(vec![]),
@@ -1528,16 +1504,20 @@ pub fn emit_progress<R: tauri::Runtime>(
 ) {
     let _ = app.emit(
         "install://progress",
-        serde_json::json!({
-            "taskId": task_id,
-            "stage": stage,
-            "message": message,
-            "done": done,
-            "total": total,
-            "instanceId": instance.id,
-            "instanceName": instance.name,
-            "source": source,
-        }),
+        InstallProgress {
+            task_id,
+            stage,
+            message,
+            done,
+            total,
+            instance_id: &instance.id,
+            instance_name: &instance.name,
+            source,
+            cancellable: (stage != "done"
+                && app.try_state::<AppState>().is_some_and(|state| state.jobs.has_install(task_id)))
+                .then_some(true),
+            ok: None,
+        },
     );
 }
 
@@ -1556,10 +1536,34 @@ mod done_payload_tests {
         }
     }
 
+    #[test]
+    fn processor_output_must_be_a_readable_jar_before_install_succeeds() {
+        let temp = tempfile::tempdir().unwrap();
+        let version: VersionJson = serde_json::from_value(serde_json::json!({
+            "id": "forge",
+            "libraries": [
+                {"name": "example:remote:1", "url": "https://example.invalid/"},
+                {"name": "example:patched:1", "downloads": {
+                    "artifact": {"url": "", "sha1": "", "size": 0}
+                }}
+            ]
+        })).unwrap();
+        let missing = || version_json_missing_local_lib(&version, temp.path());
+        assert_eq!(missing().as_deref(), Some("example:patched:1"));
+        let jar = temp.path().join("example/patched/1/patched-1.jar");
+        std::fs::create_dir_all(jar.parent().unwrap()).unwrap();
+        std::fs::write(&jar, b"incomplete").unwrap();
+        assert_eq!(missing().as_deref(), Some("example:patched:1"));
+        let mut writer = zip::ZipWriter::new(std::fs::File::create(&jar).unwrap());
+        writer.start_file("example.class", zip::write::SimpleFileOptions::default()).unwrap();
+        writer.finish().unwrap();
+        assert_eq!(missing(), None);
+    }
+
     /// 失败收尾必须带 ok=false（前端据此把卡片标为失败并停止转圈）
     #[test]
     fn failure_payload_marks_ok_false() {
-        let p = done_event_payload(7, &inst(), "整合包：测试", false, "游戏安装失败：磁盘已满");
+        let p = serde_json::to_value(done_event_payload(7, &inst(), "整合包：测试", false, "游戏安装失败：磁盘已满")).unwrap();
         assert_eq!(p["stage"], "done");
         assert_eq!(p["taskId"], 7);
         assert_eq!(p["ok"], false);
@@ -1571,7 +1575,7 @@ mod done_payload_tests {
     /// 成功收尾：进度打满且不写 ok=false（前端按缺失即成功处理）
     #[test]
     fn success_payload_has_full_progress_without_fail_flag() {
-        let p = done_event_payload(9, &inst(), "游戏安装 1.20.1 fabric", true, "游戏文件就绪");
+        let p = serde_json::to_value(done_event_payload(9, &inst(), "游戏安装 1.20.1 fabric", true, "游戏文件就绪")).unwrap();
         assert_eq!(p["stage"], "done");
         assert_eq!(p["done"], 1);
         assert_eq!(p["total"], 1);
@@ -1584,7 +1588,7 @@ mod done_payload_tests {
     /// 载荷必须带上任务与实例标识，否则下载中心无法把事件归到正确的卡片
     #[test]
     fn payload_carries_identity_fields() {
-        let p = done_event_payload(42, &inst(), "加载器：forge 1.12.2", false, "任务未正常结束");
+        let p = serde_json::to_value(done_event_payload(42, &inst(), "加载器：forge 1.12.2", false, "任务未正常结束")).unwrap();
         assert_eq!(p["taskId"], 42);
         assert_eq!(p["instanceId"], "abc123");
         assert_eq!(p["instanceName"], "测试实例");

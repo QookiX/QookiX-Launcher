@@ -84,6 +84,14 @@ struct InstallRequest {
     launch_after: bool,
 }
 
+#[derive(Debug)]
+struct InstallPlan {
+    install_dir: PathBuf,
+    data_dir: Option<PathBuf>,
+    desktop_shortcut: bool,
+    needs_elevation: bool,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 enum PathTarget {
@@ -277,15 +285,15 @@ pub fn run() -> Result<(), String> {
                 if installing {
                     return;
                 }
-                match validate_request(&request) {
-                    Ok(()) => {
-                        install_dir = PathBuf::from(&request.install_dir);
+                match validate_request(&request, arguments.bootstrap.fresh_install) {
+                    Ok(plan) => {
+                        install_dir = plan.install_dir.clone();
                         installing = true;
                         send_to_webview(
                             webview.as_ref(),
-                            json!({ "type": "installStarted" }),
+                            json!({ "type": "installStarted", "installDir": &plan.install_dir, "resourceDir": &plan.data_dir }),
                         );
-                        start_install(installer.clone(), request, proxy.clone());
+                        start_install(installer.clone(), plan, main_binary.clone(), proxy.clone());
                     }
                     Err((field, code)) => send_to_webview(
                         webview.as_ref(),
@@ -394,8 +402,7 @@ fn parse_arguments() -> Result<Arguments, String> {
             version: version.ok_or_else(|| "missing --version".to_string())?,
             install_dir: install_dir
                 .ok_or_else(|| "missing --install-dir".to_string())?,
-            resource_dir: resource_dir
-                .ok_or_else(|| "missing --resource-dir".to_string())?,
+            resource_dir: initial_data_directory(resource_dir.ok_or("missing --resource-dir")?),
             fresh_install,
             language,
             logo_data_url: format!(
@@ -406,21 +413,89 @@ fn parse_arguments() -> Result<Arguments, String> {
     })
 }
 
+fn initial_data_directory(fallback: String) -> String {
+    let bootstrap = env::var_os("QOOKIX_DATA_DIR").filter(|value| !value.is_empty()).map(PathBuf::from)
+        .or_else(|| env::var_os("APPDATA").map(|path| PathBuf::from(path).join("QookiX-Launcher")));
+    let Some(bootstrap) = bootstrap else { return fallback };
+    for name in ["data-root.json", "settings.json"] {
+        if let Some(path) = fs::read(bootstrap.join(name)).ok()
+            .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+            .and_then(|value| value.get("data_dir").and_then(|value| value.as_str()).map(str::to_owned))
+            .filter(|path| Path::new(path).is_absolute())
+        {
+            return path;
+        }
+    }
+    if env::var_os("QOOKIX_DATA_DIR").is_some() {
+        return bootstrap.to_string_lossy().into_owned();
+    }
+    fallback
+}
+
 fn validate_request(
     request: &InstallRequest,
-) -> Result<(), (&'static str, &'static str)> {
-    if !Path::new(&request.install_dir).is_absolute() {
-        return Err(("install", "absolutePath"));
+    fresh_install: bool,
+) -> Result<InstallPlan, (&'static str, &'static str)> {
+    let install_dir = resolve_directory(&request.install_dir).map_err(|error| ("install", error))?;
+    let data_dir = if fresh_install {
+        let dir = resolve_directory(&request.resource_dir).map_err(|error| ("resource", error))?;
+        let install = PathBuf::from(normalized_path_key(&install_dir));
+        let resource = PathBuf::from(normalized_path_key(&dir));
+        if resource.starts_with(&install) || install.starts_with(&resource) {
+            return Err(("resource", "insideInstall"));
+        }
+        if install_dir_requires_elevation(&dir) {
+            return Err(("resource", "unwritableData"));
+        }
+        Some(dir)
+    } else {
+        None
+    };
+    Ok(InstallPlan {
+        needs_elevation: install_dir_requires_elevation(&install_dir),
+        install_dir,
+        data_dir,
+        desktop_shortcut: request.desktop_shortcut,
+    })
+}
+
+fn resolve_directory(text: &str) -> Result<PathBuf, &'static str> {
+    use std::path::Component;
+    let path = Path::new(text.trim());
+    let valid_component = |component: Component<'_>| match component {
+        Component::Normal(name) => name.to_str().is_some_and(|name| {
+            !name.ends_with(['.', ' ']) && !name.chars().any(|ch| ch.is_control() || "<>:\"|?*".contains(ch))
+        }),
+        Component::ParentDir => false,
+        _ => true,
+    };
+    if !path.is_absolute() || !path.components().all(valid_component) || path.parent().is_none() {
+        return Err("absolutePath");
     }
-    if !Path::new(&request.resource_dir).is_absolute() {
-        return Err(("resource", "absolutePath"));
+    let mut ancestor = path;
+    let mut missing = Vec::new();
+    loop {
+        match fs::symlink_metadata(ancestor) {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(ancestor.file_name().ok_or("absolutePath")?);
+                ancestor = ancestor.parent().ok_or("absolutePath")?;
+            }
+            Err(_) => return Err("invalidDirectory"),
+        }
     }
-    let install = normalized_path_key(Path::new(request.install_dir.trim()));
-    let resource = normalized_path_key(Path::new(request.resource_dir.trim()));
-    if resource == install {
-        return Err(("resource", "insideInstall"));
+    let resolved = ancestor.canonicalize().map_err(|_| "invalidDirectory")?;
+    if !resolved.is_dir() || (missing.is_empty() && resolved.parent().is_none()) {
+        return Err("invalidDirectory");
     }
-    Ok(())
+    let name = resolved.to_str().ok_or("invalidDirectory")?;
+    let mut full = if let Some(unc) = name.strip_prefix("\\\\?\\UNC\\") {
+        PathBuf::from(format!("\\\\{unc}"))
+    } else {
+        PathBuf::from(name.strip_prefix("\\\\?\\").unwrap_or(name))
+    };
+    full.extend(missing.into_iter().rev());
+    Ok(full)
 }
 
 fn normalized_path_key(path: &Path) -> String {
@@ -445,7 +520,8 @@ fn launch_main_process(install_dir: &Path, main_binary: &str) -> Result<(), Stri
 
 fn start_install(
     installer: PathBuf,
-    request: InstallRequest,
+    plan: InstallPlan,
+    main_binary: String,
     proxy: EventLoopProxy<UserEvent>,
 ) {
     thread::spawn(move || {
@@ -456,13 +532,13 @@ fn start_install(
         ));
         let _ = fs::remove_file(&status_path);
 
-        let result = match spawn_installer(&installer, &request, &status_path) {
+        let result = match spawn_installer(&installer, &plan, &status_path) {
             Ok(mut child) => wait_for_installer(&mut child, &status_path, &proxy),
             Err(error) => Err(InstallFailure {
                 exit_code: None,
                 message: error.to_string(),
             }),
-        };
+        }.and_then(|()| commit_data_directory(&plan, &main_binary));
         let _ = fs::remove_file(status_path);
         let _ = proxy.send_event(UserEvent::Finished(result));
     });
@@ -470,11 +546,11 @@ fn start_install(
 
 fn spawn_installer(
     installer: &Path,
-    request: &InstallRequest,
+    plan: &InstallPlan,
     status_path: &Path,
 ) -> std::io::Result<InstallerProcess> {
-    let arguments = installer_arguments(request, status_path);
-    if install_dir_requires_elevation(Path::new(request.install_dir.trim())) {
+    let arguments = installer_arguments(plan, status_path);
+    if plan.needs_elevation {
         return elevated_installer_process(installer, &arguments)
             .map(InstallerProcess::Elevated);
     }
@@ -487,19 +563,31 @@ fn spawn_installer(
 }
 
 fn installer_arguments(
-    request: &InstallRequest,
+    plan: &InstallPlan,
     status_path: &Path,
 ) -> Vec<String> {
     let mut arguments = vec![
         "/S".to_string(),
-        nsis_value_option("INSTALL_DIR", request.install_dir.trim()),
-        nsis_value_option("RESOURCE_DIR", request.resource_dir.trim()),
+        nsis_value_option("INSTALL_DIR", &plan.install_dir.to_string_lossy()),
         nsis_value_option("STATUS_FILE", &status_path.to_string_lossy()),
     ];
-    if !request.desktop_shortcut {
+    if !plan.desktop_shortcut {
         arguments.push("/NO_DESKTOP_SHORTCUT".to_string());
     }
     arguments
+}
+
+fn commit_data_directory(plan: &InstallPlan, main_binary: &str) -> Result<(), InstallFailure> {
+    let Some(path) = &plan.data_dir else { return Ok(()) };
+    let output = Command::new(plan.install_dir.join(main_binary))
+        .arg("--commit-install-data").arg(path).arg(&plan.install_dir)
+        .creation_flags(0x08000000) // CREATE_NO_WINDOW
+        .output().map_err(|err| InstallFailure { exit_code: None, message: err.to_string() })?;
+    if !output.status.success() {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        return Err(InstallFailure { exit_code: output.status.code(), message });
+    }
+    Ok(())
 }
 
 fn install_dir_requires_elevation(install_dir: &Path) -> bool {
@@ -514,12 +602,13 @@ fn install_dir_requires_elevation(install_dir: &Path) -> bool {
         std::process::id(),
         thread_id_suffix(),
     ));
-    let can_write = fs::OpenOptions::new()
+    let file = fs::OpenOptions::new()
         .write(true)
         .create_new(true)
-        .open(&write_test)
-        .and_then(|mut file| file.write_all(b"QookiX Launcher"))
-        .is_ok();
+        .open(&write_test);
+    let Ok(mut file) = file else { return true };
+    let can_write = file.write_all(b"QookiX Launcher").is_ok();
+    drop(file);
     let removed = fs::remove_file(&write_test).is_ok();
 
     !(can_write && removed)
@@ -629,7 +718,7 @@ mod tests {
     use super::{
         InstallRequest, UiCommand, dialog_initial_location,
         install_dir_requires_elevation, launch_main_process,
-        nsis_value_option, wide_null,
+        nsis_value_option, validate_request, wide_null,
     };
     use std::{fs, path::PathBuf};
 
@@ -660,6 +749,24 @@ mod tests {
         };
         assert!(request.launch_after);
         assert_eq!(request.resource_dir, r"C:\QookiXData");
+    }
+
+    #[test]
+    fn install_plan_rejects_nested_and_aliased_data_paths() {
+        let root = std::env::temp_dir().join(format!("qookix-install-plan-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let request = InstallRequest {
+            install_dir: root.join("Launcher").display().to_string(),
+            resource_dir: root.join("Launcher").join("Data").display().to_string(),
+            desktop_shortcut: true,
+            launch_after: false,
+        };
+        assert_eq!(validate_request(&request, true).unwrap_err(), ("resource", "insideInstall"));
+        assert!(validate_request(&request, false).unwrap().data_dir.is_none());
+        let separate = InstallRequest { resource_dir: root.join("GameData").display().to_string(), ..request };
+        let plan = validate_request(&separate, true).unwrap();
+        assert_ne!(plan.install_dir, plan.data_dir.unwrap());
+        assert!(!plan.needs_elevation);
     }
 
     #[test]

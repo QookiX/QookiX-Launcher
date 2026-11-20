@@ -8,9 +8,7 @@ import type { ProjectHit } from "../types";
  * 不依赖上游接口也能直接渲染（平台抽风 / 断网时自己的清单照样看得到），
  * 而且列表排序（下载量、更新时间）也不需要再回源。
  *
- * 持久化走 localStorage（WebView2 会落到应用数据目录，重启仍在）。
- * 没有走 SQLite：收藏属于纯前端数据，pins 走数据库是因为它要在启动流程里
- * 和实例/服务器对齐；收藏夹没有这个约束，没必要为它加一条 Rust 命令 + 建表。
+ * 本地快照保存在 WebView 的 localStorage，用户也可通过 QookiX 同步到其他设备。
  */
 export interface FavoriteItem {
   /** `${provider}:${id}`，收藏夹内的唯一键 */
@@ -74,11 +72,7 @@ function loadStored(): FavoriteItem[] {
 }
 
 function persist(items: FavoriteItem[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
-  } catch {
-    // 配额满 / 隐私模式：内存里仍然是好的，只是这次没落盘
-  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
 }
 
 /** 云同步：云端条目的最小校验（手改过 / 老版本都可能缺字段） */
@@ -102,7 +96,7 @@ export const useFavoritesStore = defineStore("favorites", {
     add(p: ProjectHit) {
       const key = favoriteKey(p);
       if (this.items.some((i) => i.key === key)) return;
-      this.items.unshift({
+      const item: FavoriteItem = {
         key,
         provider: p.provider,
         id: p.id,
@@ -117,14 +111,16 @@ export const useFavoritesStore = defineStore("favorites", {
         categories: [...(p.categories ?? [])],
         updated: p.updated,
         addedAt: Date.now(),
-      });
-      persist(this.items);
+      };
+      const next = [item, ...this.items];
+      persist(next);
+      this.items = next;
     },
     remove(key: string) {
       const next = this.items.filter((i) => i.key !== key);
       if (next.length !== this.items.length) {
+        persist(next);
         this.items = next;
-        persist(this.items);
       }
     },
     /** 云同步：导出快照 */
@@ -140,18 +136,18 @@ export const useFavoritesStore = defineStore("favorites", {
     mergeFromCloud(list: unknown): number {
       if (!Array.isArray(list)) return 0;
       const seen = new Set(this.items.map((i) => i.key));
-      let added = 0;
+      const additions: FavoriteItem[] = [];
       for (const raw of list) {
         if (!isFavoriteItem(raw) || seen.has(raw.key)) continue;
         seen.add(raw.key);
-        this.items.push(raw);
-        added += 1;
+        additions.push(raw);
       }
-      if (added > 0) {
-        this.items.sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
-        persist(this.items);
+      if (additions.length) {
+        const next = [...this.items, ...additions].sort((a, b) => (b.addedAt ?? 0) - (a.addedAt ?? 0));
+        persist(next);
+        this.items = next;
       }
-      return added;
+      return additions.length;
     },
     /** @returns 收藏后的状态：true = 已收藏，false = 已取消 */
     toggle(p: ProjectHit): boolean {
@@ -164,8 +160,8 @@ export const useFavoritesStore = defineStore("favorites", {
       return true;
     },
     clear() {
+      persist([]);
       this.items = [];
-      persist(this.items);
     },
   },
 });

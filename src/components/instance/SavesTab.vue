@@ -183,7 +183,7 @@ function serverPinId(address: string) {
 function toggleWorldPin(w: { name: string; icon: string | null }) {
   const i = instances.get(props.instanceId);
   if (!i) return;
-  pins.toggle({
+  void pins.toggle({
     id: worldPinId(w.name),
     type: "world",
     target: "home",
@@ -195,12 +195,12 @@ function toggleWorldPin(w: { name: string; icon: string | null }) {
     name: w.name,
     world: w.name,
     icon: w.icon,
-  });
+  }).catch((error) => message.error(String(error)));
 }
 function toggleServerPin(entry: ServerEntry) {
   const i = instances.get(props.instanceId);
   if (!i) return;
-  pins.toggle({
+  void pins.toggle({
     id: serverPinId(entry.address),
     type: "server",
     target: "home",
@@ -212,7 +212,7 @@ function toggleServerPin(entry: ServerEntry) {
     name: entry.name || entry.address,
     address: entry.address,
     icon: entry.icon,
-  });
+  }).catch((error) => message.error(String(error)));
 }
 
 // 把 MC 的 §x 颜色码解析为可渲染的片段，用于彩色显示服务器 MOTD

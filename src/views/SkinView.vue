@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { staggeredCardDelay } from "../composables/staggeredCardDelay";
+import { vSegmented } from "../composables/vSegmented";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { NInput, NButton, NSwitch, NModal, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
@@ -141,14 +143,6 @@ const appliedToCurrent = computed(() => {
   if (!currentSrc.value || !lastAppliedSrc.value) return false;
   return currentSrc.value === lastAppliedSrc.value;
 });
-
-// 皮肤卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发。
-// 已保存列表开头的上传卡片占 0 号位，皮肤从 1 号起算；数量多时自动收紧步长，
-// 整批级联 ~0.7s 内跑完。切换「已保存 / 默认皮肤」tab 时网格重新挂载，级联重播。
-function skinDelay(i: number, total: number): string {
-  const step = Math.min(0.045, 0.6 / Math.max(1, total));
-  return `${(0.06 + i * step).toFixed(3)}s`;
-}
 
 let skinLoadToken = 0;
 
@@ -769,7 +763,7 @@ onMounted(async () => {
         </div>
         <div class="anim-row">
           <span class="anim-label">{{ t("skin.action") }}</span>
-          <div ref="animSegRef" class="seg qx-seg qx-seg--sm">
+          <div ref="animSegRef" v-segmented="{ label: t('skin.action') }" class="seg qx-seg qx-seg--sm">
             <div class="qx-seg__indicator" :style="animSegStyle"></div>
             <button :class="{ active: renderer.animation.value === 'idle' }" @click="setAnim('idle')">{{ t("skin.animIdle") }}</button>
             <button :class="{ active: renderer.animation.value === 'walk' }" @click="setAnim('walk')">{{ t("skin.animWalk") }}</button>
@@ -797,7 +791,7 @@ onMounted(async () => {
           </button>
         </div>
         <div class="apply-row">
-          <div ref="modelSegRef" class="seg qx-seg qx-seg--sm">
+          <div ref="modelSegRef" v-segmented="{ label: t('common.skinModel') }" class="seg qx-seg qx-seg--sm">
             <div class="qx-seg__indicator" :style="modelSegStyle"></div>
             <button :class="{ active: skinVariant === 'classic' }" @click="setSkinModel('classic')">{{ t("skin.modelClassic") }}</button>
             <button :class="{ active: skinVariant === 'slim' }" @click="setSkinModel('slim')">{{ t("skin.modelSlim") }}</button>
@@ -815,7 +809,7 @@ onMounted(async () => {
       </section>
 
       <section class="tabs-pane glass">
-        <div ref="skinTabSegRef" class="seg skin-tab-seg qx-seg">
+        <div ref="skinTabSegRef" v-segmented="{ label: t('nav.skins') }" class="seg skin-tab-seg qx-seg">
           <div class="qx-seg__indicator" :style="skinTabSegStyle"></div>
           <button :class="{ active: tab === 'saved' }" @click="tab = 'saved'">{{ t("skin.tabSaved") }}</button>
           <button :class="{ active: tab === 'official' }" @click="tab = 'official'">{{ t("skin.tabOfficial") }}</button>
@@ -834,7 +828,7 @@ onMounted(async () => {
             </div>
 
             <div class="skin-grid">
-              <button class="skin-card upload-card" @click="uploadSkin">
+              <button class="skin-card upload-card qx-card-enter" @click="uploadSkin">
                 <div class="thumb-wrap upload-thumb">
                   <IconPlus />
                 </div>
@@ -844,11 +838,11 @@ onMounted(async () => {
                 </div>
               </button>
               <div
-                v-for="(s, i) in skins"
+                v-for="(s, index) in skins"
                 :key="s.id"
-                class="skin-card"
+                class="skin-card qx-card-enter"
                 :class="{ active: isCurrentSkin(skinDataUrls[s.id]) }"
-                :style="{ animationDelay: skinDelay(i + 1, skins.length + 1) }"
+                :style="{ animationDelay: staggeredCardDelay(index + 1, skins.length + 1) }"
                 @click="selectLocal(s)"
               >
                 <div class="thumb-wrap">
@@ -874,11 +868,11 @@ onMounted(async () => {
             </div>
             <div class="skin-grid">
               <div
-                v-for="(s, i) in BUILTIN_SKINS"
+                v-for="(s, index) in BUILTIN_SKINS"
                 :key="s.name"
-                class="skin-card"
+                class="skin-card qx-card-enter"
                 :class="{ active: currentKind === 'official' && isCurrentSkin(s.dataUrl) }"
-                :style="{ animationDelay: skinDelay(i, BUILTIN_SKINS.length) }"
+                :style="{ animationDelay: staggeredCardDelay(index, BUILTIN_SKINS.length) }"
                 @click="selectOfficial(s)"
               >
                 <div class="thumb-wrap">
@@ -1321,19 +1315,6 @@ onMounted(async () => {
   transition: all 0.14s;
   font-family: inherit;
   text-align: left;
-  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
-     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
-  animation: skin-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
-}
-@keyframes skin-card-enter {
-  from {
-    transform: translateY(28px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
 }
 /* 披风弹窗整体已有 scale 入场动画，内部卡片不再级联，避免双重位移 */
 .cape-dialog .skin-card {

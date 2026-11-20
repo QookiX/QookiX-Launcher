@@ -4,7 +4,8 @@
 use crate::state::AppState;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+mod cache;
+use cache::{CacheBatch, Purpose, Service};
 
 const BASE: &str = "https://trans.zhayi.cc";
 const LANG: &str = "zh";
@@ -18,33 +19,6 @@ fn now_secs() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
-}
-
-fn cache_file(root: &std::path::Path) -> PathBuf {
-    root.join("cache").join("translations.json")
-}
-
-type CacheMap = BTreeMap<String, Value>;
-
-fn load_cache(root: &std::path::Path) -> CacheMap {
-    std::fs::read_to_string(cache_file(root))
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
-}
-
-fn save_cache(root: &std::path::Path, cache: &CacheMap) {
-    let path = cache_file(root);
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(s) = serde_json::to_string(cache) {
-        let _ = std::fs::write(path, s);
-    }
-}
-
-fn cache_key(provider: &str, slug: &str) -> String {
-    format!("{provider}:{slug}:{LANG}")
 }
 
 /// 批量翻译模组描述：先查本地缓存，未命中的按 5 个一组请求服务端。
@@ -70,20 +44,14 @@ pub async fn translate_descriptions(
     let use_custom = custom_ready && !api_base.is_empty() && !api_key.is_empty() && !api_model.is_empty();
     // 内置服务已支持 CurseForge 资源，两套服务覆盖相同的平台范围
     // 两套服务的翻译结果质量不同，缓存分开存放，来回切换互不覆盖
-    let service_tag = if use_custom { "custom" } else { provider };
-    let mut cache = load_cache(&state.root);
-    let now = now_secs();
+    let service = if use_custom { Service::custom(&api_base, &api_model) } else { Service::Builtin };
+    let mut cache = CacheBatch::new(&state.root, service, provider, Purpose::Summary, now_secs());
     let mut translations = BTreeMap::new();
     let mut failed: Vec<String> = Vec::new();
     let mut queue: Vec<String> = Vec::new();
 
     for slug in slugs {
-        let key = cache_key(provider, &slug);
-        let hit = cache.get(&key).and_then(|e| {
-            let ts = e.get("ts").and_then(|v| v.as_u64()).unwrap_or(0);
-            let text = e.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            (now.saturating_sub(ts) < CACHE_TTL && !text.is_empty()).then(|| text.to_string())
-        });
+        let hit = cache.get(&slug, CACHE_TTL);
         match hit {
             Some(text) => {
                 translations.insert(slug, json!(text));
@@ -117,12 +85,13 @@ pub async fn translate_descriptions(
             };
             match chat_translate(state, &api_base, &api_key, &api_model, &desc).await {
                 Ok(text) => {
-                    cache.insert(cache_key(service_tag, &slug), json!({ "text": text, "ts": now }));
+                    cache.add(&slug, &text);
                     translations.insert(slug, json!(text));
                 }
                 Err(e) => {
                     // 鉴权失败 / 限流时继续请求没有意义，剩余全部记为失败
-                    let fatal = e.contains("鉴权失败") || e.contains("429");
+                    rate_limited = e.contains("429");
+                    let fatal = e.contains("鉴权失败") || rate_limited;
                     failed.push(slug);
                     if fatal {
                         failed.extend(queue.drain(..));
@@ -131,7 +100,7 @@ pub async fn translate_descriptions(
                 }
             }
         }
-        save_cache(&state.root, &cache);
+        cache.commit();
         return Ok(json!({
             "translations": translations,
             "failed": failed,
@@ -142,12 +111,14 @@ pub async fn translate_descriptions(
     while !queue.is_empty() {
         let group: Vec<String> = queue.drain(..queue.len().min(BATCH)).collect();
         let body = json!({ "platform": provider, "lang": LANG, "mod_ids": group });
-        let resp = state
+        let mut rb = state
             .client
             .post(format!("{BASE}/translate/mods"))
-            .json(&body)
-            .send()
-            .await;
+            .json(&body);
+        if let Some(token) = crate::qookix::api::optional_access_token(&state).await {
+            rb = rb.bearer_auth(token);
+        }
+        let resp = rb.send().await;
 
         let parsed = match resp {
             Ok(r) if r.status().as_u16() == 200 => r.json::<Value>().await.ok(),
@@ -178,12 +149,12 @@ pub async fn translate_descriptions(
                 failed.push(slug);
                 continue;
             }
-            cache.insert(cache_key(service_tag, &slug), json!({ "text": text, "ts": now }));
+            cache.add(&slug, &text);
             translations.insert(slug, json!(text));
         }
     }
 
-    save_cache(&state.root, &cache);
+    cache.commit();
     Ok(json!({
         "translations": translations,
         "failed": failed,
@@ -227,19 +198,11 @@ pub async fn translate_body(
         )
     };
     let use_custom = custom_ready && !api_base.is_empty() && !api_key.is_empty() && !api_model.is_empty();
-    let service_tag = if use_custom { "custom" } else { provider };
-    // 正文缓存加格式版本：服务端 2026-09-14 起 CF 正文改为 Markdown，图片内联在原文位置。
-    // 旧缓存里的译文没有图片，会一直被 withImages 兜底堆到文末，必须让它失效重取。
-    let key = format!("{provider}:{slug}:{LANG}:body:v2:{service_tag}");
-    let mut cache = load_cache(&state.root);
-    let now = now_secs();
+    let service = if use_custom { Service::custom(&api_base, &api_model) } else { Service::Builtin };
+    let mut cache = CacheBatch::new(&state.root, service, provider, Purpose::Body, now_secs());
     // 缓存优先：手动翻译过的正文再次打开详情时直接展示译文（translate=false 也命中）。
     // 用户不想要译文时点「显示原文」切换即可；清空缓存可彻底回到未翻译态。
-    if let Some(hit) = cache.get(&key).and_then(|e| {
-        let ts = e.get("ts").and_then(|v| v.as_u64()).unwrap_or(0);
-        let text = e.get("text").and_then(|v| v.as_str()).unwrap_or("");
-        (now.saturating_sub(ts) < CACHE_TTL && !text.is_empty()).then(|| text.to_string())
-    }) {
+    if let Some(hit) = cache.get(slug, CACHE_TTL) {
         return Ok(json!({ "body": hit, "bodyCached": true, "original": original, "supported": true }));
     }
     if original.trim().is_empty() {
@@ -257,8 +220,8 @@ pub async fn translate_body(
     if use_custom {
         return match chat_translate(state, &api_base, &api_key, &api_model, &clipped).await {
             Ok(text) => {
-                cache.insert(key, json!({ "text": text, "ts": now }));
-                save_cache(&state.root, &cache);
+                cache.add(slug, &text);
+                cache.commit();
                 Ok(json!({ "body": text, "bodyCached": false, "original": original, "supported": true }))
             }
             Err(e) => Ok(json!({ "body": null, "bodyCached": false, "original": original, "supported": true, "error": e })),
@@ -273,9 +236,11 @@ pub async fn translate_body(
         .build()
         .map_err(|e| e.to_string())?;
     let req = json!({ "platform": provider, "lang": LANG, "mod_id": slug, "include_body": true });
-    let resp = slow
-        .post(format!("{BASE}/translate/mod"))
-        .json(&req)
+    let mut rb = slow.post(format!("{BASE}/translate/mod")).json(&req);
+    if let Some(token) = crate::qookix::api::optional_access_token(&state).await {
+        rb = rb.bearer_auth(token);
+    }
+    let resp = rb
         .send()
         .await
         .map_err(|e| format!("请求翻译服务失败: {e}"))?;
@@ -295,8 +260,8 @@ pub async fn translate_body(
         .filter(|s| !s.is_empty())
     {
         Some(text) => {
-            cache.insert(key, json!({ "text": text, "ts": now }));
-            save_cache(&state.root, &cache);
+            cache.add(slug, &text);
+            cache.commit();
             Ok(json!({
                 "body": text,
                 "bodyCached": parsed.get("body_cached").and_then(|v| v.as_bool()).unwrap_or(false),
@@ -320,10 +285,6 @@ const NAME_CACHE_TTL: u64 = 30 * 24 * 3600;
 /// 单次请求交给 AI 的名字个数
 const NAME_BATCH: usize = 20;
 
-fn name_cache_key(name: &str) -> String {
-    format!("modname:{}:{LANG}", name.trim().to_lowercase())
-}
-
 /// 批量翻译模组名（英文 → 中文玩家社区常用称呼）。
 ///
 /// 自建服务只提供「按平台 mod id 的描述译文」，不含名字，所以名字翻译走
@@ -341,8 +302,8 @@ pub async fn translate_mod_names(state: &AppState, names: Vec<String>) -> Result
     if api_base.is_empty() || api_key.is_empty() || api_model.is_empty() {
         return Ok(json!({ "translations": {}, "unsupported": true }));
     }
-    let mut cache = load_cache(&state.root);
-    let now = now_secs();
+    let service = Service::custom(&api_base, &api_model);
+    let mut cache = CacheBatch::new(&state.root, service, "*", Purpose::Name, now_secs());
     let mut translations: BTreeMap<String, Value> = BTreeMap::new();
     let mut queue: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -351,12 +312,7 @@ pub async fn translate_mod_names(state: &AppState, names: Vec<String>) -> Result
         if name.is_empty() || !seen.insert(name.to_lowercase()) {
             continue;
         }
-        let key = name_cache_key(&name);
-        let hit = cache.get(&key).and_then(|e| {
-            let ts = e.get("ts").and_then(|v| v.as_u64()).unwrap_or(0);
-            let text = e.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            (now.saturating_sub(ts) < NAME_CACHE_TTL && !text.is_empty()).then(|| text.to_string())
-        });
+        let hit = cache.get(&name.to_lowercase(), NAME_CACHE_TTL);
         match hit {
             Some(t) => {
                 translations.insert(name, json!(t));
@@ -371,7 +327,7 @@ pub async fn translate_mod_names(state: &AppState, names: Vec<String>) -> Result
         match chat_translate_names(state, &api_base, &api_key, &api_model, &group).await {
             Ok(map) => {
                 for (orig, zh) in map {
-                    cache.insert(name_cache_key(&orig), json!({ "text": zh, "ts": now }));
+                    cache.add(&orig.trim().to_lowercase(), &zh);
                     translations.insert(orig, json!(zh));
                 }
             }
@@ -382,7 +338,7 @@ pub async fn translate_mod_names(state: &AppState, names: Vec<String>) -> Result
             }
         }
     }
-    save_cache(&state.root, &cache);
+    cache.commit();
     Ok(json!({ "translations": translations, "unsupported": false, "error": error }))
 }
 
@@ -488,9 +444,9 @@ pub async fn report_stale(state: &AppState, provider: &str, slug: &str) -> Resul
         .unwrap_or("received")
         .to_string();
     if status == "updated" {
-        let mut cache = load_cache(&state.root);
-        cache.remove(&cache_key(provider, slug));
-        save_cache(&state.root, &cache);
+        if let Err(err) = cache::invalidate_builtin(&state.root, provider, slug) {
+            crate::util::log_line(&format!("[translate] cache invalidation failed: {err}"));
+        }
     }
     Ok(status)
 }
@@ -535,37 +491,9 @@ pub async fn report_quality(
         .to_string())
 }
 
-/// 清空翻译缓存，返回释放的字节数。
-///
-/// `service`：
-/// - `Some("custom")`  只清自定义 AI 服务的翻译
-/// - `Some("modrinth")` 只清内置服务的翻译
-/// - `None` 全部清空（直接删除缓存文件）
+/// Clear translations for one service or the entire cache.
 pub fn clear_cache(state: &AppState, service: Option<&str>) -> Result<u64, String> {
-    let path = cache_file(&state.root);
-    if !path.exists() {
-        return Ok(0);
-    }
-    let Some(tag) = service else {
-        let freed = std::fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-        std::fs::remove_file(&path).map_err(|e| format!("清理翻译缓存失败: {e}"))?;
-        return Ok(freed);
-    };
-    // 前端传 "default" 表示内置服务，缓存 key 用的是 provider（"modrinth"）开头
-    let tag = if tag == "default" { "modrinth" } else { &tag };
-    // 按服务标签前缀过滤，另一套服务的缓存原样保留
-    let prefix = format!("{tag}:");
-    let mut freed = 0u64;
-    let mut kept: CacheMap = BTreeMap::new();
-    for (key, value) in load_cache(&state.root) {
-        if key.starts_with(&prefix) {
-            freed += serde_json::to_string(&value).map(|s| s.len() as u64).unwrap_or(0);
-        } else {
-            kept.insert(key, value);
-        }
-    }
-    save_cache(&state.root, &kept);
-    Ok(freed)
+    cache::clear(&state.root, service)
 }
 
 /// 从 Spiget 拉取 SpigotMC 资源的原始描述（base64 编码的 HTML），解码返回。
@@ -646,56 +574,4 @@ pub async fn chat_translate(
         .map(|s| s.trim().trim_matches('"').to_string())
         .filter(|s| !s.is_empty());
     content.ok_or_else(|| "自定义服务未返回翻译内容".into())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn cache_key_includes_provider_and_lang() {
-        assert_eq!(cache_key("modrinth", "sodium"), "modrinth:sodium:zh");
-        assert_ne!(cache_key("modrinth", "a"), cache_key("curseforge", "a"));
-    }
-
-    #[test]
-    fn cache_roundtrip_and_expiry_field() {
-        let dir = std::env::temp_dir().join(format!(
-            "qkx-translate-{}",
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
-
-        let key = cache_key("modrinth", "sodium");
-        let mut cache = load_cache(&dir);
-        assert!(cache.is_empty());
-
-        cache.insert(key.clone(), json!({ "text": "新翻译", "ts": now_secs() }));
-        save_cache(&dir, &cache);
-
-        let loaded = load_cache(&dir);
-        let entry = loaded.get(&key).unwrap();
-        assert_eq!(entry["text"], "新翻译");
-        let ts = entry["ts"].as_u64().unwrap();
-        assert!(now_secs().saturating_sub(ts) < CACHE_TTL);
-
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn stale_entry_recognized_by_ttl() {
-        let now = now_secs();
-        let old = now - CACHE_TTL - 10;
-        // 与 translate_descriptions 相同的命中判断逻辑
-        let fresh_hit = |ts: u64, text: &str| {
-            (now.saturating_sub(ts) < CACHE_TTL && !text.is_empty()).then(|| text.to_string())
-        };
-        assert!(fresh_hit(now, "新翻译").is_some());
-        assert!(fresh_hit(old, "旧翻译").is_none());
-        // 空文本不允许命中
-        assert!(fresh_hit(now, "").is_none());
-    }
 }

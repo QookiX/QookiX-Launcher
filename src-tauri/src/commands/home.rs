@@ -50,9 +50,8 @@ pub fn home_layout_save(state: State<AppState>, content: String) -> Result<(), S
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
     }
-    let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, content).map_err(|e| format!("写入临时文件失败: {e}"))?;
-    std::fs::rename(&tmp, &path).map_err(|e| format!("保存主页布局失败: {e}"))
+    crate::fsutil::atomic_write(&path, content.as_bytes())
+        .map_err(|e| format!("保存主页布局失败: {e}"))
 }
 
 /// 恢复默认：删除布局文件，下次读取时前端会重新生成模板。

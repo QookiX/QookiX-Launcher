@@ -7,14 +7,15 @@
 //! 会话（session）内保留已打开的 zip，省去每张图都重新解析一次中央目录；
 //! 页面卸载时前端调 `resourcepack_close` 释放。
 
+use super::preview_sessions::PreviewSessions;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde::Serialize;
 use serde_json::Value;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashSet};
 use std::fs::File;
 use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::Mutex;
 
 /// 单张贴图上限（防止误开超大文件把内存吃满）
 const MAX_TEXTURE_BYTES: u64 = 48 * 1024 * 1024;
@@ -393,19 +394,8 @@ struct Session {
     source: Mutex<PackSource>,
 }
 
-fn sessions() -> &'static Mutex<HashMap<String, Arc<Session>>> {
-    static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<Session>>>> = OnceLock::new();
-    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn get_session(session_id: &str) -> Result<Arc<Session>, String> {
-    sessions()
-        .lock()
-        .map_err(|_| "会话存储不可用".to_string())?
-        .get(session_id)
-        .cloned()
-        .ok_or_else(|| "会话已失效，请重新打开材质包".to_string())
-}
+static SESSIONS: PreviewSessions<Session> =
+    PreviewSessions::new(MAX_SESSIONS, "会话已失效，请重新打开材质包");
 
 // ------------------------------------------------------------------ 解析 --
 
@@ -609,28 +599,12 @@ pub async fn resourcepack_open(path: String) -> Result<ResourcePackManifest, Str
     let (manifest, source) = tokio::task::spawn_blocking(move || open_pack(&path))
         .await
         .map_err(|e| e.to_string())??;
-    let session_id = manifest.session_id.clone();
-    let mut map = sessions()
-        .lock()
-        .map_err(|_| "会话存储不可用".to_string())?;
-    // 只保留最近几个会话，避免反复打开把文件句柄越攒越多
-    if map.len() >= MAX_SESSIONS {
-        let removable: Vec<String> = map
-            .keys()
-            .filter(|k| **k != session_id)
-            .take(map.len() - MAX_SESSIONS + 1)
-            .cloned()
-            .collect();
-        for key in removable {
-            map.remove(&key);
-        }
-    }
-    map.insert(
-        session_id,
-        Arc::new(Session {
+    SESSIONS.insert(
+        manifest.session_id.clone(),
+        Session {
             source: Mutex::new(source),
-        }),
-    );
+        },
+    )?;
     Ok(manifest)
 }
 
@@ -638,7 +612,7 @@ pub async fn resourcepack_open(path: String) -> Result<ResourcePackManifest, Str
 #[tauri::command]
 pub async fn resourcepack_texture(session_id: String, path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let session = get_session(&session_id)?;
+        let session = SESSIONS.get(&session_id)?;
         let mut source = session
             .source
             .lock()
@@ -654,7 +628,7 @@ pub async fn resourcepack_texture(session_id: String, path: String) -> Result<St
 #[tauri::command]
 pub async fn resourcepack_text(session_id: String, path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || {
-        let session = get_session(&session_id)?;
+        let session = SESSIONS.get(&session_id)?;
         let mut source = session
             .source
             .lock()
@@ -668,10 +642,8 @@ pub async fn resourcepack_text(session_id: String, path: String) -> Result<Strin
 
 /// 关闭会话，释放 zip 文件句柄。
 #[tauri::command]
-pub fn resourcepack_close(session_id: String) {
-    if let Ok(mut map) = sessions().lock() {
-        map.remove(&session_id);
-    }
+pub fn resourcepack_close(session_id: String) -> Result<(), String> {
+    SESSIONS.close(&session_id)
 }
 
 /// 列出某个实例 `resourcepacks/` 目录下的材质包（zip / 文件夹）。

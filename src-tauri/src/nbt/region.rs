@@ -6,23 +6,29 @@
 //! - 数据区：`4 字节大端长度（含压缩类型字节） + 1 字节压缩类型 + NBT`，
 //!   按 4 KiB 扇区对齐，尾部补零。压缩类型 1=gzip、2=zlib、3=不压缩。
 //!
-//! 写策略（安全优先）：把整个 region 文件读进内存，改完整体写回
-//! （先写临时文件再替换，见 `level::write_bytes`）。新区块或放不下原槽位时
+//! 写入在文件锁下流式复制到同目录的临时文件，更新区块后用重命名提交。
+//! 新区块或放不下原槽位时
 //! 追加到文件末尾并更新头部，旧槽位留空——游戏按头部表寻址，空洞无害。
 
-use crate::nbt::level;
 use fastnbt::Value;
 use flate2::read::{GzDecoder, ZlibDecoder};
 use flate2::write::ZlibEncoder;
 use flate2::Compression;
 use serde_json::{json, Value as Json};
-use std::io::{Read, Write};
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 const SECTOR: usize = 4096;
 const HEADER_LEN: usize = SECTOR * 2;
 /// 单个条目最多 255 个扇区（≈1 MiB），超过写不下
 const MAX_SECTORS: usize = 255;
+const MAX_CHUNK_BYTES: usize = 16 * 1024 * 1024;
+pub(super) const MAX_REGION_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+type RegionLocks = HashMap<PathBuf, Weak<Mutex<()>>>;
+static WRITE_LOCKS: LazyLock<Mutex<RegionLocks>> = LazyLock::new(Mutex::default);
 
 /// 维度对应的 region 目录。
 ///
@@ -74,19 +80,20 @@ fn entry_index(cx: i32, cz: i32) -> usize {
 }
 
 /// 读条目 → (起始字节偏移, 扇区数)；偏移 0 表示该区块未生成
-fn read_entry(bytes: &[u8], index: usize) -> (usize, usize) {
+fn read_entry(bytes: &[u8], index: usize) -> (u64, usize) {
     let p = index * 4;
     if bytes.len() < p + 4 {
         return (0, 0);
     }
     let raw = u32::from_be_bytes([bytes[p], bytes[p + 1], bytes[p + 2], bytes[p + 3]]);
-    (((raw >> 8) as usize) * SECTOR, (raw & 0xFF) as usize)
+    (u64::from(raw >> 8) * SECTOR as u64, (raw & 0xFF) as usize)
 }
 
 fn parse_region_name(name: &str) -> Option<(i32, i32)> {
     let rest = name.strip_prefix("r.")?.strip_suffix(".mca")?;
     let (x, z) = rest.split_once('.')?;
-    Some((x.parse().ok()?, z.parse().ok()?))
+    let (x, z) = (x.parse::<i32>().ok()?, z.parse::<i32>().ok()?);
+    (x.checked_mul(512).is_some() && z.checked_mul(512).is_some()).then_some((x, z))
 }
 
 /// 列出该维度下所有已生成的区块（按坐标排序）
@@ -102,15 +109,17 @@ pub fn list_chunks(world_dir: &Path, dim: &str) -> Result<Vec<Json>, String> {
             continue;
         };
         // 只读 8KiB 头部：region 文件动辄几十 MB，整份读进来纯属浪费
-        let Ok(mut f) = std::fs::File::open(e.path()) else {
-            continue;
-        };
-        let mut header = vec![0u8; HEADER_LEN];
-        let n = f.read(&mut header).unwrap_or(0);
-        if n < SECTOR + 4 {
+        let path = e.path();
+        if !path.is_file() {
             continue;
         }
-        header.truncate(n);
+        let Ok(mut f) = std::fs::File::open(path) else {
+            continue;
+        };
+        let mut header = [0u8; HEADER_LEN];
+        if f.read_exact(&mut header).is_err() {
+            continue;
+        }
         for i in 0..1024usize {
             let (offset, sectors) = read_entry(&header, i);
             if offset == 0 || sectors == 0 {
@@ -143,110 +152,259 @@ pub fn list_chunks(world_dir: &Path, dim: &str) -> Result<Vec<Json>, String> {
 /// 读一个区块的 NBT（根复合节点就是区块数据，没有 level.dat 那种 Data 包装层）
 pub fn read_chunk(world_dir: &Path, dim: &str, cx: i32, cz: i32) -> Result<Value, String> {
     let path = region_file(world_dir, dim, cx, cz);
-    let bytes = std::fs::read(&path)
-        .map_err(|_| format!("区域文件不存在：{}（该区块尚未生成）", path.display()))?;
-    decode_chunk(&bytes, cx, cz)
+    RegionReader::open(&path)
+        .map_err(|err| {
+            if err.kind() == io::ErrorKind::NotFound {
+                format!("区域文件不存在（该区块尚未生成）：{}", path.display())
+            } else {
+                format!("打开区域文件 {} 失败: {err}", path.display())
+            }
+        })?
+        .read_chunk(cx, cz)
 }
 
-/// 从 region 文件内容里解出一个区块（地图渲染要批量用，所以开放给 crate 内）
-pub(crate) fn decode_chunk(bytes: &[u8], cx: i32, cz: i32) -> Result<Value, String> {
-    let (offset, sectors) = read_entry(bytes, entry_index(cx, cz));
-    if offset == 0 {
-        return Err("该区块尚未生成".into());
+pub(super) struct RegionReader {
+    file: File,
+    metadata: std::fs::Metadata,
+    header: [u8; HEADER_LEN],
+}
+
+impl RegionReader {
+    pub(super) fn open(path: &Path) -> io::Result<Self> {
+        if !std::fs::metadata(path)?.is_file() {
+            return Err(invalid_data("区域文件必须是普通文件"));
+        }
+        let file = File::open(path)?;
+        let metadata = file.metadata()?;
+        if !metadata.is_file() || metadata.len() > MAX_REGION_BYTES {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "区域文件类型或长度无效"));
+        }
+        let mut reader = Self { file, metadata, header: [0; HEADER_LEN] };
+        reader.file.read_exact(&mut reader.header)?;
+        Ok(reader)
     }
-    let end = (offset + sectors * SECTOR).min(bytes.len());
-    let slot = bytes
-        .get(offset..end)
-        .filter(|s| s.len() >= 5)
-        .ok_or_else(|| "区块数据不完整".to_string())?;
+
+    pub(super) fn read_chunk(&mut self, cx: i32, cz: i32) -> Result<Value, String> {
+        let (offset, sectors) = read_entry(&self.header, entry_index(cx, cz));
+        let size = sectors * SECTOR;
+        if offset == 0 && size == 0 {
+            return Err("该区块尚未生成".into());
+        }
+        if offset < HEADER_LEN as u64 || size == 0 || offset + size as u64 > self.metadata.len() {
+            return Err(format!("区块 ({cx}, {cz}) 扇区超出区域文件范围"));
+        }
+        let mut slot = vec![0; size];
+        self.file.seek(SeekFrom::Start(offset))
+            .and_then(|_| self.file.read_exact(&mut slot))
+            .map_err(|err| format!("读取区块 ({cx}, {cz}) 失败: {err}"))?;
+        decode_slot(&slot).map_err(|err| format!("区块 ({cx}, {cz}): {err}"))
+    }
+
+    pub(super) fn metadata(&self) -> &std::fs::Metadata {
+        &self.metadata
+    }
+
+    #[cfg(windows)]
+    pub(super) fn identity(&self) -> Option<(u64, u64)> {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Storage::FileSystem::{
+            GetFileInformationByHandle, BY_HANDLE_FILE_INFORMATION,
+        };
+        let mut info = std::mem::MaybeUninit::<BY_HANDLE_FILE_INFORMATION>::uninit();
+        let ok = unsafe { GetFileInformationByHandle(self.file.as_raw_handle(), info.as_mut_ptr()) };
+        if ok == 0 {
+            return None;
+        }
+        let info = unsafe { info.assume_init() };
+        let index = (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow);
+        Some((u64::from(info.dwVolumeSerialNumber), index))
+    }
+
+    #[cfg(unix)]
+    pub(super) fn identity(&self) -> Option<(u64, u64)> {
+        use std::os::unix::fs::MetadataExt;
+        Some((self.metadata.dev(), self.metadata.ino()))
+    }
+}
+
+fn decode_slot(slot: &[u8]) -> Result<Value, String> {
+    if slot.len() < 5 {
+        return Err("区块数据不完整".into());
+    }
     let len = u32::from_be_bytes([slot[0], slot[1], slot[2], slot[3]]) as usize;
-    let ctype = slot[4];
-    let payload = slot
-        .get(5..5 + len)
+    // 长度包括压缩类型字节，实际 NBT 内容从类型之后开始。
+    let (&ctype, payload) = slot[4..]
+        .get(..len)
+        .and_then(|chunk| chunk.split_first())
         .ok_or_else(|| "区块数据长度越界".to_string())?;
-    let raw = match ctype {
-        1 => {
-            let mut d = GzDecoder::new(payload);
-            let mut v = Vec::new();
-            d.read_to_end(&mut v).map_err(|e| format!("解压区块失败(gzip): {e}"))?;
-            v
-        }
-        2 => {
-            let mut d = ZlibDecoder::new(payload);
-            let mut v = Vec::new();
-            d.read_to_end(&mut v).map_err(|e| format!("解压区块失败(zlib): {e}"))?;
-            v
-        }
-        3 => payload.to_vec(),
+    let mut raw = Vec::new();
+    match ctype {
+        1 => GzDecoder::new(payload).take(MAX_CHUNK_BYTES as u64 + 1).read_to_end(&mut raw),
+        2 => ZlibDecoder::new(payload).take(MAX_CHUNK_BYTES as u64 + 1).read_to_end(&mut raw),
+        3 => return super::bounded::decode(payload, "区块"),
         4 => return Err("该区块用了 LZ4 压缩（模组格式），暂不支持".into()),
         other => return Err(format!("未知的区块压缩类型: {other}")),
-    };
-    fastnbt::from_bytes(&raw).map_err(|e| format!("解析区块 NBT 失败: {e}"))
+    }.map_err(|err| format!("解压区块失败: {err}"))?;
+    if raw.len() > MAX_CHUNK_BYTES {
+        return Err("区块解压后超过 16 MiB 限制".into());
+    }
+    super::bounded::decode(&raw, "区块")
 }
 
-/// 写回一个区块（新增或覆盖）。返回是否需要在写盘前备份——调用方负责备份。
-pub fn write_chunk(world_dir: &Path, dim: &str, cx: i32, cz: i32, data: &Value) -> Result<(), String> {
-    let path = region_file(world_dir, dim, cx, cz);
-    let mut bytes = std::fs::read(&path).unwrap_or_default();
-    if bytes.len() < HEADER_LEN {
-        bytes.resize(HEADER_LEN, 0);
-    }
+/// 在同一把区域文件锁下读、修改和写回区块。
+pub fn edit_chunk(
+    world_dir: &Path,
+    dim: &str,
+    cx: i32,
+    cz: i32,
+    edit: impl FnOnce(&mut Value) -> Result<(), String>,
+) -> Result<(), String> {
+    with_region_write(&region_file(world_dir, dim, cx, cz), |target, mut source| {
+        let reader = source.as_mut().ok_or("区域文件不存在，该区块尚未生成")?;
+        let mut data = reader.read_chunk(cx, cz)?;
+        edit(&mut data)?;
+        write_region(target, source, cx, cz, &data).map_err(|e| format!("写入区域文件失败: {e}"))
+    })
+}
 
+#[cfg(test)]
+pub(super) fn write_chunk(world_dir: &Path, dim: &str, cx: i32, cz: i32, data: &Value) -> Result<(), String> {
+    with_region_write(&region_file(world_dir, dim, cx, cz), |target, source| {
+        write_region(target, source, cx, cz, data).map_err(|e| format!("写入区域文件失败: {e}"))
+    })
+}
+
+fn with_region_write<T>(
+    path: &Path,
+    action: impl FnOnce(&Path, Option<RegionReader>) -> Result<T, String>,
+) -> Result<T, String> {
+    let target = match path.canonicalize() {
+        Ok(target) => target,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            match std::fs::symlink_metadata(path) {
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+                _ => return Err(format!("区域文件链接无效: {}", path.display())),
+            }
+            let parent = path.parent().ok_or("区域文件路径无效")?;
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            parent.canonicalize().map_err(|e| e.to_string())?
+                .join(path.file_name().ok_or("区域文件名称无效")?)
+        }
+        Err(err) => return Err(format!("无法解析区域文件路径: {err}")),
+    };
+    let lock = {
+        let mut locks = WRITE_LOCKS.lock().map_err(|_| "区域写入锁不可用")?;
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&target).and_then(Weak::upgrade) {
+            lock
+        } else {
+            let lock = Arc::new(Mutex::new(()));
+            locks.insert(target.clone(), Arc::downgrade(&lock));
+            lock
+        }
+    };
+    let _guard = lock.lock().map_err(|_| "区域写入锁不可用")?;
+    let source = match RegionReader::open(&target) {
+        Ok(reader) => Some(reader),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+        Err(err) => return Err(format!("读取已有区域文件 {} 失败: {err}", target.display())),
+    };
+    action(&target, source)
+}
+
+fn invalid_data(message: impl Into<String>) -> io::Error {
+    io::Error::new(io::ErrorKind::InvalidData, message.into())
+}
+
+fn validate_slots(header: &[u8], length: u64) -> io::Result<()> {
+    let mut used = Vec::new();
+    for index in 0..1024 {
+        let (offset, sectors) = read_entry(header, index);
+        if offset == 0 && sectors == 0 {
+            continue;
+        }
+        let end = offset + (sectors * SECTOR) as u64;
+        if offset < HEADER_LEN as u64 || sectors == 0 || end > length {
+            return Err(invalid_data("已有区块位置损坏"));
+        }
+        used.push((offset, end));
+    }
+    used.sort_unstable();
+    if used.windows(2).any(|pair| pair[0].1 > pair[1].0) {
+        return Err(invalid_data("区域文件中的区块位置重叠"));
+    }
+    Ok(())
+}
+
+fn write_region(
+    target: &Path,
+    source: Option<RegionReader>,
+    cx: i32,
+    cz: i32,
+    data: &Value,
+) -> io::Result<()> {
+    let (mut header, length) = source.as_ref().map_or(
+        ([0; HEADER_LEN], HEADER_LEN as u64),
+        |reader| (reader.header, reader.metadata.len()),
+    );
+    validate_slots(&header, length)?;
     let raw = fastnbt::to_bytes_with_opts(data, fastnbt::SerOpts::new())
-        .map_err(|e: fastnbt::error::Error| format!("序列化区块失败: {e}"))?;
-    let mut enc = ZlibEncoder::new(Vec::new(), Compression::default());
-    enc.write_all(&raw).map_err(|e| format!("压缩区块失败: {e}"))?;
-    let payload = enc.finish().map_err(|e| format!("压缩区块失败: {e}"))?;
-
-    // 长度字段 = 压缩类型字节 + 数据
-    let need = 5 + payload.len();
-    let sectors_needed = need.div_ceil(SECTOR);
-    if sectors_needed > MAX_SECTORS {
-        return Err("区块数据过大，超出单个条目的上限".into());
+        .map_err(|err| invalid_data(format!("序列化区块失败: {err}")))?;
+    if raw.len() > MAX_CHUNK_BYTES {
+        return Err(invalid_data("区块原始数据超过 16 MiB 限制"));
     }
+    let mut encoder = ZlibEncoder::new(Vec::new(), Compression::default());
+    encoder.write_all(&raw)?;
+    let payload = encoder.finish()?;
 
+    let sectors = (5 + payload.len()).div_ceil(SECTOR);
+    if sectors > MAX_SECTORS {
+        return Err(invalid_data("区块数据过大，超出单个条目的上限"));
+    }
     let index = entry_index(cx, cz);
-    let (old_offset, old_sectors) = read_entry(&bytes, index);
-    // 原地覆盖（放得下）或追加到末尾（放不下 / 新区块）
-    let offset = if old_offset != 0 && old_sectors >= sectors_needed {
+    let (old_offset, old_sectors) = read_entry(&header, index);
+    let offset = if old_offset != 0 && old_sectors >= sectors {
         old_offset
     } else {
-        let new_offset = bytes.len().div_ceil(SECTOR) * SECTOR;
-        bytes.resize(new_offset, 0);
-        new_offset
+        length.div_ceil(SECTOR as u64) * SECTOR as u64
     };
-
-    // 注意只能变长：原地覆盖时如果 resize 变小会把后面的区块整段切掉
-    let slot_end = offset + sectors_needed * SECTOR;
-    if bytes.len() < slot_end {
-        bytes.resize(slot_end, 0);
+    let end = offset + (sectors * SECTOR) as u64;
+    if end > MAX_REGION_BYTES {
+        return Err(invalid_data("区域文件超过 2 GiB 限制"));
     }
-    bytes[offset..offset + 4].copy_from_slice(&((payload.len() + 1) as u32).to_be_bytes());
-    bytes[offset + 4] = 2; // zlib
-    bytes[offset + 5..offset + 5 + payload.len()].copy_from_slice(&payload);
-    for b in &mut bytes[offset + 5 + payload.len()..offset + sectors_needed * SECTOR] {
-        *b = 0;
+    let parent = target.parent().ok_or_else(|| invalid_data("区域文件路径无效"))?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    if let Some(reader) = source {
+        let mut input = reader.file;
+        input.seek(SeekFrom::Start(0))?;
+        if io::copy(&mut input.take(length), temp.as_file_mut())? != length {
+            return Err(invalid_data("复制过程中区域文件长度发生变化"));
+        }
     }
-
-    // 更新头部条目与时间戳
-    let entry = (((offset / SECTOR) as u32) << 8) | sectors_needed as u32;
-    bytes[index * 4..index * 4 + 4].copy_from_slice(&entry.to_be_bytes());
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as u32)
-        .unwrap_or(0);
+    let entry = (((offset / SECTOR as u64) as u32) << 8) | sectors as u32;
+    header[index * 4..index * 4 + 4].copy_from_slice(&entry.to_be_bytes());
+    let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map(|age| age.as_secs() as u32).unwrap_or(0);
     let tp = SECTOR + index * 4;
-    bytes[tp..tp + 4].copy_from_slice(&ts.to_be_bytes());
-
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| format!("创建区域目录失败: {e}"))?;
-    }
-    level::write_bytes(&path, &bytes)
+    header[tp..tp + 4].copy_from_slice(&ts.to_be_bytes());
+    let mut slot = vec![0; sectors * SECTOR];
+    slot[..4].copy_from_slice(&((payload.len() + 1) as u32).to_be_bytes());
+    slot[4] = 2;
+    slot[5..5 + payload.len()].copy_from_slice(&payload);
+    let output = temp.as_file_mut();
+    output.seek(SeekFrom::Start(0))?;
+    output.write_all(&header)?;
+    output.seek(SeekFrom::Start(offset))?;
+    output.write_all(&slot)?;
+    output.sync_all()?;
+    temp.persist(target).map_err(|err| err.error)?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::nbt::level;
     use std::collections::HashMap;
 
     fn chunk_with(seed: &str) -> Value {
@@ -264,6 +422,27 @@ mod tests {
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    #[test]
+    fn decodes_chunk_that_fills_its_allocated_sector() {
+        let mut chunk = chunk_with("");
+        let empty = fastnbt::to_bytes(&chunk).unwrap();
+        let note = "x".repeat(SECTOR - 5 - empty.len());
+        if let Value::Compound(fields) = &mut chunk {
+            fields.insert("Note".into(), Value::String(note.clone()));
+        }
+        let payload = fastnbt::to_bytes(&chunk).unwrap();
+        assert_eq!(payload.len(), SECTOR - 5);
+        let mut region = vec![0; HEADER_LEN + SECTOR];
+        region[..4].copy_from_slice(&[0, 0, 2, 1]);
+        let slot = &mut region[HEADER_LEN..];
+        slot[..4].copy_from_slice(&((payload.len() + 1) as u32).to_be_bytes());
+        slot[4] = 3;
+        slot[5..].copy_from_slice(&payload);
+
+        let decoded = decode_slot(&region[HEADER_LEN..]).unwrap();
+        assert_eq!(level::get_string(&decoded, "Note"), Some(note));
     }
 
     #[test]
@@ -368,5 +547,37 @@ mod tests {
         // 33 → 相对 1；-1 → 相对 31
         assert_eq!(entry_index(33, -1), 1 + 31 * 32);
         assert_eq!(entry_index(-1, -1), 31 + 31 * 32);
+    }
+
+    #[test]
+    fn concurrent_updates_to_one_region_keep_both_changes() {
+        let world = tempfile::tempdir().unwrap();
+        let root = world.path();
+        write_chunk(root, "overworld", 0, 0, &chunk_with("before")).unwrap();
+        write_chunk(root, "overworld", 1, 0, &chunk_with("before")).unwrap();
+        std::thread::scope(|threads| {
+            for cx in 0..=1 {
+                threads.spawn(move || {
+                    edit_chunk(root, "overworld", cx, 0, |chunk| {
+                        *chunk = chunk_with(&format!("after {cx}"));
+                        Ok(())
+                    }).unwrap();
+                });
+            }
+        });
+        for cx in 0..=1 {
+            let chunk = read_chunk(root, "overworld", cx, 0).unwrap();
+            assert_eq!(level::get_string(&chunk, "Note"), Some(format!("after {cx}")));
+        }
+    }
+
+    #[test]
+    fn unreadable_existing_header_is_never_treated_as_a_missing_region() {
+        let world = tempfile::tempdir().unwrap();
+        let path = region_file(world.path(), "overworld", 0, 0);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"truncated").unwrap();
+        assert!(write_chunk(world.path(), "overworld", 0, 0, &chunk_with("replacement")).is_err());
+        assert_eq!(std::fs::read(path).unwrap(), b"truncated");
     }
 }

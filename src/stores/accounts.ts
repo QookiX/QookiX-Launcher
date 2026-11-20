@@ -3,15 +3,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import i18n from "../i18n";
 import { api } from "../api";
 import { useSettingsStore } from "./settings";
-import type { Account, YggOauthConfig } from "../types";
-
-/** LittleSkin OAuth2 回调换 token 后的角色列表（多角色时交给前端选择） */
-interface YggOauthResult {
-  profiles: { id: string; name: string }[];
-  server: string;
-  serverName: string;
-  links: { homepage: string; register: string };
-}
+import type { Account, YggOauthConfig, YggOauthResult } from "../types";
 
 /**
  * 上次的账号列表快照（localStorage）。
@@ -107,6 +99,9 @@ export const useAccountsStore = defineStore("accounts", {
     yggOauthWaiting: false,
     /** 回调拿到多角色时的选择列表（单角色已自动添加，不会落到这里） */
     yggOauthResult: null as YggOauthResult | null,
+    yggOauthRevision: 0,
+    yggOauthState: "",
+    yggOauthUserCode: "",
   }),
   getters: {
     /** The currently playing account: settings.selected_account, else first */
@@ -247,57 +242,98 @@ export const useAccountsStore = defineStore("accounts", {
     },
     /** 第一步：拿授权页地址并用系统浏览器打开 */
     async startYggOauth() {
-      const info = await api.yggdrasilOauthStart();
-      this.yggOauthWaiting = true;
+      const revision = ++this.yggOauthRevision;
+      this.yggOauthState = "";
+      this.yggOauthUserCode = "";
       this.yggOauthResult = null;
+      const info = await api.yggdrasilOauthStart();
+      if (revision !== this.yggOauthRevision) return;
+      this.yggOauthState = info.state;
+      this.yggOauthUserCode = info.userCode ?? "";
+      this.yggOauthWaiting = true;
       try {
         await openUrl(info.url);
+        if (info.mode === "device") {
+          const deadline = Date.now() + (info.expiresIn ?? 300) * 1000;
+          const delay = (info.interval ?? 5) * 1000;
+          while (revision === this.yggOauthRevision && Date.now() <= deadline) {
+            await new Promise<void>((resolve) => setTimeout(resolve, delay));
+            if (revision !== this.yggOauthRevision) return;
+            const response = await api.yggdrasilOauthPoll(info.state);
+            if (revision !== this.yggOauthRevision) return;
+            if (response.status === "ok") {
+              await this.acceptYggOauthResult(response.result, revision);
+              return;
+            }
+          }
+          if (revision === this.yggOauthRevision) throw new Error(i18n.global.t("yggLogin.oauthExpired"));
+        }
       } catch (e) {
+        if (revision !== this.yggOauthRevision) return;
         this.yggOauthWaiting = false;
+        this.yggOauthUserCode = "";
         throw e;
       }
+    },
+    async cancelYggOauth() {
+      const state = this.yggOauthState;
+      ++this.yggOauthRevision;
+      this.yggOauthState = "";
+      this.yggOauthWaiting = false;
+      this.yggOauthResult = null;
+      this.yggOauthUserCode = "";
+      if (state) await api.yggdrasilOauthCancel(state);
+    },
+    async acceptYggOauthResult(res: YggOauthResult, revision: number): Promise<"ok" | "ignored"> {
+      if (revision !== this.yggOauthRevision) return "ignored";
+      this.yggOauthUserCode = "";
+      const profiles = res.profiles;
+      if (profiles.length === 1 || !this.yggOauthWaiting) {
+        const p = profiles[0];
+        const acc = await this.addYggOauthAccount(p.id, res.authorizationId);
+        if (revision !== this.yggOauthRevision) return "ignored";
+        this.msSuccess = profiles.length > 1
+          ? i18n.global.t("yggLogin.oauthAutoProfile", { name: p.name })
+          : i18n.global.t("accountChip.yggAccountAdded", { username: acc.username });
+      } else {
+        this.yggOauthResult = res;
+      }
+      return "ok";
     },
     /**
      * 处理深链回调（`qookix://oauth/littleskin/callback?code=..&state=..`）。
      * 返回 `denied` 表示用户在授权页点了拒绝；单角色直接添加，多角色交给前端选择。
      */
-    async handleYggOauthCallback(url: URL): Promise<"ok" | "denied"> {
+    async handleYggOauthCallback(url: URL): Promise<"ok" | "denied" | "ignored"> {
+      const revision = this.yggOauthRevision;
+      const state = url.searchParams.get("state")?.trim() ?? "";
+      if (this.yggOauthState && this.yggOauthState !== state) return "ignored";
       if (url.searchParams.get("error")) {
         this.yggOauthWaiting = false;
         return "denied";
       }
       const code = url.searchParams.get("code")?.trim() ?? "";
-      const state = url.searchParams.get("state")?.trim() ?? "";
       if (!code) throw new Error(i18n.global.t("yggLogin.oauthErrNoCode"));
       try {
         const res = await api.yggdrasilOauthComplete(code, state);
-        const profiles = res.profiles;
-        // 单角色：直接添加；多角色且对话框在等：交给前端选择；
-        // 多角色但对话框已关：自动选第一个（用户可在账号管理里切换）
-        if (profiles.length === 1 || !this.yggOauthWaiting) {
-          const p = profiles[0];
-          const acc = await this.addYggOauthAccount(p.id);
-          // 用 msSuccess 复用 AccountDrawer 的「提示 + 收起弹窗」逻辑
-          this.msSuccess =
-            profiles.length > 1
-              ? i18n.global.t("yggLogin.oauthAutoProfile", { name: p.name })
-              : i18n.global.t("accountChip.yggAccountAdded", { username: acc.username });
-          return "ok";
-        }
-        this.yggOauthResult = res;
-        return "ok";
+        return await this.acceptYggOauthResult(res, revision);
       } catch (e) {
+        if (revision !== this.yggOauthRevision) return "ignored";
         this.yggOauthWaiting = false;
         throw e;
       }
     },
     /** 第四步：为选定角色签发 Minecraft 令牌并登记为皮肤站账号 */
-    async addYggOauthAccount(profileId: string): Promise<Account> {
-      const acc = await api.yggdrasilOauthAddAccount(profileId);
+    async addYggOauthAccount(profileId: string, authorizationId: string): Promise<Account> {
+      const revision = this.yggOauthRevision;
+      const acc = await api.yggdrasilOauthAddAccount(profileId, authorizationId);
       await this.load(true);
+      if (revision !== this.yggOauthRevision) return acc;
       await this.select(acc.uuid);
+      if (revision !== this.yggOauthRevision) return acc;
       this.yggOauthResult = null;
       this.yggOauthWaiting = false;
+      this.yggOauthState = "";
       return acc;
     },
   },

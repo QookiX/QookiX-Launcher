@@ -12,6 +12,7 @@ pub mod multiplayer;
 pub mod nbt;
 pub mod options;
 pub mod pins;
+mod preview_sessions;
 pub mod resourcepack;
 pub mod schematic;
 pub mod schematic_resources;

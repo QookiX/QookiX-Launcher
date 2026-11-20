@@ -111,6 +111,7 @@ Var NoDesktopShortcutMode
 Var StatusFile
 Var FreshInstall
 Var ResourceDir
+Var ResourceOverride
 Var WixMode
 Var OldMainBinaryName
 
@@ -643,9 +644,11 @@ Function .onInit
   ; Data directory (instances, libraries, assets...). Defaults to the launcher's
   ; data root; the modern UI can override it for fresh installs.
   StrCpy $ResourceDir "$APPDATA\QookiX-Launcher"
+  StrCpy $ResourceOverride 0
   ${GetOptions} $CMDLINE "/RESOURCE_DIR=" $0
   ${IfNot} ${Errors}
     StrCpy $ResourceDir "$0"
+    StrCpy $ResourceOverride 1
   ${EndIf}
 
   Push 4
@@ -881,22 +884,16 @@ Section Install
     !insertmacro NSIS_HOOK_POSTINSTALL
   !endif
 
-  ; Seed the launcher with the chosen data directory (fresh installs only, and
-  ; only when the user picked a folder other than the default). The launcher
-  ; reads `data_dir` from its settings.json and uses it as the data root
-  ; (instances, libraries, assets...). Forward slashes keep the JSON valid
-  ; without needing to escape backslashes.
-  ${If} $FreshInstall = 1
-    ${StrCase} $0 "$APPDATA\QookiX-Launcher" "L"
-    ${StrCase} $1 "$ResourceDir" "L"
-    ${If} $0 != $1
-      ${IfNot} ${FileExists} "$APPDATA\QookiX-Launcher\settings.json"
-        ${StrRep} $1 $ResourceDir "\" "/"
-        CreateDirectory "$APPDATA\QookiX-Launcher"
-        FileOpen $2 "$APPDATA\QookiX-Launcher\settings.json" w
-        FileWrite $2 '{"data_dir":"$1"}'
-        FileClose $2
-      ${EndIf}
+  ; The modern UI commits data as the original user after this child completes.
+  ; Preserve explicit /RESOURCE_DIR for unattended per-user installation.
+  ${If} $ResourceOverride = 1
+  ${AndIf} $FreshInstall = 1
+    ClearErrors
+    ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --commit-install-data "$ResourceDir" "$INSTDIR"' $0
+    ${If} ${Errors}
+    ${OrIf} $0 != 0
+      SetErrorLevel 3
+      Abort
     ${EndIf}
   ${EndIf}
 
@@ -944,6 +941,23 @@ Section Uninstall
     !insertmacro NSIS_HOOK_PREUNINSTALL
   !endif
   !insertmacro CheckIfAppIsRunning "${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
+  ${If} $DeleteAppDataCheckboxState = 1
+  ${AndIf} $UpdateMode <> 1
+    SetShellVarContext current
+    ClearErrors
+    ExecWait '"$INSTDIR\${MAINBINARYNAME}.exe" --uninstall-data "$LANGUAGE"' $0
+    ${If} ${Errors}
+    ${OrIf} $0 != 0
+      ${If} $LANGUAGE = 2052
+        MessageBox MB_ICONEXCLAMATION|MB_OK "数据清理未完成。可重试，或取消勾选后仅卸载程序。"
+      ${Else}
+        MessageBox MB_ICONEXCLAMATION|MB_OK "Data cleanup did not finish. Retry or uncheck the data option to uninstall the program only."
+      ${EndIf}
+      SetErrorLevel 4
+      Abort
+    ${EndIf}
+  ${EndIf}
+
   ; Delete the app directory and its content from disk
   ; Copy main executable
   Delete "$INSTDIR\${MAINBINARYNAME}.exe"
@@ -1026,9 +1040,6 @@ Section Uninstall
     DeleteRegValue HKCU "${MANUPRODUCTKEY}" "Installer Language"
     DeleteRegKey /ifempty HKCU "${MANUPRODUCTKEY}"
     DeleteRegKey /ifempty HKCU "${MANUKEY}"
-    SetShellVarContext current
-    RmDir /r "$APPDATA\${BUNDLEID}"
-    RmDir /r "$LOCALAPPDATA\${BUNDLEID}"
   ${EndIf}
   !ifmacrodef NSIS_HOOK_POSTUNINSTALL
     !insertmacro NSIS_HOOK_POSTUNINSTALL

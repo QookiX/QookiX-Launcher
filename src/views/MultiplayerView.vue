@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { staggeredCardDelay } from "../composables/staggeredCardDelay";
+import { vSegmented } from "../composables/vSegmented";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { fmtBytes } from "../utils/format";
@@ -6,7 +8,7 @@ import { CORE_COLORS, CORE_LABELS } from "../utils/cores";
 import { isAprilFools } from "../utils/versions";
 import { useRouter } from "vue-router";
 import { NModal, NInput, NProgress, NSelect, NSwitch, useMessage } from "naive-ui";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
 import { useAccountsStore } from "../stores/accounts";
@@ -47,6 +49,8 @@ import { qookixErrorMessage, useQookixStore } from "../stores/qookix";
 import { useQookixPrefsStore } from "../stores/qookixPrefs";
 import { PLAY_TYPES } from "../utils/qookix";
 
+const { listen } = useTauriListenerScope();
+
 const router = useRouter();
 const { t } = useI18n();
 const accounts = useAccountsStore();
@@ -85,10 +89,15 @@ async function shareRoom(
   }
   shareBusy.value = true;
   try {
-    await qookix.shareRoom(code, visibility, title, playType, version, pack, modsCount, packNet);
-    message.success(
-      visibility === "public" ? t("qookix.rooms.sharedPublic") : t("qookix.rooms.sharedFriends"),
-    );
+    const r = await qookix.shareRoom(code, visibility, title, playType, version, pack, modsCount, packNet);
+    const titlePending = visibility === "public" && (r?.room?.title_status ?? "approved") !== "approved";
+    if (titlePending) {
+      message.warning(t("qookix.roomTitlePendingHint"));
+    } else {
+      message.success(
+        visibility === "public" ? t("qookix.rooms.sharedPublic") : t("qookix.rooms.sharedFriends"),
+      );
+    }
   } catch (e) {
     message.error(qookixErrorMessage(e));
   } finally {
@@ -446,14 +455,6 @@ async function toggleRun(id: string, running: boolean) {
   }
 }
 
-// 服务器卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发给每张卡片。
-// 初次加载、切标签页回来时整批挂载播放级联；新建单个服务器时只有新卡片进场。
-// 数量多时自动收紧步长，保证整批级联在 ~0.7s 内跑完。
-function cardDelay(i: number): string {
-  const step = Math.min(0.045, 0.6 / Math.max(1, servers.servers.length));
-  return `${(0.06 + i * step).toFixed(3)}s`;
-}
-
 // ---- 陶瓦联机（联机房间）----
 const tc = ref<TerracottaInfo | null>(null);
 const tcLoading = ref(false);
@@ -467,6 +468,8 @@ const tcDownloading = ref(false);
 const tcDownloadProgress = ref<TerracottaDownloadProgress | null>(null);
 let tcDlUnlisten: (() => void) | null = null;
 let tcPollTimer: number | null = null;
+let tcStateEpoch = 0;
+let tcActive = true;
 
 const tcStateName = computed<string>(() => String(tcRoom.value?.state ?? "waiting"));
 const tcRoomCodeFinal = computed<string>(() => {
@@ -513,14 +516,37 @@ const tcStateText = computed(() => {
 });
 
 async function refreshTc() {
+  if (!tcActive) return;
+  const epoch = tcStateEpoch;
   tcLoading.value = true;
   try {
-    tc.value = await api.terracottaDetect();
-    if (tc.value?.running) startTcPoll();
+    const current = await api.terracottaDetect();
+    if (epoch !== tcStateEpoch) return;
+    tc.value = current;
+    if (current.running) startTcPoll();
+    else {
+      stopTcPoll();
+      tcRoom.value = null;
+    }
   } catch (e) {
     message.error(String(e));
   } finally {
     tcLoading.value = false;
+  }
+}
+
+function applyTcState(running: boolean, port: number | null) {
+  tcStateEpoch++;
+  const current = tc.value;
+  if (!current) {
+    void refreshTc();
+    return;
+  }
+  tc.value = { ...current, running, port };
+  if (running) startTcPoll();
+  else {
+    stopTcPoll();
+    tcRoom.value = null;
   }
 }
 
@@ -574,10 +600,9 @@ async function launchTc() {
   if (tcBusy.value) return;
   tcBusy.value = true;
   try {
-    const l = await api.terracottaLaunch();
-    if (tc.value) tc.value = { ...tc.value, running: true, port: l.port };
-    startTcPoll();
-    message.success(t("multiplayer.msg.tcStarted"));
+    await api.terracottaLaunch();
+    await refreshTc();
+    if (tc.value?.running) message.success(t("multiplayer.msg.tcStarted"));
   } catch (e) {
     message.error(String(e));
   } finally {
@@ -588,9 +613,7 @@ async function launchTc() {
 async function stopTc() {
   try {
     await api.terracottaStop();
-    stopTcPoll();
-    if (tc.value) tc.value = { ...tc.value, running: false, port: null };
-    tcRoom.value = null;
+    await refreshTc();
     message.success(t("multiplayer.msg.tcStopped"));
   } catch (e) {
     message.error(String(e));
@@ -611,8 +634,11 @@ const TC_PENDING_STATES = new Set([
 ]);
 
 async function pollTcState() {
+  const epoch = tcStateEpoch;
+  if (!tc.value?.running) return;
   try {
     const s = (await api.terracottaStatus()) as Record<string, unknown> | null;
+    if (epoch !== tcStateEpoch || !tc.value?.running) return;
     const next = String(s?.state ?? "waiting");
     // 本地正处于进行中状态，而陶瓦返回空闲/空，说明还没进入对应状态，
     // 保留本地状态，避免界面掉回「创建/加入」面板
@@ -728,7 +754,9 @@ function serverAddress(port: number) {
 
 onMounted(async () => {
   servers.load();
-  refreshTc();
+  void listen<{ running: boolean; port: number | null }>("terracotta://state", (event) => {
+    applyTcState(event.payload.running, event.payload.port);
+  }).then(refreshTc, refreshTc);
   void refreshLanIp(true);
   window.addEventListener("focus", onWinFocus);
   try {
@@ -757,13 +785,17 @@ watch(
   },
 );
 
-onUnmounted(() => stopTcPoll());
+onUnmounted(() => {
+  tcActive = false;
+  tcStateEpoch++;
+  stopTcPoll();
+});
 </script>
 
 <template>
   <div id="mp-root" class="mp-view" data-tauri-drag-region>
     <div class="mp-head">
-      <div id="mp-tabs" ref="tabSegRef" class="qx-seg mode-tabs">
+      <div id="mp-tabs" ref="tabSegRef" v-segmented="{ label: t('nav.multiplayer'), panel: 'multiplayer-tab-panel' }" class="qx-seg mode-tabs">
         <div class="qx-seg__indicator" :style="tabSegStyle"></div>
         <button :class="{ active: tab === 'servers' }" @click="tab = 'servers'">
           <IconServer /> {{ t('multiplayer.tab.servers') }}
@@ -786,7 +818,7 @@ onUnmounted(() => stopTcPoll());
            整个功能默认隐藏，靠开发者页的开关整体放行。 -->
       <div
         v-if="showFrpFeatures"
-        ref="frpSubRef"
+        ref="frpSubRef" v-segmented="{ label: t('frp.title') }"
         class="qx-seg mp-subtabs"
         :class="{ hidden: tab !== 'tunnel' }"
       >
@@ -804,20 +836,21 @@ onUnmounted(() => stopTcPoll());
       </div>
     </div>
 
+    <div id="multiplayer-tab-panel" class="mp-tab-panel" role="tabpanel">
     <!-- 服务器 -->
     <template v-if="tab === 'servers'">
       <div v-if="servers.count" class="grid">
         <div
           v-for="(s, i) in servers.servers"
           :key="s.id"
-          class="server-card glass clickable"
-          :style="{ animationDelay: cardDelay(i) }"
+          class="server-card glass clickable qx-card-enter"
+          :style="{ animationDelay: staggeredCardDelay(i, servers.servers.length) }"
           @click="router.push(`/multiplayer/${s.id}`)"
         >
           <div class="card-top">
             <div class="icon"><IconServer /></div>
             <div class="title-wrap">
-              <div class="name text-ellipsis">{{ s.name }}</div>
+              <RouterLink class="name text-ellipsis" :to="`/multiplayer/${s.id}`" @click.stop>{{ s.name }}</RouterLink>
               <div class="meta">
                 <span
                   class="core-badge"
@@ -1161,6 +1194,8 @@ onUnmounted(() => stopTcPoll());
       </section>
     </template>
 
+    </div>
+
     <QookixLoginDialog ref="qookixLoginRef" />
 
     <!-- 分享到目录：玩法 / 版本会作为筛选条件；清单用于加入前比对 -->
@@ -1363,6 +1398,7 @@ onUnmounted(() => stopTcPoll());
 </template>
 
 <style scoped>
+.mp-tab-panel { display: flex; flex-direction: column; gap: var(--gap-page); min-width: 0; }
 .mp-view {
   display: flex;
   flex-direction: column;
@@ -1388,23 +1424,10 @@ onUnmounted(() => stopTcPoll());
   position: relative;
   box-shadow: var(--card-shadow);
   transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.12s ease, border-color 0.12s ease;
-  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
-     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
-  animation: mp-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
 .server-card:hover:not(:active) {
   z-index: 2;
   box-shadow: var(--card-shadow-hover);
-}
-@keyframes mp-card-enter {
-  from {
-    transform: translateY(28px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
 }
 /* —— 服务器卡片：与 InstanceCard 同一套结构（card-top + card-foot）与按钮规格 —— */
 .card-top {
@@ -1428,6 +1451,9 @@ onUnmounted(() => stopTcPoll());
   min-width: 0;
 }
 .name {
+  display: block;
+  color: inherit;
+  text-decoration: none;
   font-weight: 600;
   font-size: var(--fs-md);
   margin-bottom: 5px;

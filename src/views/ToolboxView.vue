@@ -1,6 +1,6 @@
 <script setup lang="ts">
+import { staggeredCardDelay } from "../composables/staggeredCardDelay";
 import { computed } from "vue";
-import { useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { IconMapPin, IconBox, IconEdit, IconImage } from "../components/icons";
 import seedCover from "../assets/seed-cover.png";
@@ -9,7 +9,6 @@ import nbtCover from "../assets/nbt-cover.png";
 import resourcepackCover from "../assets/resourcepack-cover.png";
 
 const { t } = useI18n();
-const router = useRouter();
 
 const tools = computed(() => [
   {
@@ -61,27 +60,17 @@ const tools = computed(() => [
   },
 ]);
 
-function go(to: string) {
-  router.push(to);
-}
-
-// 工具卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发。
-// 数量多时自动收紧步长，整批级联 ~0.7s 内跑完。
-function cardDelay(i: number): string {
-  const step = Math.min(0.045, 0.6 / Math.max(1, tools.value.length));
-  return `${(0.06 + i * step).toFixed(3)}s`;
-}
 </script>
 
 <template>
-  <div id="toolbox-root" class="toolbox-view" data-tauri-drag-region>
-    <div class="grid">
-      <section
+  <div id="toolbox-root" class="qx-page" data-tauri-drag-region>
+    <div class="qx-grid qx-grid--card">
+      <RouterLink
         v-for="(tool, i) in tools"
         :key="tool.key"
-        class="tool-card glass clickable"
-        :style="{ animationDelay: cardDelay(i) }"
-        @click="go(tool.to)"
+        class="tool-card glass clickable qx-card-enter"
+        :style="{ animationDelay: staggeredCardDelay(i, tools.length) }"
+        :to="tool.to"
       >
         <div class="tool-cover" :style="tool.coverImg ? { backgroundImage: `url(${tool.coverImg})`, backgroundPosition: tool.coverPos } : { background: tool.cover }">
           <component :is="tool.icon" class="tool-cover-icon" />
@@ -91,38 +80,24 @@ function cardDelay(i: number): string {
           <h3>{{ tool.title }}</h3>
           <p class="hint">{{ tool.desc }}</p>
         </div>
-      </section>
+      </RouterLink>
     </div>
   </div>
 </template>
 
 <style scoped>
-.toolbox-view { display: flex; flex-direction: column; gap: var(--gap-page); }
-/* 列宽走 §6 的第一档（320），和实例页 / 首页用同一套栅格 */
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: var(--gap-grid); }
 .tool-card {
+  color: inherit;
+  text-decoration: none;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
-     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
-  animation: tool-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
   transition: box-shadow var(--dur-md) var(--ease-out);
 }
 /* 与 .inst-card / .pin-card / .server-card 同一套悬停反馈：
    此前这里没有任何抬升，同屏并排的卡片里只有它是「点下去没反应」的。 */
 .tool-card:hover:not(:active) {
   box-shadow: var(--card-shadow-hover);
-}
-@keyframes tool-card-enter {
-  from {
-    transform: translateY(28px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
 }
 .tool-cover {
   height: 124px;

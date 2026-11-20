@@ -3,8 +3,10 @@
 
 use crate::state::AppState;
 use serde::Serialize;
+use std::collections::VecDeque;
+use std::path::PathBuf;
 use tauri::{AppHandle, Emitter};
-use tauri_plugin_updater::UpdaterExt;
+use tauri_plugin_updater::{Update, UpdaterExt};
 
 /// 前端更新进度事件名
 pub const PROGRESS_EVENT: &str = "app-update-progress";
@@ -13,27 +15,13 @@ pub const PROGRESS_EVENT: &str = "app-update-progress";
 pub const SOURCE_BUCKET: &str = "bucket";
 pub const SOURCE_GITHUB: &str = "github";
 
-/// 版本号比较：按 `.` / `-` / `+` 分段数值比较（与前端 `compareVersions` 对齐）。
-/// 返回 -1 / 0 / 1。无法解析的段按 0 处理。前置的 `v` / `V` 会被自动剔除。
-fn compare_versions(a: &str, b: &str) -> i8 {
-    let parse = |s: &str| -> Vec<u64> {
-        let clean = s.trim().trim_start_matches(['v', 'V']);
-        clean
-            .split(['.', '-', '+'])
-            .map(|seg| seg.parse::<u64>().unwrap_or(0))
-            .collect()
-    };
-    let pa = parse(a);
-    let pb = parse(b);
-    let n = pa.len().max(pb.len());
-    for i in 0..n {
-        let da = pa.get(i).copied().unwrap_or(0);
-        let db = pb.get(i).copied().unwrap_or(0);
-        if da != db {
-            return if da < db { -1 } else { 1 };
-        }
-    }
-    0
+fn release_version(value: &str) -> Option<semver::Version> {
+    let value = value.trim();
+    semver::Version::parse(value.strip_prefix(['v', 'V']).unwrap_or(value)).ok()
+}
+
+fn compare_versions(a: &str, b: &str) -> Option<std::cmp::Ordering> {
+    Some(release_version(a)?.cmp_precedence(&release_version(b)?))
 }
 
 /// 存储桶更新源根地址（CI 会把构建产物和 `latest.json` 上传到该目录）。
@@ -96,26 +84,59 @@ fn build_updater(
         .map_err(|e| format!("初始化更新器失败: {e}"))
 }
 
-/// `latest.json` 里我们关心的自定义字段（插件不读这些，只读 version/platforms）。
-/// `minVersion` 由 CI 通过 `QOOKIX_MIN_VERSION` 环境变量注入：低于此版本必须强制更新。
-#[derive(serde::Deserialize)]
-struct ManifestMeta {
-    #[serde(rename = "minVersion")]
-    min_version: Option<String>,
+#[derive(Default)]
+pub(crate) struct UpdateCache {
+    decisions: VecDeque<CheckedUpdate>,
+    ready: Option<DownloadedUpdate>,
 }
 
-/// 拉取 `latest.json` 并提取 `minVersion`。网络失败时返回 `None`（不阻塞普通更新流程）。
-async fn fetch_min_version(state: &AppState, source: &str) -> Option<String> {
-    let url = manifest_url(source).ok()?;
-    let text = crate::download::get_text(&state.client, url.as_str()).await.ok()?;
-    let meta: ManifestMeta = serde_json::from_str(&text).ok()?;
-    meta.min_version
+struct CheckedUpdate {
+    id: u64,
+    source: String,
+    update: Update,
+}
+
+impl UpdateCache {
+    fn remember(&mut self, source: &str, update: Update, new_id: impl FnOnce() -> u64) -> u64 {
+        let id = match self.decisions.iter().position(|checked| {
+            checked.source == source
+                && checked.update.version == update.version
+                && checked.update.download_url == update.download_url
+                && checked.update.signature == update.signature
+                && checked.update.raw_json == update.raw_json
+        }) {
+            Some(index) => self.decisions.remove(index).map_or_else(new_id, |checked| checked.id),
+            None => new_id(),
+        };
+        self.decisions.push_back(CheckedUpdate { id, source: source.to_string(), update });
+        if self.decisions.len() > 16 {
+            self.decisions.pop_front();
+        }
+        id
+    }
+}
+
+struct DownloadedUpdate {
+    decision_id: u64,
+    update: Update,
+    bytes: Vec<u8>,
+}
+
+fn update_lock_key(state: &AppState) -> PathBuf {
+    state.root.join(".app-update")
+}
+
+fn minimum_version(manifest: &serde_json::Value, offered: &str) -> Option<String> {
+    let min = manifest.get("minVersion")?.as_str()?;
+    let cmp = compare_versions(min, offered)?;
+    (cmp != std::cmp::Ordering::Greater).then(|| min.to_string())
 }
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct UpdateInfo {
     pub available: bool,
+    pub decision_id: Option<u64>,
     pub version: Option<String>,
     pub current_version: Option<String>,
     pub body: Option<String>,
@@ -142,15 +163,13 @@ pub async fn check_for_update(
         .map_err(|e| format!("检查更新失败: {e}"))?;
     Ok(match update {
         Some(u) => {
-            let current = u.current_version.clone();
-            let min_version = fetch_min_version(&state, &source).await;
-            // 强制更新：latest.json 声明了 minVersion 且当前版本严格低于它。
-            let force = match &min_version {
-                Some(m) => compare_versions(&current, m) < 0,
-                None => false,
-            };
-            UpdateInfo {
+            let min_version = minimum_version(&u.raw_json, &u.version);
+            let force = min_version.as_ref().is_some_and(|min| {
+                compare_versions(&u.current_version, min) == Some(std::cmp::Ordering::Less)
+            });
+            let mut info = UpdateInfo {
                 available: true,
+                decision_id: None,
                 version: Some(u.version.clone()),
                 current_version: Some(u.current_version.clone()),
                 body: u.body.clone(),
@@ -158,10 +177,14 @@ pub async fn check_for_update(
                 source,
                 force_update: force,
                 force_min_version: min_version,
-            }
+            };
+            let mut cache = state.pending_update.lock().unwrap_or_else(|e| e.into_inner());
+            info.decision_id = Some(cache.remember(&info.source, u, || state.next_task_id()));
+            info
         }
         None => UpdateInfo {
             available: false,
+            decision_id: None,
             version: None,
             current_version: None,
             body: None,
@@ -173,61 +196,92 @@ pub async fn check_for_update(
     })
 }
 
-/// 下载所选更新源的新版本，进度通过 `app-update-progress` 事件上报。
-/// 下载完成后暂存，安装由 `apply_update` 在用户确认重启后执行。
+/// 下载已经检查并确认的更新。安装由用户确认重启后执行。
 #[tauri::command]
 pub async fn download_update(
     app: AppHandle,
     state: tauri::State<'_, AppState>,
-    source: Option<String>,
-) -> Result<bool, String> {
-    let source = current_source(&state, source);
-    let updater = build_updater(&app, &source)?;
-    let Some(update) = updater
-        .check()
-        .await
-        .map_err(|e| format!("检查更新失败: {e}"))?
-    else {
-        return Err("没有可用更新".into());
+    decision_id: u64,
+) -> Result<UpdateReceipt, String> {
+    let activity = state.jobs.download_lock(update_lock_key(&state));
+    let _guard = activity.try_lock().map_err(|_| "另一项启动器更新正在进行")?;
+    let update = {
+        let cache = state.pending_update.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ready) = cache.ready.as_ref().filter(|ready| ready.decision_id == decision_id) {
+            return Ok(UpdateReceipt { decision_id, version: ready.update.version.clone() });
+        }
+        cache.decisions.iter().find(|checked| checked.id == decision_id)
+            .map(|checked| checked.update.clone())
+            .ok_or("该更新检查已过期，请重新检查更新")?
     };
 
     let handle = app.clone();
+    let mut progress = DownloadProgress { decision_id, downloaded: 0, total: None };
     let bytes = update
         .download(
-            move |downloaded, total| {
-                let _ = handle.emit(
-                    PROGRESS_EVENT,
-                    DownloadProgress {
-                        downloaded: downloaded as u64,
-                        total,
-                    },
-                );
+            |chunk, total| {
+                progress.record_chunk(chunk, total);
+                let _ = handle.emit(PROGRESS_EVENT, progress);
             },
             || {},
         )
         .await
         .map_err(|e| format!("下载更新失败: {e}"))?;
 
-    *state.pending_update.lock().unwrap_or_else(|e| e.into_inner()) = Some((update, bytes));
-    Ok(true)
+    progress.finish(bytes.len());
+    let _ = app.emit(PROGRESS_EVENT, progress);
+    let version = update.version.clone();
+    state.pending_update.lock().unwrap_or_else(|e| e.into_inner()).ready =
+        Some(DownloadedUpdate { decision_id, update, bytes });
+    Ok(UpdateReceipt { decision_id, version })
 }
 
 /// 应用已下载的更新（校验签名后安装，Windows 上会静默安装并重启）。
 #[tauri::command]
-pub fn apply_app_update(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    let Some((update, bytes)) = state.pending_update.lock().unwrap_or_else(|e| e.into_inner()).take() else {
-        return Err("没有已下载的更新".into());
+pub fn apply_app_update(state: tauri::State<'_, AppState>, decision_id: u64) -> Result<(), String> {
+    let activity = state.jobs.download_lock(update_lock_key(&state));
+    let _guard = activity.try_lock().map_err(|_| "另一项启动器更新正在进行")?;
+    let ready = {
+        let mut cache = state.pending_update.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.ready.as_ref().is_none_or(|ready| ready.decision_id != decision_id) {
+            return Err("没有和本次确认匹配的已下载更新".into());
+        }
+        cache.ready.take().ok_or("没有已下载的更新")?
     };
-    update
-        .install(bytes)
-        .map_err(|e| format!("安装更新失败: {e}"))
+    match ready.update.install(&ready.bytes) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            state.pending_update.lock().unwrap_or_else(|e| e.into_inner()).ready = Some(ready);
+            Err(format!("安装更新失败: {err}"))
+        }
+    }
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct UpdateReceipt {
+    pub decision_id: u64,
+    pub version: String,
 }
 
 #[derive(Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub struct DownloadProgress {
+    pub decision_id: u64,
     pub downloaded: u64,
     pub total: Option<u64>,
+}
+
+impl DownloadProgress {
+    fn record_chunk(&mut self, chunk: usize, total: Option<u64>) {
+        self.downloaded = self.downloaded.saturating_add(chunk as u64);
+        self.total = total.or(self.total);
+    }
+
+    fn finish(&mut self, verified_size: usize) {
+        self.downloaded = verified_size as u64;
+        self.total = Some(self.downloaded);
+    }
 }
 
 /// 根据更新源拼接 changelog.json 地址。
@@ -261,36 +315,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compare_versions_basic() {
-        assert_eq!(compare_versions("0.15.1", "0.15.2"), -1);
-        assert_eq!(compare_versions("0.15.2", "0.15.1"), 1);
-        assert_eq!(compare_versions("0.15.1", "0.15.1"), 0);
+    fn updater_matches_shared_semver_examples() {
+        let examples: Vec<(String, String, Option<i8>)> =
+            serde_json::from_str(include_str!("../../scripts/shared/release-version.test.json")).unwrap();
+        for (left, right, expected) in examples {
+            let order = compare_versions(&left, &right).map(|order| match order {
+                std::cmp::Ordering::Less => -1,
+                std::cmp::Ordering::Equal => 0,
+                std::cmp::Ordering::Greater => 1,
+            });
+            assert_eq!(order, expected, "{left} vs {right}");
+        }
     }
 
     #[test]
-    fn compare_versions_crosses_decimal_boundary() {
-        // 0.10.0 > 0.9.0（字符串比较会搞错，数值比较不会）
-        assert_eq!(compare_versions("0.9.0", "0.10.0"), -1);
-        assert_eq!(compare_versions("0.10.0", "0.9.0"), 1);
+    fn update_progress_accumulates_equal_and_unequal_chunks_and_finishes_verified() {
+        let mut progress = DownloadProgress { decision_id: 1, downloaded: 0, total: None };
+        progress.record_chunk(8, None);
+        progress.record_chunk(8, None);
+        assert_eq!(progress.downloaded, 16);
+        assert_eq!(progress.total, None);
+        progress.record_chunk(3, Some(19));
+        assert_eq!(progress.downloaded, 19);
+        assert_eq!(progress.total, Some(19));
+        progress.finish(19);
+        assert_eq!(progress.total, Some(19));
     }
 
     #[test]
-    fn compare_versions_handles_pre_release_suffixes() {
-        // 与前端 compareVersions 对齐：按 ./-/+ 分段，非数字段当 0 处理。
-        // "rc1" / "rc2" 都解析为 0，所以 0.15.1-rc1 == 0.15.1-rc2。
-        assert_eq!(compare_versions("0.15.1-rc1", "0.15.1-rc2"), 0);
-        // 但 0.15.1-rc1 < 0.15.2（第三段 1 < 2）
-        assert_eq!(compare_versions("0.15.1-rc1", "0.15.2"), -1);
-    }
-
-    #[test]
-    fn compare_versions_unparseable_segments_treated_as_zero() {
-        assert_eq!(compare_versions("0.15.x", "0.15.0"), 0);
-        assert_eq!(compare_versions("v0.15.1", "0.15.1"), 0);
-        // 关键用例：v 前缀跨越 1.0.0 主版本号时不能被误判为 0.0.0
-        assert_eq!(compare_versions("v1.0.0", "1.0.0"), 0);
-        assert_eq!(compare_versions("v1.0.0", "0.15.5"), 1);
-        assert_eq!(compare_versions("0.15.5", "v1.0.0"), -1);
-        assert_eq!(compare_versions("V2.1.0", "2.1.0"), 0);
+    fn minimum_version_must_be_satisfied_by_the_offer_it_came_with() {
+        assert_eq!(minimum_version(&serde_json::json!({"minVersion":"1.2.0"}), "1.2.0").as_deref(), Some("1.2.0"));
+        assert_eq!(minimum_version(&serde_json::json!({"minVersion":"1.3.0"}), "1.2.0"), None);
+        assert_eq!(minimum_version(&serde_json::json!({"minVersion":"unknown"}), "1.2.0"), None);
     }
 }

@@ -2,6 +2,8 @@ use crate::models::{InstalledContent, Instance, InstanceGroup, LoaderType};
 use crate::state::AppState;
 use tauri::Emitter;
 
+static INSTANCE_METADATA: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 
 
 pub fn instance_path(state: &AppState, id: &str) -> std::path::PathBuf {
@@ -12,12 +14,7 @@ pub fn instance_path(state: &AppState, id: &str) -> std::path::PathBuf {
 /// could escape the instances directory via path traversal before it is joined
 /// onto a filesystem path or passed to `remove_dir_all`.
 pub fn validate_instance_id(id: &str) -> Result<(), String> {
-    if id.is_empty()
-        || id == "."
-        || id == ".."
-        || id.contains('/')
-        || id.contains('\\')
-        || id.contains("..")
+    if crate::fsutil::validate_id(id, "实例").is_err()
         || !id
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
@@ -28,7 +25,7 @@ pub fn validate_instance_id(id: &str) -> Result<(), String> {
 }
 
 pub fn load_instances(state: &AppState) -> Vec<Instance> {
-    crate::util::load_dir_entries(&state.instances_dir(), "qookix.json", |i: &Instance| i.created)
+    crate::fsutil::load_dir_entries(&state.instances_dir(), "qookix.json", |i: &Instance| i.created)
 }
 
 pub fn get_instance(state: &AppState, id: &str) -> Result<Instance, String> {
@@ -38,16 +35,46 @@ pub fn get_instance(state: &AppState, id: &str) -> Result<Instance, String> {
     serde_json::from_str(&text).map_err(|e| format!("实例数据损坏: {e}"))
 }
 
-pub fn save_instance(state: &AppState, instance: &Instance) -> Result<(), String> {
+fn save_instance(state: &AppState, instance: &Instance) -> Result<(), String> {
+    let _write = INSTANCE_METADATA.lock().map_err(|_| "实例元数据不可用")?;
+    write_instance(state, instance)
+}
+
+fn write_instance(state: &AppState, instance: &Instance) -> Result<(), String> {
     let path = instance_path(state, &instance.id);
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
     let json = serde_json::to_string_pretty(instance).map_err(|e| e.to_string())?;
-    std::fs::write(&path, json).map_err(|e| e.to_string())
+    crate::fsutil::atomic_write(&path, json.as_bytes()).map_err(|e| e.to_string())
+}
+
+pub fn edit_instance(
+    state: &AppState,
+    id: &str,
+    update: impl FnOnce(&mut Instance) -> Result<bool, String>,
+) -> Result<Instance, String> {
+    let _write = INSTANCE_METADATA.lock().map_err(|_| "实例元数据不可用")?;
+    let mut instance = get_instance(state, id)?;
+    if update(&mut instance)? {
+        write_instance(state, &instance)?;
+    }
+    Ok(instance)
 }
 
 pub fn create_instance(
+    state: &AppState,
+    name: String,
+    mc_version: String,
+    loader: LoaderType,
+    loader_version: Option<String>,
+) -> Result<Instance, String> {
+    let instance = new_instance(state, name, mc_version, loader, loader_version)?;
+    save_instance(state, &instance)?;
+    Ok(instance)
+}
+
+pub(crate) fn new_instance(
     state: &AppState,
     name: String,
     mc_version: String,
@@ -63,10 +90,10 @@ pub fn create_instance(
     }
     // unique short id
     let mut id = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
-    while instance_path(state, &id).exists() {
+    while state.instances_dir().join(&id).exists() {
         id = uuid::Uuid::new_v4().simple().to_string()[..8].to_string();
     }
-    let instance = Instance {
+    Ok(Instance {
         id,
         name,
         mc_version,
@@ -75,15 +102,29 @@ pub fn create_instance(
         created: crate::util::now_secs(),
         installed: true,
         ..Default::default()
-    };
-    // game dir
-    std::fs::create_dir_all(state.instances_dir().join(&instance.id)).map_err(|e| e.to_string())?;
-    save_instance(state, &instance)?;
-    Ok(instance)
+    })
+}
+
+pub(crate) fn publish_staged_instance(
+    state: &AppState,
+    instance: &Instance,
+    stage: &std::path::Path,
+) -> Result<(), String> {
+    let _write = INSTANCE_METADATA.lock().map_err(|_| "实例元数据不可用")?;
+    let destination = state.instances_dir().join(&instance.id);
+    if destination.try_exists().map_err(|error| error.to_string())? {
+        return Err("实例目录已存在，请重新导入".into());
+    }
+    let json = serde_json::to_vec_pretty(instance).map_err(|error| error.to_string())?;
+    crate::fsutil::atomic_write(&stage.join("qookix.json"), &json)
+        .map_err(|error| format!("写入实例元数据失败: {error}"))?;
+    std::fs::rename(stage, &destination).map_err(|error| format!("提交实例目录失败: {error}"))
 }
 
 pub fn delete_instance(state: &AppState, id: &str) -> Result<(), String> {
     validate_instance_id(id)?;
+    let _write = INSTANCE_METADATA.lock().map_err(|_| "实例元数据不可用")?;
+    let _files = state.jobs.reserve_game_files(id)?;
     let dir = state.instances_dir().join(id);
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("删除实例目录失败: {e}"))?;
@@ -91,15 +132,17 @@ pub fn delete_instance(state: &AppState, id: &str) -> Result<(), String> {
     // remove cached version json/jar
     let ver_dir = state.versions_dir().join(id);
     if ver_dir.exists() {
-        let _ = crate::util::fs_best_effort("remove_dir_all", &ver_dir, std::fs::remove_dir_all(&ver_dir));
+        let _ = crate::fsutil::fs_best_effort("remove_dir_all", &ver_dir, std::fs::remove_dir_all(&ver_dir));
     }
     Ok(())
 }
 
 pub fn mark_installed(state: &AppState, id: &str) -> Result<(), String> {
-    let mut inst = get_instance(state, id)?;
-    inst.installed = true;
-    save_instance(state, &inst)
+    edit_instance(state, id, |instance| {
+        let changed = !instance.installed;
+        instance.installed = true;
+        Ok(changed)
+    }).map(|_| ())
 }
 
 pub fn update_instance(state: &AppState, patch: serde_json::Value) -> Result<Instance, String> {
@@ -107,81 +150,82 @@ pub fn update_instance(state: &AppState, patch: serde_json::Value) -> Result<Ins
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or("缺少实例 id")?;
-    let mut inst = get_instance(state, id)?;
-    if let Some(v) = patch.get("name").and_then(|v| v.as_str()) {
-        inst.name = v.to_string();
-    }
-    if let Some(v) = patch.get("alias") {
-        // 别名用于 qookix://launch/<alias>：小写、仅字母数字与 -/_，空串清除。
-        // 需保证全局唯一（与其他实例冲突时报错）。
-        let raw = v.as_str().unwrap_or("").trim().to_ascii_lowercase();
-        if raw.is_empty() {
-            inst.alias = None;
-        } else {
-            let valid =
-                !raw.is_empty() && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
-            if !valid {
-                return Err("别名只能包含英文字母、数字、- 和 _".into());
+    edit_instance(state, id, |inst| {
+        if let Some(v) = patch.get("name").and_then(|v| v.as_str()) {
+            inst.name = v.to_string();
+        }
+        if let Some(v) = patch.get("alias") {
+            // 别名用于 qookix://launch/<alias>：小写、仅字母数字与 -/_，空串清除。
+            // 需保证全局唯一（与其他实例冲突时报错）。
+            let raw = v.as_str().unwrap_or("").trim().to_ascii_lowercase();
+            if raw.is_empty() {
+                inst.alias = None;
+            } else {
+                let valid =
+                    !raw.is_empty() && raw.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+                if !valid {
+                    return Err("别名只能包含英文字母、数字、- 和 _".into());
+                }
+                // 冲突检查（排除自身）
+                for entry in load_instances(state) {
+                    if entry.id != inst.id && entry.alias.as_deref() == Some(raw.as_str()) {
+                        return Err(format!("别名已被实例「{}」占用", entry.name));
+                    }
+                }
+                inst.alias = Some(raw);
             }
-            // 冲突检查（排除自身）
-            for entry in load_instances(state) {
-                if entry.id != inst.id && entry.alias.as_deref() == Some(raw.as_str()) {
-                    return Err(format!("别名已被实例「{}」占用", entry.name));
+        }
+        if let Some(v) = patch.get("icon").and_then(|v| v.as_str()) {
+            inst.icon = if v.is_empty() { None } else { Some(v.to_string()) };
+        }
+        if let Some(v) = patch.get("max_memory_mb").and_then(|v| v.as_u64()) {
+            inst.max_memory_mb = if v > 0 { Some(v as u32) } else { None };
+        }
+        if let Some(v) = patch.get("memory_mode").and_then(|v| v.as_str()) {
+            inst.memory_mode = if v.is_empty() { None } else { Some(v.to_string()) };
+        }
+        if let Some(v) = patch.get("jvm_args").and_then(|v| v.as_str()) {
+            inst.jvm_args = if v.trim().is_empty() { None } else { Some(v.to_string()) };
+        }
+        if let Some(v) = patch.get("game_args").and_then(|v| v.as_str()) {
+            inst.game_args = if v.trim().is_empty() { None } else { Some(v.to_string()) };
+        }
+        if let Some(v) = patch.get("java_path") {
+            inst.java_path = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());
+        }
+        if let Some(v) = patch.get("account_id") {
+            inst.account_id = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());
+        }
+        if let Some(v) = patch.get("resolution") {
+            if let Some(arr) = v.as_array() {
+                if arr.len() == 2 {
+                    let w = arr[0].as_u64().unwrap_or(0) as u32;
+                    let h = arr[1].as_u64().unwrap_or(0) as u32;
+                    inst.resolution = if w > 0 && h > 0 { Some((w, h)) } else { None };
                 }
             }
-            inst.alias = Some(raw);
         }
-    }
-    if let Some(v) = patch.get("icon").and_then(|v| v.as_str()) {
-        inst.icon = if v.is_empty() { None } else { Some(v.to_string()) };
-    }
-    if let Some(v) = patch.get("max_memory_mb").and_then(|v| v.as_u64()) {
-        inst.max_memory_mb = if v > 0 { Some(v as u32) } else { None };
-    }
-    if let Some(v) = patch.get("memory_mode").and_then(|v| v.as_str()) {
-        inst.memory_mode = if v.is_empty() { None } else { Some(v.to_string()) };
-    }
-    if let Some(v) = patch.get("jvm_args").and_then(|v| v.as_str()) {
-        inst.jvm_args = if v.trim().is_empty() { None } else { Some(v.to_string()) };
-    }
-    if let Some(v) = patch.get("game_args").and_then(|v| v.as_str()) {
-        inst.game_args = if v.trim().is_empty() { None } else { Some(v.to_string()) };
-    }
-    if let Some(v) = patch.get("java_path") {
-        inst.java_path = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());
-    }
-    if let Some(v) = patch.get("account_id") {
-        inst.account_id = v.as_str().map(|s| s.to_string()).filter(|s| !s.is_empty());
-    }
-    if let Some(v) = patch.get("resolution") {
-        if let Some(arr) = v.as_array() {
-            if arr.len() == 2 {
-                let w = arr[0].as_u64().unwrap_or(0) as u32;
-                let h = arr[1].as_u64().unwrap_or(0) as u32;
-                inst.resolution = if w > 0 && h > 0 { Some((w, h)) } else { None };
+        if let Some(v) = patch.get("group") {
+            let gid = v.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
+            if let Some(ref gid) = gid {
+                // 防止前端传入已删除/不存在的分组 id 造成"幽灵分组"
+                let known = load_groups(state).iter().any(|g| g.id == *gid);
+                if !known {
+                    return Err("分组不存在".into());
+                }
             }
+            inst.group = gid;
         }
-    }
-    if let Some(v) = patch.get("group") {
-        let gid = v.as_str().map(|s| s.trim().to_string()).filter(|s| !s.is_empty());
-        if let Some(ref gid) = gid {
-            // 防止前端传入已删除/不存在的分组 id 造成"幽灵分组"
-            let known = load_groups(state).iter().any(|g| g.id == *gid);
-            if !known {
-                return Err("分组不存在".into());
-            }
-        }
-        inst.group = gid;
-    }
-    save_instance(state, &inst)?;
-    Ok(inst)
+        Ok(true)
+    })
 }
 
 pub fn touch_last_played(state: &AppState, id: &str) {
-    if let Ok(mut inst) = get_instance(state, id) {
-        inst.last_played = Some(crate::util::now_secs());
-        let _ = crate::util::log_best_effort("save_instance", save_instance(state, &inst));
-    }
+    let result = edit_instance(state, id, |instance| {
+        instance.last_played = Some(crate::util::now_secs());
+        Ok(true)
+    });
+    crate::util::log_best_effort("touch_last_played", result);
 }
 
 /// 累加实例的累计游玩时长（秒）。游戏进程退出时由 launch.rs 的退出钩子调用，
@@ -190,10 +234,11 @@ pub fn add_play_time(state: &AppState, id: &str, secs: u64) {
     if secs == 0 {
         return;
     }
-    if let Ok(mut inst) = get_instance(state, id) {
-        inst.total_play_time = inst.total_play_time.saturating_add(secs);
-        let _ = crate::util::log_best_effort("save_instance", save_instance(state, &inst));
-    }
+    let result = edit_instance(state, id, |instance| {
+        instance.total_play_time = instance.total_play_time.saturating_add(secs);
+        Ok(true)
+    });
+    crate::util::log_best_effort("add_play_time", result);
     add_daily_play_time(state, secs);
 }
 
@@ -333,10 +378,14 @@ pub fn delete_group(state: &AppState, id: &str) -> Result<(), String> {
     save_groups(state, &groups)?;
     for inst in load_instances(state) {
         if inst.group.as_deref() == Some(id) {
-            if let Ok(mut i) = get_instance(state, &inst.id) {
-                i.group = None;
-                let _ = crate::util::log_best_effort("save_instance", save_instance(state, &i));
-            }
+            let result = edit_instance(state, &inst.id, |instance| {
+                if instance.group.as_deref() != Some(id) {
+                    return Ok(false);
+                }
+                instance.group = None;
+                Ok(true)
+            });
+            crate::util::log_best_effort("clear_instance_group", result);
         }
     }
     Ok(())
@@ -370,6 +419,10 @@ pub fn list_content(state: &AppState, id: &str, kind: &str) -> Vec<InstalledCont
     let Ok(inst) = get_instance(state, id) else {
         return Vec::new();
     };
+    into_content_records(inst, kind)
+}
+
+pub(crate) fn into_content_records(inst: Instance, kind: &str) -> Vec<InstalledContent> {
     match kind {
         "resourcepack" => inst.resource_packs,
         "shader" => inst.shaders,
@@ -377,47 +430,73 @@ pub fn list_content(state: &AppState, id: &str, kind: &str) -> Vec<InstalledCont
     }
 }
 
+pub(super) fn content_records_mut<'a>(instance: &'a mut Instance, kind: &str) -> &'a mut Vec<InstalledContent> {
+    match kind {
+        "resourcepack" => &mut instance.resource_packs,
+        "shader" => &mut instance.shaders,
+        _ => &mut instance.mods,
+    }
+}
+
 pub fn add_content(state: &AppState, id: &str, kind: &str, record: InstalledContent) -> Result<(), String> {
-    let mut inst = get_instance(state, id)?;
-    let list = match kind {
-        "resourcepack" => &mut inst.resource_packs,
-        "shader" => &mut inst.shaders,
-        _ => &mut inst.mods,
-    };
-    list.retain(|c| c.filename != record.filename);
-    list.push(record);
-    save_instance(state, &inst)
+    add_content_batch(state, id, kind, vec![record])
 }
 
 pub fn add_content_batch(state: &AppState, id: &str, kind: &str, records: Vec<InstalledContent>) -> Result<(), String> {
-    let mut inst = get_instance(state, id)?;
-    let list = match kind {
-        "resourcepack" => &mut inst.resource_packs,
-        "shader" => &mut inst.shaders,
-        _ => &mut inst.mods,
-    };
-    for rec in records {
-        list.retain(|c| c.filename != rec.filename);
-        list.push(rec);
+    edit_instance(state, id, |instance| {
+        if records.is_empty() {
+            return Ok(false);
+        }
+        let list = content_records_mut(instance, kind);
+        for record in records {
+            list.retain(|item| item.filename != record.filename);
+            list.push(record);
+        }
+        Ok(true)
+    }).map(|_| ())
+}
+
+pub(crate) fn replace_content_revision(
+    state: &AppState,
+    id: &str,
+    kind: &str,
+    expected: &InstalledContent,
+    next: InstalledContent,
+    replace_file: impl FnOnce(&dyn Fn() -> Result<(), String>) -> Result<(), String>,
+) -> Result<(), String> {
+    let _write = INSTANCE_METADATA.lock().map_err(|_| "实例元数据不可用")?;
+    let mut instance = get_instance(state, id)?;
+    let list = content_records_mut(&mut instance, kind);
+    let index = list.iter().position(|record| {
+        record.filename == expected.filename
+            && record.source == expected.source
+            && record.project_id == expected.project_id
+            && record.version_id == expected.version_id
+            && record.installed_at == expected.installed_at
+            && record.enabled == expected.enabled
+    }).ok_or("下载期间内容记录发生变化，请重新检查更新")?;
+    if list.iter().enumerate().any(|(i, entry)| i != index && entry.filename == next.filename) {
+        return Err("新版本文件名已被其他内容记录占用".into());
     }
-    save_instance(state, &inst)
+    list[index] = next;
+    replace_file(&|| write_instance(state, &instance))
 }
 
 pub fn remove_content(state: &AppState, id: &str, kind: &str, filename: &str) -> Result<(), String> {
-    let mut inst = get_instance(state, id)?;
-    let list = match kind {
-        "resourcepack" => &mut inst.resource_packs,
-        "shader" => &mut inst.shaders,
-        _ => &mut inst.mods,
-    };
-    list.retain(|c| c.filename != filename);
-    save_instance(state, &inst)
+    edit_instance(state, id, |instance| {
+        let list = content_records_mut(instance, kind);
+        let before = list.len();
+        list.retain(|item| item.filename != filename);
+        Ok(before != list.len())
+    }).map(|_| ())
 }
 
 pub fn set_content_enabled(state: &AppState, id: &str, kind: &str, filename: &str, enabled: bool) -> Result<(), String> {
-    if !crate::util::is_safe_filename(filename) {
+    if !crate::fsutil::is_safe_filename(filename) {
         return Err("非法文件名".into());
     }
+    let _files = state.jobs.reserve_game_files(id)?;
+    let _write = INSTANCE_METADATA.lock().map_err(|_| "实例元数据不可用")?;
     let mut inst = get_instance(state, id)?;
     let list = match kind {
         "resourcepack" => &mut inst.resource_packs,
@@ -441,7 +520,7 @@ pub fn set_content_enabled(state: &AppState, id: &str, kind: &str, filename: &st
         }
     }
     item.enabled = enabled;
-    save_instance(state, &inst)
+    write_instance(state, &inst)
 }
 
 // ---------------------------------------------------------------------------
@@ -966,7 +1045,8 @@ async fn import_one(
     loader_version: Option<String>,
     link: bool,
 ) -> Result<crate::models::InstallPlan, String> {
-    let mut instance = create_instance(state, name, mc_version, loader, loader_version)?;
+    let mut instance = new_instance(state, name, mc_version, loader, loader_version)?;
+    instance.installed = false;
     instance.is_symlink = link;
     instance.source_path = if link {
         Some(source.to_string_lossy().to_string())
@@ -1021,7 +1101,7 @@ async fn import_one(
             for f in IMPORT_FILES {
                 let src = source.join(f);
                 if src.is_file() {
-                    crate::util::copy_or_link(&src, &dest.join(f), link, &mut symlink_fallback)?;
+                    crate::fsutil::copy_or_link(&src, &dest.join(f), link, &mut symlink_fallback)?;
                     migrated += 1;
                 }
             }
@@ -1053,7 +1133,7 @@ async fn import_one(
 
     // make sure standard folders exist
     for sub in ["mods", "shaderpacks", "resourcepacks", "saves", "screenshots", "config"] {
-        let _ = crate::util::fs_best_effort("create_dir_all", &dest.join(sub), std::fs::create_dir_all(dest.join(sub)));
+        let _ = crate::fsutil::fs_best_effort("create_dir_all", &dest.join(sub), std::fs::create_dir_all(dest.join(sub)));
     }
 
     // ---- reuse libraries & assets from source to avoid re-downloading ----
@@ -1061,7 +1141,7 @@ async fn import_one(
     reuse_runtime_files(&source.join("assets"), &state.assets_dir());
 
     // ---- install the game (client / libraries / assets / loader) ----
-    let mut plan = crate::install::install_game(app.clone(), state, &instance).await?;
+    let mut plan = crate::install::install_game(app.clone(), state, &instance, None).await?;
     plan.symlink_fallback = symlink_fallback;
     // 最后核对一次存档：源里明显有世界、实例里却一个都没有时给出带绝对路径的
     // 提示，而不是让用户进游戏后对着空的世界列表发呆。
@@ -1140,7 +1220,7 @@ fn warn_if_saves_missing(
 /// Used to reuse libraries/assets from the source .minecraft so install_game doesn't re-download them.
 fn reuse_runtime_files(src: &std::path::Path, dst: &std::path::Path) {
     if !src.is_dir() { return; }
-    let _ = crate::util::fs_best_effort("create_dir_all", &dst, std::fs::create_dir_all(&dst));
+    let _ = crate::fsutil::fs_best_effort("create_dir_all", &dst, std::fs::create_dir_all(&dst));
     let entries = match std::fs::read_dir(src) { Ok(e) => e, Err(_) => return };
     for entry in entries.flatten() {
         let p = entry.path();
@@ -1154,8 +1234,8 @@ fn reuse_runtime_files(src: &std::path::Path, dst: &std::path::Path) {
                 Err(_) => true,
             };
             if need_copy {
-                let _ = crate::util::fs_best_effort("create_dir_all", &target, std::fs::create_dir_all(target.parent().unwrap_or(dst)));
-                let _ = crate::util::fs_best_effort("copy", &target, std::fs::copy(&p, &target));
+                let _ = crate::fsutil::fs_best_effort("create_dir_all", &target, std::fs::create_dir_all(target.parent().unwrap_or(dst)));
+                let _ = crate::fsutil::fs_best_effort("copy", &target, std::fs::copy(&p, &target));
             }
         }
     }
@@ -1176,7 +1256,7 @@ fn migrate_tree(src: &std::path::Path, dst: &std::path::Path, link: bool, fallba
         if p.is_dir() {
             migrate_tree(&p, &target, link, fallback)?;
         } else if p.is_file() {
-            crate::util::copy_or_link(&p, &target, link, fallback)?;
+            crate::fsutil::copy_or_link(&p, &target, link, fallback)?;
         }
     }
     Ok(())
@@ -1214,13 +1294,13 @@ fn migrate_version_dir(
                     continue;
                 }
             }
-            crate::util::copy_or_link(&p, &target, link, fallback)?;
+            crate::fsutil::copy_or_link(&p, &target, link, fallback)?;
             continue;
         }
         // Rename the client jar to match the instance id.
         if name == format!("{raw_ver}.jar") {
             let target = dst.join(format!("{instance_id}.jar"));
-            crate::util::copy_or_link(&p, &target, link, fallback)?;
+            crate::fsutil::copy_or_link(&p, &target, link, fallback)?;
             continue;
         }
         let target = dst.join(&name);
@@ -1231,7 +1311,7 @@ fn migrate_version_dir(
             let dir_link = link && name != "saves";
             migrate_tree(&p, &target, dir_link, fallback)?;
         } else if p.is_file() {
-            crate::util::copy_or_link(&p, &target, link, fallback)?;
+            crate::fsutil::copy_or_link(&p, &target, link, fallback)?;
         }
     }
     // 确保版本 json 文件名为 <instance_id>.json（源文件名可能不匹配 raw_ver）

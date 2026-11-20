@@ -246,6 +246,8 @@ export default {
     clearContent:
       "This will clear safely-deletable caches such as Java download temp files and Java detection cache; it will not affect any instances, libraries, resources or version files. Continue?",
     clearSuccess: "Cache cleared, freed {size}",
+    clearPartial: "Freed {size}. Cache entries left in place: {details}",
+    javaDownloadInUse: "Java download cache is in use",
     clearFailed: "Failed to clear cache: {error}",
   },
   about: {
@@ -364,7 +366,7 @@ export default {
     newDir: "New data directory:",
     mode: "Migration mode:",
     moveTitle: "Move data",
-    moveDesc: "Move all data to the new directory (recommended; instant on the same disk)",
+    moveDesc: "Copy and verify the data, switch to the new directory, then clean up the old one",
     copyTitle: "Copy data",
     copyDesc: "Copy to the new directory and keep the old one as backup",
     pointerTitle: "Switch directory only",
@@ -373,6 +375,8 @@ export default {
     migrating: "Migrating…",
     start: "Start migration",
     done: "Data directory changed:",
+    scheduled: "Data will be migrated after restart to:",
+    cancelFailed: "Cancel incomplete migration",
     restartWarn: "A restart is required for the change to fully take effect.",
     later: "Restart later",
     now: "Restart now",

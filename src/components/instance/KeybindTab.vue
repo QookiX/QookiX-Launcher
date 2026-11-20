@@ -5,7 +5,7 @@
  * 物理键直按。改动攒批统一保存，后端只写提交的动作。
  */
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../../composables/tauriListeners";
 import { useI18n } from "vue-i18n";
 import { NSelect, useMessage } from "naive-ui";
 import { api } from "../../api";
@@ -16,6 +16,8 @@ import {
   keybindSort,
   useKeybindLabels,
 } from "../../composables/useKeybindLabels";
+
+const { listen } = useTauriListenerScope();
 
 const props = defineProps<{ instanceId: string }>();
 const { t } = useI18n();

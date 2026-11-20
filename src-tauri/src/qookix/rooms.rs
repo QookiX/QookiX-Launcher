@@ -28,12 +28,13 @@ fn clamp_limit(limit: Option<u32>) -> String {
 }
 
 /// 取下当前分享并置取消标志，返回旧的 room_id
-fn take_share(state: &AppState) -> Option<String> {
-    let share = { state.qookix().share.take() };
-    share.map(|s| {
+fn take_share(state: &AppState, generation: uuid::Uuid) -> Result<Option<String>, ApiError> {
+    let mut session = state.qookix();
+    session.check_generation(generation)?;
+    Ok(session.share.take().map(|s| {
         s.cancel.store(true, Ordering::SeqCst);
         s.room_id
-    })
+    }))
 }
 
 /// 把房间分享到目录，并启动绑定陶瓦会话的心跳任务
@@ -55,6 +56,7 @@ pub async fn qookix_share_room(
     pack_net: Option<String>,
 ) -> Result<Value, ApiError> {
     let code = normalize_code(&code)?;
+    let generation = api::generation(&state);
     let pack = pack.unwrap_or_default();
     let mods_count = mods_count.unwrap_or(0).min(2000);
     let visibility = match visibility.as_deref() {
@@ -62,16 +64,11 @@ pub async fn qookix_share_room(
         _ => "friends",
     }
     .to_string();
-    let title: String = title
-        .unwrap_or_default()
-        .trim()
-        .chars()
-        .take(60)
-        .collect();
+    let title: String = title.unwrap_or_default().trim().chars().take(60).collect();
 
     // 换房或重复点按时，先把旧条目关掉
-    if let Some(old) = take_share(&state) {
-        let _ = api::post(&state, "/api/v1/rooms/close", json!({ "room_id": old })).await;
+    if let Some(old) = take_share(&state, generation)? {
+        let _ = api::post_for_session(&state, generation, "/api/v1/rooms/close", json!({ "room_id": old })).await;
     }
 
     let mut body = json!({ "code": code.clone(), "visibility": visibility.clone() });
@@ -106,7 +103,14 @@ pub async fn qookix_share_room(
         }
     }
 
-    let data = api::post(&state, "/api/v1/rooms", body).await?;
+    // 成员快照：首次上报就把陶瓦里的玩家带上，房间目录里能直接看到谁在玩
+    if let Ok(local) = crate::terracotta::local_state(&state).await {
+        if crate::terracotta::has_profiles(&local) {
+            body["members"] = json!(crate::terracotta::members_of(&local));
+        }
+    }
+
+    let data = api::post_for_session(&state, generation, "/api/v1/rooms", body).await?;
     let room_id = data
         .get("room")
         .and_then(|r| r.get("id"))
@@ -117,6 +121,7 @@ pub async fn qookix_share_room(
     let cancel = Arc::new(AtomicBool::new(false));
     {
         let mut s = state.qookix();
+        s.check_generation(generation)?;
         s.share = Some(RoomShare {
             room_id: room_id.clone(),
             code: code.clone(),
@@ -128,29 +133,23 @@ pub async fn qookix_share_room(
         });
     }
     start_share_task(
-        app,
-        cancel,
-        room_id,
-        code,
-        title,
-        visibility,
-        pack,
-        mods_count,
+        app, generation, cancel, room_id, code, title, visibility, pack, mods_count,
     );
 
     Ok(json!({
         "room": data.get("room").cloned().unwrap_or(Value::Null),
         "created": data.get("created").cloned().unwrap_or(Value::Bool(false)),
-        "share": status(&state).get("share").cloned().unwrap_or(Value::Null),
+        "share": status(&state).share,
     }))
 }
 
 /// 停止分享（关闭目录条目，不影响陶瓦本身的联机）
 #[tauri::command]
-pub async fn qookix_stop_share(state: tauri::State<'_, AppState>) -> Result<Value, ApiError> {
-    if let Some(room_id) = take_share(&state) {
+pub async fn qookix_stop_share(state: tauri::State<'_, AppState>) -> Result<super::SessionStatus, ApiError> {
+    let generation = api::generation(&state);
+    if let Some(room_id) = take_share(&state, generation)? {
         // 关不掉也无所谓：TTL 到了服务端会自动过期
-        let _ = api::post(&state, "/api/v1/rooms/close", json!({ "room_id": room_id })).await;
+        let _ = api::post_for_session(&state, generation, "/api/v1/rooms/close", json!({ "room_id": room_id })).await;
     }
     Ok(status(&state))
 }
@@ -186,13 +185,7 @@ pub async fn qookix_rooms(
         Some("mine") => "mine",
         _ => "friends",
     };
-    fetch_rooms(
-        &state,
-        scope,
-        page.unwrap_or(1),
-        limit.unwrap_or(20),
-    )
-    .await
+    fetch_rooms(&state, scope, page.unwrap_or(1), limit.unwrap_or(20)).await
 }
 
 /// 公开大厅
@@ -215,10 +208,16 @@ pub async fn qookix_public_rooms(
     if let Some(q) = q.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
         query.push(("q".to_string(), q));
     }
-    if let Some(v) = version.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+    if let Some(v) = version
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
         query.push(("version".to_string(), v));
     }
-    if let Some(v) = play_type.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) {
+    if let Some(v) = play_type
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    {
         query.push(("play_type".to_string(), v.to_ascii_lowercase()));
     }
     if let Some(n) = min_players.filter(|n| *n > 0) {
@@ -301,7 +300,11 @@ pub async fn qookix_report_room(
     let reason = reason.trim().to_string();
     let n = reason.chars().count();
     if !(3..=300).contains(&n) {
-        return Err(ApiError::new(400, "invalid_reason", "举报理由需为 3-300 个字符"));
+        return Err(ApiError::new(
+            400,
+            "invalid_reason",
+            "举报理由需为 3-300 个字符",
+        ));
     }
     api::post(
         &state,
@@ -315,18 +318,22 @@ pub async fn qookix_report_room(
 /// `created_at > since`，同一秒内后到的事件会被永久漏掉，所以游标回退 2 秒，
 /// 由前端按 id 去重。
 pub(crate) async fn fetch_notifications(state: &AppState) -> Result<Value, ApiError> {
-    let since = {
+    let (generation, since) = {
         let s = state.qookix();
-        s.cursor.saturating_sub(2)
+        (s.generation, s.cursor.saturating_sub(2))
     };
-    let data = api::get(
+    let data = api::request_for_session(
         state,
+        generation,
+        reqwest::Method::GET,
         "/api/v1/notifications",
         vec![("since".to_string(), since.to_string())],
+        None,
     )
     .await?;
     if let Some(t) = data.get("server_time").and_then(|v| v.as_u64()) {
         let mut s = state.qookix();
+        s.check_generation(generation)?;
         if t > s.cursor {
             s.cursor = t;
         }

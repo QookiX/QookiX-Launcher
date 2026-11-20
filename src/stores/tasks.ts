@@ -1,11 +1,13 @@
 import { defineStore } from "pinia";
-import { listen } from "@tauri-apps/api/event";
+import type { EventCallback } from "@tauri-apps/api/event";
+import { createTauriListenerScope } from "../composables/tauriListeners";
 import { useInstancesStore } from "./instances";
 import type {
   ActiveFile,
   DownloadProgressEvent,
   InstallProgressEvent,
   LaunchLogEvent,
+  LaunchProgressEvent,
   LaunchStateEvent,
 } from "../types";
 
@@ -28,6 +30,7 @@ export interface TaskEntry {
   fileTotal: number;
   bytesDone: number;
   bytesTotal: number;
+  verifiedBytes: number;
   // install phase (steps)
   stepDone: number;
   stepTotal: number;
@@ -42,6 +45,8 @@ export interface TaskEntry {
   source?: string;
   startedAt: number;
   finished: boolean;
+  cancellable?: boolean;
+  cancelRequested?: boolean;
   ok?: boolean;
   activity: "download" | "install";
   /** 0..1 overall progress (used e.g. by the app updater, which has no per-file/byte accounting). */
@@ -54,13 +59,15 @@ function nowMs() {
 
 /** Install-side stages that are not pure downloads. */
 const INSTALL_STAGES = ["manifest", "natives", "modpack-install", "done"];
+const subscriptions = new WeakMap<object, { controller: AbortController; ready: Promise<void> }>();
 
 export const useTasksStore = defineStore("tasks", {
   state: () => ({
     tasks: {} as Record<number, TaskEntry>,
     order: [] as number[],
     logs: {} as Record<string, LogEntry[]>,
-    runningInstances: [] as string[],
+    gameTasks: {} as Record<string, { taskId: number; state: "preparing" | "running" }>,
+    launchOverlay: null as LaunchProgressEvent & { done: boolean } | null,
     lastExit: null as { instanceId: string; code: number | null } | null,
   }),
   getters: {
@@ -73,6 +80,12 @@ export const useTasksStore = defineStore("tasks", {
     activeCount(): number {
       return this.taskList.filter((t) => !t.finished).length;
     },
+    runningInstances(): string[] {
+      return Object.keys(this.gameTasks).filter((id) => this.gameTasks[id].state === "running");
+    },
+    gamePreparing(): boolean {
+      return Object.values(this.gameTasks).some((task) => task.state === "preparing");
+    },
     gameRunning(): boolean {
       return this.runningInstances.length > 0;
     },
@@ -82,9 +95,22 @@ export const useTasksStore = defineStore("tasks", {
   },
   actions: {
     init() {
-      listen<InstallProgressEvent>("install://progress", (e) => {
+      const existing = subscriptions.get(this);
+      if (existing) return existing.ready;
+
+      const controller = new AbortController();
+      const { signal } = controller;
+      const scope = createTauriListenerScope();
+      const pending: Promise<void>[] = [];
+      signal.addEventListener("abort", scope.dispose, { once: true });
+      function bind<T>(event: string, handle: EventCallback<T>) {
+        pending.push(scope.listen<T>(event, handle).then(() => {}));
+      }
+
+      bind<InstallProgressEvent>("install://progress", (e) => {
         const p = e.payload;
         this.upsert(p.taskId, (t) => {
+          if (t.finished) return;
           t.stage = p.stage;
           t.message = p.message;
           t.stepDone = p.done;
@@ -92,7 +118,8 @@ export const useTasksStore = defineStore("tasks", {
           t.activity = INSTALL_STAGES.includes(p.stage) ? "install" : "download";
           if (p.instanceId) t.instanceId = p.instanceId;
           if (p.instanceName) t.instanceName = p.instanceName;
-          if (p.source) t.source = p.source;
+          if (p.source && (p.stage !== "done" || !t.source)) t.source = p.source;
+          t.cancellable = p.cancellable === true;
           if (p.stage === "done") {
             t.finished = true;
             t.ok = p.ok !== false;
@@ -105,15 +132,22 @@ export const useTasksStore = defineStore("tasks", {
           }
         });
       });
-      listen<DownloadProgressEvent>("download://progress", (e) => {
+      bind<DownloadProgressEvent>("download://progress", (e) => {
         const p = e.payload;
         this.upsert(p.taskId, (t) => {
+          if (t.finished) return;
+          const bytesDone = p.bytesDone ?? 0;
+          if (t.stage !== p.phase || bytesDone < t.bytesDone) {
+            t.samples = [];
+            t.speed = 0;
+          }
           t.activity = "download";
           t.stage = p.phase;
           t.fileDone = p.done;
           t.fileTotal = p.total;
-          t.bytesDone = Math.max(t.bytesDone, p.bytesDone ?? 0);
-          if (p.bytesTotal && p.bytesTotal > 0) t.bytesTotal = Math.max(t.bytesTotal, p.bytesTotal);
+          t.bytesDone = bytesDone;
+          t.bytesTotal = p.bytesTotal ?? 0;
+          t.verifiedBytes = p.verifiedBytes;
           t.ok = p.ok;
           if (p.activeFiles) {
             t.activeFiles = p.activeFiles;
@@ -127,27 +161,52 @@ export const useTasksStore = defineStore("tasks", {
           this.sampleSpeed(t, p.bytesDone ?? 0);
         });
       });
-      listen<LaunchLogEvent>("launch://log", (e) => {
+      bind<LaunchLogEvent>("launch://log", (e) => {
         const { instanceId, stream, line } = e.payload;
         if (!this.logs[instanceId]) this.logs[instanceId] = [];
         const buf = this.logs[instanceId];
         buf.push({ stream, line });
         if (buf.length > 4000) buf.splice(0, buf.length - 4000);
       });
-      listen<LaunchStateEvent>("launch://state", (e) => {
-        const p = e.payload;
-        if (p.state === "running") {
-          if (!this.runningInstances.includes(p.instanceId)) {
-            this.runningInstances = [...this.runningInstances, p.instanceId];
-          }
-        } else {
-          this.runningInstances = this.runningInstances.filter((id) => id !== p.instanceId);
-          this.lastExit = { instanceId: p.instanceId, code: p.code };
-          // 游戏退出后后端已累加游玩时长/更新 last_played，刷新实例列表让
-          // 卡片上的「上次游玩/累计时长」立即反映最新数据（后端先写盘再发事件）。
-          void useInstancesStore().load();
+      bind<LaunchProgressEvent>("launch://progress", ({ payload }) => {
+        const current = this.gameTasks[payload.instanceId];
+        if (current && (current.taskId > payload.taskId || current.state === "running")) return;
+        this.gameTasks[payload.instanceId] = { taskId: payload.taskId, state: "preparing" };
+        if (!this.launchOverlay || this.launchOverlay.taskId <= payload.taskId) {
+          this.launchOverlay = { ...payload, done: false };
         }
       });
+      bind<LaunchStateEvent>("launch://state", ({ payload }) => {
+        const { instanceId, taskId, state, code } = payload;
+        const current = this.gameTasks[instanceId];
+        if (current && current.taskId > taskId) return;
+        if (state === "running") {
+          this.gameTasks[instanceId] = { taskId, state };
+          if (this.launchOverlay?.taskId === taskId) {
+            this.launchOverlay = { ...this.launchOverlay, progress: 100, done: true };
+          }
+        } else {
+          delete this.gameTasks[instanceId];
+          if (this.launchOverlay?.taskId === taskId) this.launchOverlay = null;
+          if (!payload.pid) return;
+          this.lastExit = { instanceId, code };
+          void useInstancesStore().refresh();
+        }
+      });
+      const ready = Promise.all(pending).then(() => {}).catch((error) => {
+        if (subscriptions.get(this)?.controller === controller) this.disposeListeners();
+        throw error;
+      });
+      subscriptions.set(this, { controller, ready });
+      return ready;
+    },
+    dismissLaunchOverlay(taskId: number) {
+      if (this.launchOverlay?.taskId === taskId) this.launchOverlay = null;
+    },
+    disposeListeners() {
+      const binding = subscriptions.get(this);
+      subscriptions.delete(this);
+      binding?.controller.abort();
     },
     /**
      * Record a byte-counter sample and refresh the rolling-window average speed
@@ -179,6 +238,7 @@ export const useTasksStore = defineStore("tasks", {
           fileTotal: 0,
           bytesDone: 0,
           bytesTotal: 0,
+          verifiedBytes: 0,
           stepDone: 0,
           stepTotal: 0,
           activeFiles: [],

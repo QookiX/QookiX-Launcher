@@ -4,7 +4,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { useTasksStore } from "./stores/tasks";
 import { error as devError } from "./utils/logger";
-import changelogRaw from "../CHANGELOG.md?raw";
+import packagedChangelog from "../CHANGELOG.md?releases";
+import { compareReleaseVersions } from "../scripts/shared/release-version.mjs";
 
 /**
  * 应用自更新检查结果（由 Rust 端 `updater::check_for_update` 返回）。
@@ -12,6 +13,7 @@ import changelogRaw from "../CHANGELOG.md?raw";
  */
 export interface UpdateInfo {
   available: boolean;
+  decisionId: number | null;
   version: string | null;
   currentVersion: string | null;
   body: string | null;
@@ -24,6 +26,8 @@ export interface UpdateInfo {
   forceMinVersion: string | null;
 }
 
+export type UpdateOffer = UpdateInfo & { decisionId: number; version: string };
+
 /**
  * `true` once an update has been downloaded + installed and is only waiting for
  * a restart to take effect. The title bar shows a「重启以更新」button while this
@@ -32,6 +36,10 @@ export interface UpdateInfo {
 export const updateReady = ref(false);
 /** Version that was just downloaded (shown in the title-bar button tooltip). */
 export const updateReadyVersion = ref<string | null>(null);
+const updateReadyDecision = ref<number | null>(null);
+export function isUpdateDownloaded(offer: UpdateOffer): boolean {
+  return updateReadyDecision.value === offer.decisionId;
+}
 /** `true` while `install()` is running (guards double clicks on the button). */
 export const updateInstalling = ref(false);
 
@@ -39,7 +47,7 @@ export const updateInstalling = ref(false);
  * 当检测到强制更新时填入，触发全屏锁死遮罩。`null` 表示无强制更新。
  * 遮罩组件 `ForceUpdateOverlay.vue` watch 这个 ref。
  */
-export const forceUpdateInfo = ref<UpdateInfo | null>(null);
+export const forceUpdateInfo = ref<UpdateOffer | null>(null);
 
 export interface UpdateProgress {
   message: string;
@@ -58,10 +66,11 @@ type ProgressFn = (p: UpdateProgress) => void;
  * nothing to update or the updater is not configured (errors are swallowed
  * silently so a network blip never blocks the launcher).
  */
-export async function peekUpdate(strict = false): Promise<UpdateInfo | null> {
+export async function peekUpdate(strict = false): Promise<UpdateOffer | null> {
   try {
     const info = await invoke<UpdateInfo>("check_for_update");
-    return info.available ? info : null;
+    if (!info.available || info.decisionId == null || info.version == null) return null;
+    return { ...info, decisionId: info.decisionId, version: info.version };
   } catch (err) {
     // 默认吞掉错误：启动时的静默检查不希望网络抖动阻塞启动。
     // strict（如用户手动点「检查更新」）时把真实错误抛给调用方，
@@ -113,55 +122,8 @@ export function entryTypeClass(text: string): string {
 }
 
 /**
- * 版本号比较：按 `.` 分段数值比较（`0.10.0 > 0.9.0`，字符串比较会搞错）。
- * 无法解析的段按 0 处理，返回 -1 / 0 / 1。前置的 `v` / `V` 会被自动剔除。
- */
-export function compareVersions(a: string, b: string): number {
-  const parse = (s: string) =>
-    s
-      .trim()
-      .replace(/^[vV]/, "")
-      .split(/[.+-]/)
-      .map((seg) => Number.parseInt(seg, 10) || 0);
-  const pa = parse(a);
-  const pb = parse(b);
-  const n = Math.max(pa.length, pb.length);
-  for (let i = 0; i < n; i++) {
-    const d = (pa[i] ?? 0) - (pb[i] ?? 0);
-    if (d !== 0) return d < 0 ? -1 : 1;
-  }
-  return 0;
-}
-
-/**
- * 解析 `CHANGELOG.md`（本地兜底用）。只取 `## [版本] - 日期` 小节里的
- * `编号. **模块**：说明` 条目，默认最多 5 个版本（与 changelog.json 对齐）。
- */
-export function parseChangelogMarkdown(md: string, limit = 5): ChangelogRelease[] {
-  const lines = md.replace(/\r\n/g, "\n").split("\n");
-  const releases: ChangelogRelease[] = [];
-  let current: ChangelogRelease | null = null;
-  for (const line of lines) {
-    const heading = /^##\s+\[(.*?)\]\s*-\s*(\d{4}-\d{2}-\d{2})/.exec(line);
-    if (heading) {
-      const [, version, date] = heading;
-      if (/unreleased/i.test(version)) { current = null; continue; }
-      current = { version, date, entries: [] };
-      releases.push(current);
-      continue;
-    }
-    if (!current) continue;
-    const entry = /^\d+[.)]\s+\*\*(.+?)\*\*[:：]\s*(.+)$/.exec(line.trim());
-    if (entry) {
-      current.entries.push({ category: entry[1].trim(), text: entry[2].trim() });
-    }
-  }
-  return releases.slice(0, limit);
-}
-
-/**
  * 取更新日志：远端 `changelog.json` 优先（国内镜像 → GitHub），失败回退到
- * 打进包的 `CHANGELOG.md`。两者都只含最近 5 个版本。
+ * 构建时从 `CHANGELOG.md` 生成的结构化日志。两者都只含最近 5 个版本。
  */
 export async function loadChangelogReleases(): Promise<ChangelogRelease[]> {
   const remote = await fetchChangelog();
@@ -173,7 +135,7 @@ export async function loadChangelogReleases(): Promise<ChangelogRelease[]> {
       /* 不是合法 JSON：走本地兜底 */
     }
   }
-  return parseChangelogMarkdown(changelogRaw);
+  return packagedChangelog;
 }
 
 /**
@@ -190,9 +152,12 @@ export function releasesInRange(
 ): ChangelogRelease[] {
   if (releases.length === 0) return [];
   const latest = latestVersion ?? releases[0].version;
-  const within = releases.filter((r) => compareVersions(r.version, latest) <= 0);
+  const within = releases.filter((release) => {
+    const order = compareReleaseVersions(release.version, latest);
+    return order !== null && order <= 0;
+  });
   if (!currentVersion) return within.slice(0, 1);
-  const out = within.filter((r) => compareVersions(r.version, currentVersion) > 0);
+  const out = within.filter((release) => compareReleaseVersions(release.version, currentVersion) === 1);
   return out.length > 0 ? out : within.slice(0, 1);
 }
 
@@ -209,9 +174,25 @@ export function releasesInRange(
  * Reports progress through `onStatus` AND registers a task in the Download
  * Center (`tasks` store). Returns `true` when an update was downloaded.
  */
-export async function downloadUpdate(onStatus?: ProgressFn): Promise<boolean> {
+let activeDownload: Promise<boolean> | null = null;
+
+export async function downloadUpdate(offer: UpdateOffer, onStatus?: ProgressFn): Promise<boolean> {
+  while (activeDownload) {
+    try { await activeDownload; } catch { /* a new confirmation can retry */ }
+  }
+  if (isUpdateDownloaded(offer)) return true;
+  const work = runDownload(offer, onStatus);
+  activeDownload = work;
+  try {
+    return await work;
+  } finally {
+    if (activeDownload === work) activeDownload = null;
+  }
+}
+
+async function runDownload(offer: UpdateOffer, onStatus?: ProgressFn): Promise<boolean> {
   const tasks = useTasksStore();
-  const taskId = Date.now();
+  const taskId = offer.decisionId;
   let registered = false;
   // The updater emits a progress event for *every* network chunk, which can be
   // hundreds per second — throttle the store writes (and the resulting UI
@@ -241,13 +222,13 @@ export async function downloadUpdate(onStatus?: ProgressFn): Promise<boolean> {
   };
 
   let unlisten: UnlistenFn | undefined;
-  let version: string | null = null;
   try {
-    unlisten = await listen<{ downloaded: number; total: number | null }>(
+    unlisten = await listen<{ decisionId: number; downloaded: number; total: number | null }>(
       "app-update-progress",
       (event) => {
-        const { downloaded, total } = event.payload;
-        const fraction = total && total > 0 ? downloaded / total : undefined;
+        const { decisionId, downloaded, total } = event.payload;
+        if (decisionId !== offer.decisionId) return;
+        const fraction = total && total > 0 ? Math.min(1, downloaded / total) : undefined;
         emit({
           message:
             fraction != null
@@ -268,11 +249,12 @@ export async function downloadUpdate(onStatus?: ProgressFn): Promise<boolean> {
       t.message = "准备下载更新…";
     });
 
-    const ok = await invoke<boolean>("download_update");
-    if (!ok) return false;
-
-    const info = await peekUpdate();
-    version = info?.version ?? null;
+    const receipt = await invoke<{ decisionId: number; version: string }>("download_update", {
+      decisionId: offer.decisionId,
+    });
+    if (receipt.decisionId !== offer.decisionId || receipt.version !== offer.version) {
+      throw new Error("下载结果与已确认的更新版本不匹配");
+    }
 
     tasks.upsert(taskId, (t) => {
       t.stage = "done";
@@ -281,10 +263,11 @@ export async function downloadUpdate(onStatus?: ProgressFn): Promise<boolean> {
       t.fraction = 1;
       t.speed = 0;
       t.samples = [];
-      t.message = `v${version ?? ""} 已下载，点击标题栏「重启以更新」安装`;
+      t.message = `v${receipt.version} 已下载，点击标题栏「重启以更新」安装`;
     });
     // Downloaded, not installed: the user decides when to restart.
-    updateReadyVersion.value = version;
+    updateReadyDecision.value = receipt.decisionId;
+    updateReadyVersion.value = receipt.version;
     updateReady.value = true;
     return true;
   } catch (err) {
@@ -319,9 +302,14 @@ export async function downloadUpdate(onStatus?: ProgressFn): Promise<boolean> {
  */
 export async function applyUpdateNow(): Promise<void> {
   if (updateInstalling.value) return;
+  const decisionId = updateReadyDecision.value;
+  if (decisionId == null) throw new Error("没有已下载的更新");
   updateInstalling.value = true;
   try {
-    await invoke("apply_app_update");
+    await invoke("apply_app_update", { decisionId });
+    updateReadyDecision.value = null;
+    updateReadyVersion.value = null;
+    updateReady.value = false;
     await relaunchApp();
   } catch (err) {
     devError("[updater] apply_update failed:", err);

@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import MediaDialog from "./MediaDialog.vue";
 /**
  * 时光机专用的「沉浸式看图」：大图 + 右侧信息栏（实例、触发方式、日志…）。
  *
  * 注意：这套带侧栏的形态只服务时光机。普通图片预览（内容详情页图库、投影库图集）
  * 请用 `ImageViewer.vue`，那才是通用的标准查看器，不要把两者混用。
  */
-import { computed, onBeforeUnmount, watch } from "vue";
+import { computed } from "vue";
 import { useI18n } from "vue-i18n";
 import { IconChevronLeft, IconChevronRight, IconClose } from "./icons";
 
@@ -45,10 +46,7 @@ function step(delta: number) {
 
 function onKey(e: KeyboardEvent) {
   if (!props.open) return;
-  if (e.key === "Escape") {
-    e.preventDefault();
-    close();
-  } else if (e.key === "ArrowLeft") {
+  if (e.key === "ArrowLeft") {
     e.preventDefault();
     step(-1);
   } else if (e.key === "ArrowRight") {
@@ -57,22 +55,11 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-watch(
-  () => props.open,
-  (open) => {
-    if (open) window.addEventListener("keydown", onKey);
-    else window.removeEventListener("keydown", onKey);
-  },
-  { immediate: true }
-);
-
-onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 </script>
 
 <template>
-  <Teleport to="body">
-    <transition name="lb">
-      <div v-if="open" class="lb" @click.self="close">
+  <MediaDialog :open="open" :label="title || t('common.imagePreview')" :duration="260" @close="close" @keydown="onKey">
+    <div class="lb" @click.self="close">
         <button class="lb-x" :title="t('common.close')" :aria-label="t('common.close')" @click="close">
           <IconClose />
         </button>
@@ -107,16 +94,15 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
             <span v-if="title" class="lb-title">{{ title }}</span>
           </div>
         </aside>
-      </div>
-    </transition>
-  </Teleport>
+    </div>
+  </MediaDialog>
 </template>
 
 <style scoped>
 .lb {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
+  width: 100%;
+  height: 100%;
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -125,14 +111,6 @@ onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
   background: rgba(8, 9, 12, 0.9);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-}
-.lb-enter-active,
-.lb-leave-active {
-  transition: opacity 0.26s ease;
-}
-.lb-enter-from,
-.lb-leave-to {
-  opacity: 0;
 }
 .lb-stage {
   position: relative;

@@ -6,6 +6,7 @@ export default {
   conflictHint: "Multiple actions bound to one key may interfere in game; consider rebinding",
   listening: "Press any key…",
   pressEsc: "Esc to cancel · Delete to clear binding",
+  none: "None",
   unbound: "Not bound",
   dirty: "{n} unsaved",
   save: "Save changes",

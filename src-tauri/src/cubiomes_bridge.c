@@ -174,12 +174,17 @@ static void compute_shade(const float *h, int hs, int stepBlocks, uint8_t *out) 
 int bridge_gen_biome_map(uint64_t seed, int mc, int dim, int scale,
                          int x, int y, int z, int sx, int sz, uint32_t flags,
                          uint8_t *out, uint8_t *out_shade, int hs, int hstep4, int hx4, int hz4, int kstep) {
+    if (!out || sx < 1 || sx > 512 || sz < 1 || sz > 512 || dim < -1 || dim > 1 ||
+        !(scale == 1 || scale == 4 || scale == 16 || scale == 64)) return -4;
+    if (out_shade && (hs < 3 || hs > 512 || hstep4 < 1 || hstep4 > 32 || kstep < 1 || kstep > 4)) return -4;
     Generator *g = (Generator *)malloc(sizeof(Generator));
     if (!g) return -1;
     setupGenerator(g, mc, flags);
     applySeed(g, dim, seed);
     Range r = {scale, x, z, sx, sz, y, 1};
-    int *cache = allocCache(g, r);
+    size_t cells = getMinCacheSize(g, scale, sx, 1, sz);
+    if (cells == 0 || cells > 8 * 1024 * 1024) { free(g); return -4; }
+    int *cache = (int *)calloc(cells, sizeof(int));
     if (!cache) { free(g); return -2; }
     int ret = genBiomes(g, cache, r);
     if (ret == 0) {
@@ -192,7 +197,9 @@ int bridge_gen_biome_map(uint64_t seed, int mc, int dim, int scale,
 
     if (ret == 0 && out_shade && hs > 2) {
         float *h = (float *)malloc(sizeof(float) * hs * hs);
-        if (h) {
+        if (!h) {
+            ret = -3;
+        } else {
             int useNoise = (mc >= MC_1_18 && dim == DIM_OVERWORLD &&
                             (g->bn.nptype == -1 || g->bn.nptype == NP_DEPTH));
             if (useNoise) {

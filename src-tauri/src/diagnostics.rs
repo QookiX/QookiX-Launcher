@@ -49,52 +49,32 @@ pub struct DiagnosticReport {
 /// 报告脱敏：替换系统用户名、UUID、token、服务器地址。
 /// 返回 (清洗后的文本, 替换次数)。
 pub fn redact(text: &str) -> (String, usize) {
-    let mut count = 0usize;
-    let mut out = text.to_string();
-
-    // 1) 用户目录中的用户名：C:\Users\<name>\  /  /home/<name>/  /  /Users/<name>/
-    for (re_src, _) in [
-        (r"(?i)([A-Z]:\\Users\\)([^\\\r\n]+)", ""),
-        (r"(?i)(/home/)([^/\r\n]+)", ""),
-        (r"(?i)(/Users/)([^/\r\n]+)", ""),
-    ] {
-        if let Ok(re) = regex::Regex::new(re_src) {
-            let before = out.clone();
-            out = re.replace_all(&out, "${1}<user>").to_string();
-            if out != before {
+    static PATTERNS: std::sync::LazyLock<Vec<(regex::Regex, &str)>> = std::sync::LazyLock::new(|| {
+        [
+            (r"(?i)([A-Z]:\\Users\\)([^\\\r\n]+)", "${1}<user>"),
+            (r"(?i)(/home/)([^/\r\n]+)", "${1}<user>"),
+            (r"(?i)(/Users/)([^/\r\n]+)", "${1}<user>"),
+            (r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", "<uuid>"),
+            (r"(?i)(--accessToken[= ]+)(\S+)", "${1}<token>"),
+            (r#"(?i)"(accessToken|msa_access_token|refresh_token)"\s*:\s*"[^"]*""#, r#""$1": "<token>""#),
+        ]
+        .into_iter()
+        .map(|(pattern, replacement)| (regex::Regex::new(pattern).expect("fixed redaction regex"), replacement))
+        .collect()
+    });
+    let mut count = 0;
+    let mut output = text.to_owned();
+    for (pattern, replacement) in PATTERNS.iter() {
+        output = pattern.replace_all(&output, |captures: &regex::Captures<'_>| {
+            let mut redacted = String::new();
+            captures.expand(replacement, &mut redacted);
+            if captures.get(0).is_some_and(|matched| matched.as_str() != redacted) {
                 count += 1;
             }
-        }
+            redacted
+        }).into_owned();
     }
-
-    // 2) UUID（账号 / 实例标识）
-    if let Ok(re) = regex::Regex::new(
-        r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}",
-    ) {
-        let before = out.clone();
-        out = re.replace_all(&out, "<uuid>").to_string();
-        if out != before {
-            count += 1;
-        }
-    }
-
-    // 3) 访问令牌（命令行 / 日志中的 --accessToken xxx）
-    if let Ok(re) = regex::Regex::new(r"(?i)(--accessToken[= ]+)(\S+)") {
-        let before = out.clone();
-        out = re.replace_all(&out, "${1}<token>").to_string();
-        if out != before {
-            count += 1;
-        }
-    }
-    if let Ok(re) = regex::Regex::new(r#"(?i)"(accessToken|msa_access_token|refresh_token)"\s*:\s*"[^"]*""#) {
-        let before = out.clone();
-        out = re.replace_all(&out, r#""$1": "<token>""#).to_string();
-        if out != before {
-            count += 1;
-        }
-    }
-
-    (out, count)
+    (output, count)
 }
 
 // ---------------------------------------------------------------------------
@@ -650,7 +630,7 @@ fn render_markdown(
     sections: &[DiagnosticSection],
     generated_at: u64,
     redactions: usize,
-    instance: Option<&crate::models::Instance>,
+    instance_label: Option<&str>,
 ) -> String {
     let mut md = String::new();
     md.push_str("# QookiX Launcher 诊断报告\n\n");
@@ -658,13 +638,8 @@ fn render_markdown(
         "- 生成时间（unix）: {generated_at}\n- 启动器版本: {}\n- 已脱敏替换: {redactions} 处\n",
         env!("CARGO_PKG_VERSION")
     ));
-    if let Some(inst) = instance {
-        md.push_str(&format!(
-            "- 关联实例: {}（Minecraft {} · {}）\n",
-            inst.name,
-            inst.mc_version,
-            inst.loader.as_str()
-        ));
+    if let Some(label) = instance_label {
+        md.push_str(&format!("- 关联实例: {label}\n"));
     }
     md.push('\n');
     for s in sections {
@@ -704,48 +679,39 @@ pub async fn collect(state: &AppState, instance_id: Option<String>) -> Result<Di
     }
     sections.extend(collect_logs(state, inst_ref));
 
-    // 整体脱敏：路径里的用户名、UUID、token
-    let generated_at = now_secs();
-    let raw_md = render_markdown(&sections, generated_at, 0, inst_ref);
-    let (_, redactions) = redact(&raw_md);
-
-    // 结构化字段同样脱敏（前端展示用）
-    let mut clean_sections = Vec::with_capacity(sections.len());
-    let mut total = redactions;
-    for s in sections {
-        let (mut lines, c1) = redact(&s.lines.join("\n"));
-        total += c1;
-        let (block, c2) = match &s.block {
-            Some(b) => {
-                let (cb, c) = redact(b);
-                (Some(cb), c)
-            }
-            None => (None, 0),
-        };
-        total += c2;
-        if c1 > 0 {
-            lines = lines.replace("<user>", "<user>");
-        }
-        clean_sections.push(DiagnosticSection {
-            key: s.key,
-            title: s.title,
-            lines: lines.lines().map(|l| l.to_string()).collect(),
-            block,
-        });
-    }
-
-    let markdown = render_markdown(&clean_sections, generated_at, total, inst_ref);
+    let instance_label = inst_ref.map(|inst| {
+        format!("{}（Minecraft {} · {}）", inst.name, inst.mc_version, inst.loader.as_str())
+    });
+    let report = redact_report(sections, instance_label, now_secs());
     // 自动落盘（失败不影响本次报告返回，仅记录日志）
-    if let Err(e) = save_report(state, &markdown, generated_at) {
+    if let Err(e) = save_report(state, &report.markdown, report.generated_at) {
         crate::util::log_line(&format!("[diagnostics] 报告落盘失败: {e}"));
     }
 
-    Ok(DiagnosticReport {
-        generated_at,
-        sections: clean_sections,
-        markdown,
-        redactions: total,
-    })
+    Ok(report)
+}
+
+fn redact_report(
+    mut sections: Vec<DiagnosticSection>,
+    instance_label: Option<String>,
+    generated_at: u64,
+) -> DiagnosticReport {
+    let mut redactions = 0;
+    let mut clean = |text: &str| {
+        let (text, count) = redact(text);
+        redactions += count;
+        text
+    };
+    let instance_label = instance_label.as_deref().map(&mut clean);
+    for section in &mut sections {
+        section.title = clean(&section.title);
+        for line in &mut section.lines {
+            *line = clean(line);
+        }
+        section.block = section.block.as_deref().map(&mut clean);
+    }
+    let markdown = render_markdown(&sections, generated_at, redactions, instance_label.as_deref());
+    DiagnosticReport { generated_at, sections, markdown, redactions }
 }
 
 // ---------------------------------------------------------------------------
@@ -841,7 +807,7 @@ pub fn prune_reports(state: &AppState, keep: usize) {
     let list = list_reports(state);
     for entry in list.into_iter().skip(keep) {
         let path = reports_dir(state).join(&entry.filename);
-        crate::util::fs_best_effort("remove_file", &path, std::fs::remove_file(&path));
+        crate::fsutil::fs_best_effort("remove_file", &path, std::fs::remove_file(&path));
     }
 }
 
@@ -864,6 +830,24 @@ mod tests {
         assert!(!out.contains("eyJhbGciOi.payload.sig"), "token 未脱敏: {out}");
         assert!(!out.contains("secret-value"));
         assert!(!out.contains("ZhaYi"));
+    }
+
+    #[test]
+    fn report_redacts_the_instance_heading_and_counts_each_occurrence_once() {
+        let section = DiagnosticSection {
+            key: "system".into(),
+            title: "/home/private-title/logs".into(),
+            lines: vec!["Paths: /home/private-one/logs, /home/private-two/logs".into()],
+            block: Some("--accessToken dummy-token".into()),
+        };
+        let report = redact_report(vec![section], Some("/home/private-instance/game".into()), 1);
+        assert_eq!(report.redactions, 5);
+        assert!(report.markdown.contains("- 关联实例: /home/<user>/game"));
+        assert!(report.markdown.contains("已脱敏替换: 5 处"));
+        assert!(!report.markdown.contains("private-"));
+        assert!(!report.markdown.contains("dummy-token"));
+        assert_eq!(report.sections[0].title, "/home/<user>/logs");
+        assert_eq!(report.sections[0].lines[0].matches("<user>").count(), 2);
     }
 
     #[test]
@@ -895,17 +879,15 @@ mod tests {
             db: Mutex::new(rusqlite::Connection::open_in_memory().unwrap()),
             client: crate::settings::http_client("system", None),
             semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
-            game_pids: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            server_pids: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            server_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            task_counter: std::sync::atomic::AtomicU64::new(1),
-            install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            jobs: crate::runtime_jobs::RuntimeJobs::default(),
+
+
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
-            pending_update: Mutex::new(None),
+            pending_update: Mutex::new(crate::updater::UpdateCache::default()),
             lan_sync: Mutex::new(None),
             qookix: Mutex::new(crate::qookix::QookixSession::default()),
             qookix_refresh: tokio::sync::Mutex::new(()),

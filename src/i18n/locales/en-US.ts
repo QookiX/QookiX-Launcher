@@ -54,6 +54,11 @@ export default {
   serverDetail,
   downloads,
   common: {
+    imagePreview: "Image preview",
+    viewMode: "View mode",
+    skinModel: "Skin model",
+    editorMode: "Editor mode",
+    versionType: "Version type",
     confirm: "Confirm",
     cancel: "Cancel",
     save: "Save",

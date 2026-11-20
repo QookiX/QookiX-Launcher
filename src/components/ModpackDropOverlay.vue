@@ -9,14 +9,16 @@
  * 行为：拖入的文件若是整合包（.mrpack / .zip），显示全屏投放提示；松手后弹确认框，
  * 确认即调用 `import_modpack` 创建实例并跳转到该实例页。非整合包文件被忽略。
  */
-import { onBeforeUnmount, onMounted, ref } from "vue";
+import { onMounted, ref } from "vue";
 import { useRouter } from "vue-router";
 import { useDialog, useMessage } from "naive-ui";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
+import type { Event } from "@tauri-apps/api/event";
 import { useI18n } from "vue-i18n";
 import { api } from "../api";
 import { useInstancesStore } from "../stores/instances";
 import { instanceDetailActive } from "../composables/instanceDetailDrag";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { IconPackage } from "./icons";
 
 const MODPACK_RE = /\.(mrpack|zip)$/i;
@@ -33,7 +35,7 @@ const dragging = ref(false);
 const dragName = ref("");
 const importing = ref(false);
 
-let unlisten: (() => void) | null = null;
+const dragScope = useTauriListenerScope();
 
 function basename(p: string): string {
   return p.split(/[\\/]/).filter(Boolean).pop() ?? p;
@@ -76,7 +78,7 @@ function onDrop(file: string) {
 
 onMounted(async () => {
   try {
-    unlisten = await getCurrentWebview().onDragDropEvent((event) => {
+    await dragScope.observe<Event<DragDropEvent>>((handle) => getCurrentWebview().onDragDropEvent(handle), (event) => {
       const p = event.payload;
       if (p.type === "enter") {
         const file = findModpack(p.paths);
@@ -98,10 +100,6 @@ onMounted(async () => {
   }
 });
 
-onBeforeUnmount(() => {
-  unlisten?.();
-  unlisten = null;
-});
 </script>
 
 <template>
@@ -121,7 +119,7 @@ onBeforeUnmount(() => {
 .drop-overlay {
   position: fixed;
   inset: 0;
-  z-index: 1400;
+  z-index: var(--z-drop);
   display: flex;
   align-items: center;
   justify-content: center;

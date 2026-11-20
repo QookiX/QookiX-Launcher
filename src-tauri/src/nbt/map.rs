@@ -18,8 +18,9 @@ use crate::nbt::{level, region};
 use fastnbt::Value;
 use serde_json::{json, Value as Json};
 use std::collections::HashMap;
-use std::path::Path;
-use std::sync::{LazyLock, Mutex};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, LazyLock, Mutex};
+use std::time::SystemTime;
 
 /// 单次渲染的最大输出边长（像素）
 pub const MAX_SIDE: i32 = 512;
@@ -135,42 +136,64 @@ type ChunkKey = (i32, i32);
 /// 世界必须算进键里。只按 (维度, 区块) 缓存的话，从世界 A 切到世界 B 时
 /// 同一片坐标会直接命中 A 的地表——地图上画的是"别的世界的地形"，
 /// 点进去却提示"该区块尚未生成"，看起来就像随机生成了奇怪的地形。
-type CacheKey = (u64, String, i32, i32);
+type CacheKey = (Arc<PathBuf>, String, i32, i32);
 /// 待解压的区块，按 region 文件分组
 type RegionGroups = std::collections::BTreeMap<ChunkKey, Vec<ChunkKey>>;
+type RegionMemo = Option<(ChunkKey, Option<region::RegionReader>)>;
+type SurfaceCache = HashMap<CacheKey, (RegionRevision, Surface)>;
 
-static CACHE: LazyLock<Mutex<HashMap<CacheKey, Surface>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct RegionRevision {
+    bytes: u64,
+    modified: SystemTime,
+    created: Option<SystemTime>,
+    identity: (u64, u64),
+}
 
-/// 缓存上限（一条 512 字节，6 万条约 30MB），超了整体清空
+impl RegionRevision {
+    fn of(reader: &region::RegionReader) -> Option<Self> {
+        let metadata = reader.metadata();
+        Some(Self {
+            bytes: metadata.len(),
+            modified: metadata.modified().ok()?,
+            created: metadata.created().ok(),
+            identity: reader.identity()?,
+        })
+    }
+}
+
+static CACHE: LazyLock<Mutex<SurfaceCache>> = LazyLock::new(Mutex::default);
 const CACHE_LIMIT: usize = 60_000;
 
-/// 世界目录 → 缓存用的稳定标识（Windows 路径不分大小写，先统一压小写）
-pub fn world_key(world_dir: &Path) -> u64 {
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-    for b in world_dir.to_string_lossy().to_lowercase().as_bytes() {
-        h ^= *b as u64;
-        h = h.wrapping_mul(0x100_0000_01b3);
-    }
-    h
+fn world_key(world_dir: &Path) -> Arc<PathBuf> {
+    Arc::new(world_dir.canonicalize().unwrap_or_else(|_| world_dir.to_path_buf()))
 }
 
-/// 区块被改动后要失效，否则地图会显示改之前的地形
 pub fn invalidate(world_dir: &Path, dim: &str, cx: i32, cz: i32) {
-    if let Ok(mut c) = CACHE.lock() {
-        c.remove(&(world_key(world_dir), dim.to_string(), cx, cz));
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.remove(&(world_key(world_dir), dim.to_string(), cx, cz));
     }
 }
 
-fn cache_get(key: &CacheKey) -> Option<Surface> {
-    CACHE.lock().ok()?.get(key).cloned()
+pub(crate) fn invalidate_world(world_dir: &Path) {
+    let world = world_key(world_dir);
+    if let Ok(mut cache) = CACHE.lock() {
+        cache.retain(|(path, _, _, _), _| *path != world);
+    }
 }
 
-fn cache_put(key: CacheKey, v: Surface) {
-    if let Ok(mut c) = CACHE.lock() {
-        if c.len() >= CACHE_LIMIT {
-            c.clear();
+fn cache_get(key: &CacheKey, revision: RegionRevision) -> Option<Surface> {
+    let cache = CACHE.lock().ok()?;
+    let (cached_revision, surface) = cache.get(key)?;
+    (*cached_revision == revision).then(|| surface.clone())
+}
+
+fn cache_put(key: CacheKey, revision: RegionRevision, surface: Surface) {
+    if let Ok(mut cache) = CACHE.lock() {
+        if cache.len() >= CACHE_LIMIT {
+            cache.clear();
         }
-        c.insert(key, v);
+        cache.insert(key, (revision, surface));
     }
 }
 
@@ -293,13 +316,15 @@ pub fn render(
     // 上限跟着前端 MAX_STEP 走：放到 256 才够"缩到最远"（1 像素 64 格）时
     // 让整屏仍落在 512 像素以内，否则请求会被下面这条尺寸检查直接打回
     let step = step.clamp(1, 256);
-    let (x0, x1) = (x0, x1.max(x0 + 1));
-    let (z0, z1) = (z0, z1.max(z0 + 1));
-    let width = ((x1 - x0) + step - 1) / step;
-    let height = ((z1 - z0) + step - 1) / step;
-    if width > MAX_SIDE || height > MAX_SIDE {
+    let x1 = i64::from(x1).max(i64::from(x0) + 1);
+    let z1 = i64::from(z1).max(i64::from(z0) + 1);
+    let scale = i64::from(step);
+    let width = (x1 - i64::from(x0) + scale - 1) / scale;
+    let height = (z1 - i64::from(z0) + scale - 1) / scale;
+    if width > i64::from(MAX_SIDE) || height > i64::from(MAX_SIDE) {
         return Err(format!("渲染范围过大（单次上限 {MAX_SIDE}×{MAX_SIDE} 像素）"));
     }
+    let (width, height) = (width as i32, height as i32);
     let cells = (width * height) as usize;
 
     // 1) 采样点：每格均匀取 k×k 个，算清要解哪些区块
@@ -308,12 +333,12 @@ pub fn render(
     let mut by_region: RegionGroups = Default::default();
     for pz in 0..height {
         for px in 0..width {
-            let (bx, bz) = (x0 + px * step, z0 + pz * step);
+            let (bx, bz) = (i64::from(x0) + i64::from(px) * scale, i64::from(z0) + i64::from(pz) * scale);
             let cell = (pz * width + px) as u32;
             for i in 0..k {
                 for j in 0..k {
-                    let wx = bx + (step * (2 * j + 1)) / (2 * k);
-                    let wz = bz + (step * (2 * i + 1)) / (2 * k);
+                    let wx = (bx + i64::from((step * (2 * j + 1)) / (2 * k))).min(x1 - 1) as i32;
+                    let wz = (bz + i64::from((step * (2 * i + 1)) / (2 * k))).min(z1 - 1) as i32;
                     let (cx, cz) = (wx >> 4, wz >> 4);
                     samples.push(Sample {
                         cx,
@@ -417,11 +442,11 @@ fn fetch(
     }
     // 进度按"要解多少区块"报，前端才能画出连续的进度条
     let total: usize = items.iter().map(|(_, l)| l.len()).sum();
-    // 上限 16：每个线程手上最多留一个 region 文件（十几 MB）
+    // 限制同时解压的区块数量。
     let threads = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(4)
-        .clamp(1, 16);
+        .clamp(1, 4);
     let wkey = world_key(world_dir);
 
     let mut out: HashMap<ChunkKey, Surface> = HashMap::new();
@@ -431,7 +456,7 @@ fn fetch(
         for (key, list) in items.iter() {
             done += list.len();
             progress(done, total);
-            load_region(world_dir, dim, wkey, *key, list, &mut memo, &mut out);
+            load_region(world_dir, dim, &wkey, *key, list, &mut memo, &mut out);
         }
         return out;
     }
@@ -447,6 +472,7 @@ fn fetch(
         let handles: Vec<_> = parts
             .into_iter()
             .map(|part| {
+                let wkey = &wkey;
                 s.spawn(move || {
                     let mut local = HashMap::new();
                     let mut memo = None;
@@ -471,57 +497,44 @@ fn fetch(
     out
 }
 
-/// 读一个 region 文件，解出里面被点名的区块。
-/// `memo` 是线程内的单文件缓存：同一个 region 文件被切成多批时只读一次盘
-/// （一个文件十几 MB，重复读的代价比解压还高）。
+/// 同一线程复用区域文件句柄及头部，只读取点名区块的扇区。
 fn load_region(
     world_dir: &Path,
     dim: &str,
-    wkey: u64,
+    world: &Arc<PathBuf>,
     (rx, rz): ChunkKey,
     list: &[ChunkKey],
-    memo: &mut Option<(ChunkKey, Vec<u8>)>,
+    memo: &mut RegionMemo,
     out: &mut HashMap<ChunkKey, Surface>,
 ) {
-    // 先看缓存：全命中就一个字节都不用读盘（拖回已经看过的地方走的就是这条路）
-    let mut todo: Vec<ChunkKey> = Vec::new();
-    for (cx, cz) in list {
-        if out.contains_key(&(*cx, *cz)) {
-            continue;
-        }
-        match cache_get(&(wkey, dim.to_string(), *cx, *cz)) {
-            Some(s) => {
-                out.insert((*cx, *cz), s);
-            }
-            None => todo.push((*cx, *cz)),
-        }
-    }
-    if todo.is_empty() {
-        return;
-    }
-
-    let key = (rx, rz);
-    if memo.as_ref().map(|(k, _)| *k) != Some(key) {
+    let group = (rx, rz);
+    if memo.as_ref().map(|(key, _)| *key) != Some(group) {
         let path = region::region_dir(world_dir, dim).join(format!("r.{rx}.{rz}.mca"));
-        // 文件不存在（该 region 还没生成）时也记下来，避免同一批反复尝试
-        *memo = Some((key, std::fs::read(&path).unwrap_or_default()));
+        *memo = Some((group, region::RegionReader::open(&path).ok()));
     }
-    let Some((_, bytes)) = memo.as_ref() else {
+    let Some((_, Some(reader))) = memo else {
         return;
     };
-    if bytes.is_empty() {
-        return;
-    }
-
-    for (cx, cz) in todo {
-        let Ok(chunk) = region::decode_chunk(bytes, cx, cz) else {
-            continue; // 该区块尚未生成
+    let revision = RegionRevision::of(reader);
+    for &(cx, cz) in list {
+        if out.contains_key(&(cx, cz)) {
+            continue;
+        }
+        let key = (Arc::clone(world), dim.to_string(), cx, cz);
+        if let Some(surface) = revision.and_then(|rev| cache_get(&key, rev)) {
+            out.insert((cx, cz), surface);
+            continue;
+        }
+        let Ok(chunk) = reader.read_chunk(cx, cz) else {
+            continue;
         };
         let Some(names) = surface_ids(&chunk) else {
             continue;
         };
         let ids = intern_surface(&names);
-        cache_put((wkey, dim.to_string(), cx, cz), ids.clone());
+        if let Some(revision) = revision {
+            cache_put(key, revision, ids.clone());
+        }
         out.insert((cx, cz), ids);
     }
 }
@@ -1070,6 +1083,36 @@ mod tests {
         assert_eq!(a.data, b.data, "缓存命中的结果要和首次一致");
         assert_eq!(a.palette, b.palette);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_region_replaced_at_the_same_path_is_decoded_again() {
+        let world = tempfile::tempdir().unwrap();
+        let root = world.path();
+        let rect = Rect { x0: 0, z0: 0, x1: 16, z1: 16, step: 1 };
+        region::write_chunk(root, "overworld", 0, 0, &flat_chunk()).unwrap();
+        let first = render(root, "overworld", rect, |_, _| {}).unwrap();
+        assert!(first.legend.iter().any(|(name, _, _)| name == "minecraft:stone"));
+
+        let changed = nbt(j!({ "sections": [
+            { "Y": 0, "block_states": { "palette": [{ "Name": "minecraft:gold_block" }] } }
+        ] }));
+        region::write_chunk(root, "overworld", 0, 0, &changed).unwrap();
+        let second = render(root, "overworld", rect, |_, _| {}).unwrap();
+        assert!(second.legend.iter().any(|(name, _, _)| name == "minecraft:gold_block"));
+        assert!(!second.legend.iter().any(|(name, _, _)| name == "minecraft:stone"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cache_keys_preserve_case_sensitive_worlds() {
+        let world = tempfile::tempdir().unwrap();
+        let lower = world.path().join("world");
+        let upper = world.path().join("World");
+        std::fs::create_dir(&lower).unwrap();
+        if std::fs::create_dir(&upper).is_ok() {
+            assert_ne!(world_key(&lower), world_key(&upper));
+        }
     }
 
     /// 1.13~1.17 的区块把 section 塞在 Level 里，键名还是大写的 Sections，

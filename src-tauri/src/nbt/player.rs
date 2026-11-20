@@ -14,7 +14,11 @@ use std::path::{Path, PathBuf};
 /// 玩家数据目录。
 /// 26.x 起改叫 `players/`（还是 `<uuid>.dat`），老存档是 `playerdata/`，两套都认。
 pub fn playerdata_dir(state: &AppState, instance_id: &str, world: &str) -> Result<PathBuf, String> {
-    Ok(players_dir(&super::resolve_world(state, instance_id, world)?))
+    Ok(players_dir(&super::resolve_world(
+        state,
+        instance_id,
+        world,
+    )?))
 }
 
 /// 世界目录 → 玩家数据所在目录（优先新布局的 players/）
@@ -48,7 +52,11 @@ pub fn name_cache_at(instance_root: &Path) -> HashMap<String, String> {
 
 /// 读取 usercache.json：UUID（小写）→ 玩家名。
 /// 依次尝试实例根目录、世界目录的祖父目录（手动指定的世界多半也在 `<实例>/saves/` 下）。
-pub fn name_cache(state: &AppState, instance_id: &str, world_dir: &Path) -> HashMap<String, String> {
+pub fn name_cache(
+    state: &AppState,
+    instance_id: &str,
+    world_dir: &Path,
+) -> HashMap<String, String> {
     let mut candidates: Vec<PathBuf> = Vec::new();
     if !instance_id.is_empty() {
         candidates.push(state.instances_dir().join(instance_id));
@@ -68,12 +76,45 @@ pub fn name_cache(state: &AppState, instance_id: &str, world_dir: &Path) -> Hash
 /// 玩家显示名：缓存里没有就退化成 UUID 前 8 位
 pub fn display_name(cache: &HashMap<String, String>, uuid: &str) -> String {
     cache.get(&uuid.to_lowercase()).cloned().unwrap_or_else(|| {
-        if uuid.len() >= 8 {
-            format!("{}…", &uuid[..8])
+        if let Some((limit, _)) = uuid.char_indices().nth(8) {
+            format!("{}…", &uuid[..limit])
         } else {
             uuid.to_string()
         }
     })
+}
+
+pub fn validate_player_id(id: &str) -> Result<(), String> {
+    if (id.len() == 32 || id.len() == 36) && uuid::Uuid::parse_str(id).is_ok() {
+        Ok(())
+    } else {
+        Err("非法的玩家 UUID".into())
+    }
+}
+
+fn player_id(entry: &std::fs::DirEntry) -> Result<Option<String>, String> {
+    let path = entry.path();
+    if path.extension().and_then(|value| value.to_str()) != Some("dat") {
+        return Ok(None);
+    }
+    let metadata = std::fs::symlink_metadata(&path).map_err(|error| error.to_string())?;
+    if !metadata.is_file() || crate::fsutil::is_link_or_reparse_point(&metadata) {
+        return Err(format!(
+            "跳过非普通玩家数据文件 {}",
+            entry.file_name().to_string_lossy()
+        ));
+    }
+    let id = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    validate_player_id(id).map_err(|_| {
+        format!(
+            "跳过文件名无效的玩家数据 {}",
+            entry.file_name().to_string_lossy()
+        )
+    })?;
+    Ok(Some(id.to_owned()))
 }
 
 /// 世界卡片用：玩家数据文件数量 + 第一个玩家名（名字查 `cache`）
@@ -85,19 +126,12 @@ pub fn first_player_with(
     let mut first: Option<String> = None;
     if let Ok(rd) = std::fs::read_dir(players_dir(world_dir)) {
         for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) != Some("dat") {
+            let Ok(Some(id)) = player_id(&e) else {
                 continue;
-            }
+            };
             count += 1;
             if first.is_none() {
-                let uuid = p
-                    .file_stem()
-                    .map(|s| s.to_string_lossy().to_string())
-                    .unwrap_or_default();
-                if !uuid.is_empty() {
-                    first = Some(display_name(cache, &uuid));
-                }
+                first = Some(display_name(cache, &id));
             }
         }
     }
@@ -105,52 +139,75 @@ pub fn first_player_with(
 }
 
 /// 列出世界下所有玩家（playerdata/*.dat）
-pub fn list_players(state: &AppState, instance_id: &str, world: &str) -> Result<Vec<Json>, String> {
+pub fn list_players(
+    state: &AppState,
+    instance_id: &str,
+    world: &str,
+) -> Result<(Vec<Json>, Vec<String>), String> {
     let dir = playerdata_dir(state, instance_id, world)?;
     let cache = name_cache(state, instance_id, &dir);
     let mut out = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|x| x.to_str()) != Some("dat") {
-                continue;
+    let mut warnings = Vec::new();
+    match std::fs::read_dir(&dir) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = match entry {
+                    Ok(entry) => entry,
+                    Err(error) => {
+                        warnings.push(error.to_string());
+                        continue;
+                    }
+                };
+                let uuid = match player_id(&entry) {
+                    Ok(Some(id)) => id,
+                    Ok(None) => continue,
+                    Err(warning) => {
+                        warnings.push(warning);
+                        continue;
+                    }
+                };
+                let p = entry.path();
+                let display = display_name(&cache, &uuid);
+                // 顺带读一下坐标和维度，卡片上直接显示
+                let (pos, dim, health) = match level::read_level(&p) {
+                    Ok(d) => {
+                        let pos = level::get(&d, "Pos")
+                            .and_then(as_list)
+                            .map(|a| {
+                                a.iter()
+                                    .filter_map(|x| match x {
+                                        Value::Double(f) => Some(*f),
+                                        Value::Int(i) => Some(*i as f64),
+                                        _ => None,
+                                    })
+                                    .collect::<Vec<f64>>()
+                            })
+                            .unwrap_or_default();
+                        let dim = level::get_string(&d, "Dimension")
+                            .or_else(|| level::get_int(&d, "Dimension").map(|i| i.to_string()));
+                        let health = level::get_double(&d, "Health")
+                            .or_else(|| level::get_int(&d, "Health").map(|i| i as f64));
+                        (pos, dim, health)
+                    }
+                    Err(error) => {
+                        warnings.push(format!(
+                            "玩家数据 {} 无法读取: {error}",
+                            entry.file_name().to_string_lossy()
+                        ));
+                        (Vec::new(), None, None)
+                    }
+                };
+                out.push(json!({
+                    "uuid": uuid,
+                    "name": display,
+                    "pos": pos,
+                    "dimension": dim,
+                    "health": health,
+                }));
             }
-            let uuid = p
-                .file_stem()
-                .map(|s| s.to_string_lossy().to_string())
-                .unwrap_or_default();
-            let display = display_name(&cache, &uuid);
-            // 顺带读一下坐标和维度，卡片上直接显示
-            let (pos, dim, health) = match level::read_level(&p) {
-                Ok(d) => {
-                    let pos = level::get(&d, "Pos")
-                        .and_then(as_list)
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|x| match x {
-                                    Value::Double(f) => Some(*f),
-                                    Value::Int(i) => Some(*i as f64),
-                                    _ => None,
-                                })
-                                .collect::<Vec<f64>>()
-                        })
-                        .unwrap_or_default();
-                    let dim = level::get_string(&d, "Dimension")
-                        .or_else(|| level::get_int(&d, "Dimension").map(|i| i.to_string()));
-                    let health = level::get_double(&d, "Health")
-                        .or_else(|| level::get_int(&d, "Health").map(|i| i as f64));
-                    (pos, dim, health)
-                }
-                Err(_) => (Vec::new(), None, None),
-            };
-            out.push(json!({
-                "uuid": uuid,
-                "name": display,
-                "pos": pos,
-                "dimension": dim,
-                "health": health,
-            }));
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(format!("无法读取玩家目录: {error}")),
     }
     out.sort_by(|a, b| {
         a.get("name")
@@ -158,7 +215,7 @@ pub fn list_players(state: &AppState, instance_id: &str, world: &str) -> Result<
             .unwrap_or("")
             .cmp(b.get("name").and_then(|x| x.as_str()).unwrap_or(""))
     });
-    Ok(out)
+    Ok((out, warnings))
 }
 
 fn pos_of(d: &Value) -> Vec<f64> {
@@ -265,4 +322,28 @@ pub fn save_player(
     }
     level::write_level(&p, &d)?;
     Ok(backup)
+}
+
+#[cfg(test)]
+mod player_list_tests {
+    use super::*;
+
+    #[test]
+    fn malformed_file_names_are_skipped_and_unicode_display_is_safe() {
+        let fixture = tempfile::tempdir().unwrap();
+        let dir = fixture.path().join("playerdata");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("甲乙丙丁戊己庚辛壬.dat"), "").unwrap();
+        std::fs::write(dir.join("123e4567-e89b-12d3-a456-426614174000.dat"), "").unwrap();
+        let cache = HashMap::new();
+        assert_eq!(
+            display_name(&cache, "甲乙丙丁戊己庚辛壬"),
+            "甲乙丙丁戊己庚辛…"
+        );
+        assert_eq!(
+            first_player_with(&cache, fixture.path()),
+            (1, Some("123e4567…".into()))
+        );
+        assert!(validate_player_id("a-b").is_err());
+    }
 }

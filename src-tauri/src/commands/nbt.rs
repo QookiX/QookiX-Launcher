@@ -15,11 +15,7 @@ const PROGRESS_EVENT: &str = "nbt-progress";
 
 /// 该实例是否有游戏正在运行（运行中改存档会被覆盖/损坏）
 fn is_running(state: &AppState, instance_id: &str) -> bool {
-    state
-        .game_pids
-        .lock()
-        .map(|g| g.contains_key(instance_id))
-        .unwrap_or(false)
+    state.jobs.game_busy(instance_id)
 }
 
 fn ensure_not_running(state: &AppState, instance_id: &str) -> Result<(), String> {
@@ -67,6 +63,24 @@ pub async fn nbt_open_world(
     }))
 }
 
+/// 在展示确认摘要前按当前存档的布局和类型验证同一份补丁。
+#[tauri::command]
+pub async fn nbt_validate_world_patch(
+    state: State<'_, AppState>,
+    instance_id: String,
+    world: String,
+    patch: Json,
+) -> Result<(), String> {
+    ensure_not_running(&state, &instance_id)?;
+    let dir = nbt::resolve_world(&state, &instance_id, &world)?;
+    tokio::task::spawn_blocking(move || {
+        nbt::check_editable(&dir)?;
+        nbt::validate_world_patch(&dir.join("level.dat"), &patch)
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 /// 保存世界表单修改（自动备份；游戏运行中或只读时拒绝）。
 #[tauri::command]
 pub async fn nbt_save_world(
@@ -78,8 +92,8 @@ pub async fn nbt_save_world(
     ensure_not_running(&state, &instance_id)?;
     let dir = nbt::resolve_world(&state, &instance_id, &world)?;
     nbt::check_editable(&dir)?;
-    let backup = nbt::save_world_form(&state, &instance_id, &world, &patch)?;
-    Ok(json!({ "backup": backup }))
+    let (backup, form) = nbt::save_world_form(&state, &instance_id, &world, &patch)?;
+    Ok(json!({ "backup": backup, "form": form }))
 }
 
 /// 返回完整 NBT 树（树形模式用），带类型标记便于前端选控件。
@@ -129,7 +143,7 @@ fn scalar_to_json(v: &fastnbt::Value) -> Json {
         fastnbt::Value::Byte(b) => json!(b),
         fastnbt::Value::Short(s) => json!(s),
         fastnbt::Value::Int(i) => json!(i),
-        fastnbt::Value::Long(l) => json!(l),
+        fastnbt::Value::Long(l) => json!(l.to_string()),
         fastnbt::Value::Float(f) => json!(f),
         fastnbt::Value::Double(d) => json!(d),
         fastnbt::Value::String(s) => json!(s),
@@ -178,10 +192,12 @@ pub async fn nbt_restore_backup(
     file: String,
     name: String,
 ) -> Result<Json, String> {
+    let _lease = state.jobs.reserve_game_files(&instance_id)?;
     ensure_not_running(&state, &instance_id)?;
     let dir = nbt::resolve_world(&state, &instance_id, &world)?;
     nbt::check_editable(&dir)?;
     let safety = nbt::backup::restore_backup(&dir, &file, &name)?;
+    nbt::map::invalidate_world(&dir);
     Ok(json!({ "backup": safety }))
 }
 
@@ -255,6 +271,7 @@ pub async fn nbt_render_map(
     z1: i32,
     step: i32,
 ) -> Result<Json, String> {
+    static MAP_SLOTS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
     let dir = nbt::resolve_world(&state, &instance_id, &world)?;
     let rect = nbt::map::Rect {
         x0,
@@ -263,12 +280,16 @@ pub async fn nbt_render_map(
         z1,
         step,
     };
-    let img = nbt::map::render(&dir, &dim, rect, |current, total| {
-        let _ = app.emit(
-            PROGRESS_EVENT,
-            json!({ "current": current, "total": total, "label": "" }),
-        );
-    })?;
+    let slot = MAP_SLOTS.acquire().await.map_err(|e| e.to_string())?;
+    let img = tauri::async_runtime::spawn_blocking(move || {
+        let _slot = slot;
+        nbt::map::render(&dir, &dim, rect, |current, total| {
+            let _ = app.emit(
+                PROGRESS_EVENT,
+                json!({ "current": current, "total": total, "label": "" }),
+            );
+        })
+    }).await.map_err(|e| e.to_string())??;
     // 调色板拍平成一维（每 3 个一组 RGB），比二维数组省一大半体积
     let flat: Vec<u8> = img.palette.iter().flat_map(|c| c.iter().copied()).collect();
     // 图例：视野里占比最高的几种方块（前端显示"这些颜色是什么"）
@@ -338,10 +359,11 @@ pub async fn nbt_set_chunk_node(
     value: Json,
     node_type: String,
 ) -> Result<Json, String> {
+    let _lease = state.jobs.reserve_game_files(&instance_id)?;
     let (dir, backup) = prepare_chunk_write(&state, &instance_id, &world, &dim, cx, cz)?;
-    let mut data = nbt::region::read_chunk(&dir, &dim, cx, cz)?;
-    nbt::tree::set_node_in(&mut data, &path, &value, &node_type)?;
-    nbt::region::write_chunk(&dir, &dim, cx, cz, &data)?;
+    nbt::region::edit_chunk(&dir, &dim, cx, cz, |data| {
+        nbt::tree::set_node_in(data, &path, &value, &node_type)
+    })?;
     // 地图缓存里那份地表数据已经过期了
     nbt::map::invalidate(&dir, &dim, cx, cz);
     Ok(json!({ "backup": backup }))
@@ -358,10 +380,9 @@ pub async fn nbt_delete_chunk_node(
     cz: i32,
     path: Vec<String>,
 ) -> Result<Json, String> {
+    let _lease = state.jobs.reserve_game_files(&instance_id)?;
     let (dir, backup) = prepare_chunk_write(&state, &instance_id, &world, &dim, cx, cz)?;
-    let mut data = nbt::region::read_chunk(&dir, &dim, cx, cz)?;
-    nbt::tree::delete_node_in(&mut data, &path)?;
-    nbt::region::write_chunk(&dir, &dim, cx, cz, &data)?;
+    nbt::region::edit_chunk(&dir, &dim, cx, cz, |data| nbt::tree::delete_node_in(data, &path))?;
     nbt::map::invalidate(&dir, &dim, cx, cz);
     Ok(json!({ "backup": backup }))
 }
@@ -370,19 +391,6 @@ pub async fn nbt_delete_chunk_node(
 // 玩家 / 背包 / 物品 / 树节点
 // ---------------------------------------------------------------------------
 
-fn safe_uuid(uuid: &str) -> Result<(), String> {
-    // playerdata 文件名形如 <uuid>.dat，只允许十六进制与连字符
-    if uuid
-        .chars()
-        .all(|c| c.is_ascii_hexdigit() || c == '-')
-        && !uuid.is_empty()
-    {
-        Ok(())
-    } else {
-        Err("非法的玩家 UUID".into())
-    }
-}
-
 /// 列出世界下所有玩家（名字用 usercache.json 本地解析）
 #[tauri::command]
 pub async fn nbt_list_players(
@@ -390,7 +398,8 @@ pub async fn nbt_list_players(
     instance_id: String,
     world: String,
 ) -> Result<Json, String> {
-    Ok(json!({ "players": nbt::player::list_players(&state, &instance_id, &world)? }))
+    let (players, warnings) = nbt::player::list_players(&state, &instance_id, &world)?;
+    Ok(json!({ "players": players, "warnings": warnings }))
 }
 
 /// 读取玩家可编辑字段
@@ -401,7 +410,7 @@ pub async fn nbt_read_player(
     world: String,
     uuid: String,
 ) -> Result<Json, String> {
-    safe_uuid(&uuid)?;
+    nbt::player::validate_player_id(&uuid)?;
     nbt::player::read_player(&state, &instance_id, &world, &uuid)
 }
 
@@ -414,7 +423,7 @@ pub async fn nbt_save_player(
     uuid: String,
     patch: Json,
 ) -> Result<Json, String> {
-    safe_uuid(&uuid)?;
+    nbt::player::validate_player_id(&uuid)?;
     ensure_not_running(&state, &instance_id)?;
     let dir = nbt::resolve_world(&state, &instance_id, &world)?;
     nbt::check_editable(&dir)?;
@@ -430,7 +439,7 @@ pub async fn nbt_read_inventory(
     world: String,
     uuid: String,
 ) -> Result<Json, String> {
-    safe_uuid(&uuid)?;
+    nbt::player::validate_player_id(&uuid)?;
     nbt::item::read_inventory(&state, &instance_id, &world, &uuid)
 }
 
@@ -445,7 +454,7 @@ pub async fn nbt_save_item(
     index: usize,
     item: Json,
 ) -> Result<Json, String> {
-    safe_uuid(&uuid)?;
+    nbt::player::validate_player_id(&uuid)?;
     ensure_not_running(&state, &instance_id)?;
     let dir = nbt::resolve_world(&state, &instance_id, &world)?;
     nbt::check_editable(&dir)?;
@@ -468,8 +477,7 @@ pub async fn nbt_set_node(
     let dir = nbt::resolve_world(&state, &instance_id, &world)?;
     nbt::check_editable(&dir)?;
     let level_path = dir.join("level.dat");
-    let backup = nbt::backup::backup_file(&level_path)?;
-    nbt::tree::set_node(&level_path, path, &value, &node_type)?;
+    let backup = nbt::tree::set_node(&level_path, path, &value, &node_type)?;
     Ok(json!({ "backup": backup }))
 }
 
@@ -485,7 +493,6 @@ pub async fn nbt_delete_node(
     let dir = nbt::resolve_world(&state, &instance_id, &world)?;
     nbt::check_editable(&dir)?;
     let level_path = dir.join("level.dat");
-    let backup = nbt::backup::backup_file(&level_path)?;
-    nbt::tree::delete_node(&level_path, path)?;
+    let backup = nbt::tree::delete_node(&level_path, path)?;
     Ok(json!({ "backup": backup }))
 }

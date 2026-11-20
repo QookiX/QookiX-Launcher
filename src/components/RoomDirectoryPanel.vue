@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import SimplePagination from "./SimplePagination.vue";
+import { createLatestRequest } from "../composables/latestRequest";
+import { vSegmented } from "../composables/vSegmented";
 /**
  * 房间目录：好友房间 / 公开大厅 / 联机邀请。
  *
@@ -11,7 +14,7 @@ import { api } from "../api";
 import { qookixErrorMessage, useQookixStore } from "../stores/qookix";
 import { useInstancesStore } from "../stores/instances";
 import { PLAY_TYPES, agoText, playTypeLabel } from "../utils/qookix";
-import type { PackCompareOut, PackFile, QookixRoom } from "../types";
+import type { PackCompareOut, PackFile, QookixRoom, QookixRoomMember } from "../types";
 import { fmtBytes } from "../utils/format";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import { IconCheck, IconCopy, IconExternal, IconRefresh, IconUsers } from "../components/icons";
@@ -33,6 +36,12 @@ const { indicatorStyle: subSegStyle, refresh: refreshSubSeg } = useSlidingIndica
 );
 watch(sub, () => nextTick(() => refreshSubSeg()));
 const publicRooms = ref<QookixRoom[]>([]);
+const PAGE_SIZE = 20;
+const publicPage = ref(1);
+const pageCount = ref(1);
+const submittedKeyword = ref("");
+const roomListRequest = createLatestRequest();
+const memberRequest = createLatestRequest();
 const keyword = ref("");
 const loading = ref(false);
 const joiningId = ref<string | null>(null);
@@ -71,21 +80,73 @@ function verifiedFor(uid: number | undefined): boolean {
   return !!uid && !!store.mcOf(uid)?.mc_verified;
 }
 
-function reloadWithFilters(delay = 0) {
+function clearFilterTimer() {
   if (filterTimer) clearTimeout(filterTimer);
+  filterTimer = null;
+}
+
+function reloadWithFilters(delay = 0) {
+  if (sub.value !== "public") return;
+  clearFilterTimer();
+  roomListRequest.invalidate();
+  publicPage.value = 1;
+  loading.value = true;
   filterTimer = setTimeout(() => {
-    if (sub.value === "public") void load();
+    filterTimer = null;
+    void load();
   }, delay);
 }
 
-watch(filterPlayType, () => reloadWithFilters());
-watch(filterPlayers, () => reloadWithFilters());
-watch(filterVersion, () => reloadWithFilters(350));
+watch(filterPlayType, () => reloadWithFilters(), { flush: "sync" });
+watch(filterPlayers, () => reloadWithFilters(), { flush: "sync" });
+watch(filterVersion, () => reloadWithFilters(350), { flush: "sync" });
+
+function submitKeyword() {
+  clearFilterTimer();
+  publicPage.value = 1;
+  submittedKeyword.value = keyword.value.trim();
+  void load();
+}
+
+function setPublicPage(page: number) {
+  clearFilterTimer();
+  publicPage.value = page;
+  void load();
+}
 
 const reportOpen = ref(false);
 const reportRoomId = ref("");
 const reportReason = ref("");
 const reporting = ref(false);
+
+// 房间成员：列表只给人数，点开后再拉详情拿成员快照
+const membersOpen = ref(false);
+const membersLoading = ref(false);
+const membersList = ref<QookixRoomMember[]>([]);
+const membersTitle = ref("");
+
+watch(membersOpen, (visible) => {
+  if (!visible) {
+    memberRequest.invalidate();
+    membersLoading.value = false;
+  }
+}, { flush: "sync" });
+
+async function openMembers(room: QookixRoom) {
+  const isCurrent = memberRequest.start();
+  membersTitle.value = room.title || t("qookix.rooms.title");
+  membersList.value = [];
+  membersOpen.value = true;
+  membersLoading.value = true;
+  try {
+    const detail = await api.qookixRoomDetail(room.id);
+    if (isCurrent()) membersList.value = detail.room?.members ?? [];
+  } catch (error) {
+    if (isCurrent()) message.error(qookixErrorMessage(error));
+  } finally {
+    if (isCurrent()) membersLoading.value = false;
+  }
+}
 
 const rooms = computed(() => (sub.value === "friends" ? store.rooms : publicRooms.value));
 
@@ -108,29 +169,41 @@ function minutesLeft(expiresAt: number): number {
 
 async function load() {
   if (!store.loggedIn) return;
+  const ownsRequest = roomListRequest.start();
+  const section = sub.value;
+  const isCurrent = () => ownsRequest() && store.loggedIn && section === sub.value;
   loading.value = true;
   try {
-    if (sub.value === "friends") {
+    if (section === "friends") {
       await store.loadRooms();
     } else {
-      const r = await api.qookixPublicRooms(keyword.value.trim() || undefined, 1, 20, {
+      const page = publicPage.value;
+      const result = await api.qookixPublicRooms(submittedKeyword.value || undefined, page, PAGE_SIZE, {
         version: filterVersion.value.trim() || undefined,
         playType: filterPlayType.value ?? undefined,
         minPlayers: filterPlayers.value || undefined,
       });
-      publicRooms.value = r.rooms ?? [];
+      if (!isCurrent()) return;
+      pageCount.value = Math.max(1, Math.ceil(result.total / (result.limit || PAGE_SIZE)));
+      if (page > pageCount.value) {
+        setPublicPage(pageCount.value);
+        return;
+      }
+      publicRooms.value = result.rooms ?? [];
     }
-    // 房主 brief 不带 MC 字段，补查一次；没绑定的人不会返回，静默跳过
-    const shown = sub.value === "friends" ? store.rooms : publicRooms.value;
-    void store.profilesFor(shown.map((r) => r.owner?.uid ?? 0));
-  } catch (e) {
-    message.error(qookixErrorMessage(e));
+    if (isCurrent()) {
+      const shown = section === "friends" ? store.rooms : publicRooms.value;
+      void store.profilesFor(shown.map((room) => room.owner?.uid ?? 0));
+    }
+  } catch (error) {
+    if (isCurrent()) message.error(qookixErrorMessage(error));
   } finally {
-    loading.value = false;
+    if (isCurrent()) loading.value = false;
   }
 }
 
 async function switchSub(next: "friends" | "public") {
+  clearFilterTimer();
   sub.value = next;
   await load();
 }
@@ -381,13 +454,22 @@ watch(
       void store.loadInvites();
       void load();
     } else {
+      clearFilterTimer();
+      roomListRequest.invalidate();
+      membersOpen.value = false;
       publicRooms.value = [];
+      publicPage.value = 1;
+      pageCount.value = 1;
+      loading.value = false;
     }
   },
 );
 
 onUnmounted(() => {
   if (ticker) clearInterval(ticker);
+  clearFilterTimer();
+  roomListRequest.invalidate();
+  memberRequest.invalidate();
 });
 </script>
 
@@ -438,7 +520,7 @@ onUnmounted(() => {
       <!-- 目录 -->
       <section class="rd-dir glass">
         <header class="rd-head">
-          <div ref="subSegRef" class="rd-subtabs qx-seg qx-seg--sm">
+          <div ref="subSegRef" v-segmented="{ label: t('multiplayer.tab.rooms') }" class="rd-subtabs qx-seg qx-seg--sm">
             <div class="qx-seg__indicator" :style="subSegStyle"></div>
             <button :class="{ active: sub === 'friends' }" @click="switchSub('friends')">
               {{ t("qookix.rooms.friends") }}
@@ -453,9 +535,9 @@ onUnmounted(() => {
               v-model:value="keyword"
               size="small"
               :placeholder="t('qookix.rooms.searchPlaceholder')"
-              @keyup.enter="load"
+              @keyup.enter="submitKeyword"
             />
-            <button class="rd-btn ghost small" :disabled="loading" @click="load">
+            <button class="rd-btn ghost small" :disabled="loading" @click="sub === 'public' ? submitKeyword() : load()">
               <IconRefresh /> {{ t("common.refresh") }}
             </button>
           </div>
@@ -511,9 +593,22 @@ onUnmounted(() => {
               <span v-if="room.play_type" class="rd-tag mode">
                 {{ playTypeLabel(room.play_type, (k) => t(k)) }}
               </span>
+              <span
+                v-if="room.visibility === 'public' && (room.title_status ?? 'approved') !== 'approved'"
+                class="rd-tag mode"
+                :title="t('qookix.roomTitlePendingHint')"
+              >
+                {{ t('qookix.roomTitlePending') }}
+              </span>
               <span v-if="room.game_version" class="rd-tag">{{ room.game_version }}</span>
               <span v-if="room.modpack" class="rd-tag">{{ room.modpack }}</span>
-              <span class="rd-tag"><IconUsers /> {{ t("qookix.rooms.members", { count: room.member_count }) }}</span>
+              <button
+                class="rd-tag rd-tag-btn"
+                :title="t('qookix.rooms.membersTag')"
+                @click="openMembers(room)"
+              >
+                <IconUsers /> {{ t("qookix.rooms.members", { count: room.member_count }) }}
+              </button>
               <!-- 活跃度：心跳距今多久。房间可能已经没人了但还没过期 -->
               <span class="rd-tag" :class="{ stale: room.status !== 'active' }">
                 {{ t("qookix.rooms.activeAgo", { when: agoText(room.last_heartbeat, now, t) }) }}
@@ -563,6 +658,13 @@ onUnmounted(() => {
             </div>
           </article>
         </div>
+        <SimplePagination
+          v-if="sub === 'public' && pageCount > 1"
+          class="rd-pagination"
+          :page="publicPage"
+          :page-count="pageCount"
+          @update:page="setPublicPage"
+        />
       </section>
     </template>
 
@@ -641,6 +743,36 @@ onUnmounted(() => {
         <div class="rd-report-ops">
           <button class="rd-btn ghost" @click="closePackCheck">{{ t("qookix.pack.cancelJoin") }}</button>
           <button class="rd-btn primary" @click="joinAnyway">{{ t("qookix.pack.joinAnyway") }}</button>
+        </div>
+      </div>
+    </n-modal>
+
+    <!-- 房间成员：房主客户端上报过才有名字 -->
+    <n-modal
+      v-model:show="membersOpen"
+      preset="card"
+      :title="`${t('qookix.rooms.membersTitle')} · ${membersTitle}`"
+      style="width: 420px; max-width: 92vw"
+      :bordered="false"
+    >
+      <div class="rd-members">
+        <div v-if="membersLoading" class="hint">…</div>
+        <p v-else-if="!membersList.length" class="rd-empty">
+          {{ t('qookix.rooms.membersEmpty') }}
+        </p>
+        <div v-else class="rd-member-list">
+          <div v-for="(m, i) in membersList" :key="`${m.name}-${i}`" class="rd-member">
+            <span class="rd-member-avatar">{{ (m.name || '?').slice(0, 1) }}</span>
+            <span class="rd-member-name">{{ m.name }}</span>
+            <span v-if="m.role === 'owner'" class="rd-member-role">
+              {{ t('qookix.rooms.owner') }}
+            </span>
+          </div>
+        </div>
+        <div class="rd-report-ops">
+          <button class="rd-btn ghost" @click="membersOpen = false">
+            {{ t('common.close') }}
+          </button>
         </div>
       </div>
     </n-modal>
@@ -959,6 +1091,61 @@ onUnmounted(() => {
   color: var(--accent);
   background: var(--accent-08, rgba(232, 154, 75, 0.12));
 }
+/* 人数标签可点：弹窗看成员名单 */
+.rd-tag-btn {
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+  transition: color var(--dur-sm, 0.15s) var(--ease-out, ease);
+}
+.rd-tag-btn:hover {
+  color: var(--accent);
+}
+.rd-members {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.rd-member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 46vh;
+  overflow: auto;
+}
+.rd-member {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: var(--r-sm);
+  background: var(--bg-2, rgba(255, 255, 255, 0.04));
+}
+.rd-member-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex: none;
+  border-radius: var(--r-xs);
+  background: var(--accent-soft, rgba(232, 154, 75, 0.14));
+  color: var(--accent);
+  font-size: var(--fs-2xs);
+  font-weight: 600;
+}
+.rd-member-name {
+  font-size: var(--fs-xs);
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.rd-member-role {
+  margin-left: auto;
+  font-size: var(--fs-2xs);
+  color: var(--text-3);
+}
 /* 非活跃房间的「多久前活跃」压一档，避免看起来还在线 */
 .rd-tag.stale {
   opacity: 0.6;
@@ -1034,5 +1221,9 @@ onUnmounted(() => {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+.rd-pagination {
+  justify-content: center;
+  margin-top: 10px;
 }
 </style>

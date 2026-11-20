@@ -1,12 +1,13 @@
 import { defineConfig } from "vite";
 import vue from "@vitejs/plugin-vue";
+import { changelogPlugin } from "./scripts/shared/vite-changelog.mjs";
 
 // @ts-expect-error process is a nodejs global
 const host = process.env.TAURI_DEV_HOST;
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
-  plugins: [vue()],
+  plugins: [vue(), changelogPlugin()],
 
   // 生产构建：只去掉 debugger，保留 console 以便用户日志排查
   esbuild: {
@@ -45,24 +46,33 @@ export default defineConfig(async () => ({
     rollupOptions: {
       output: {
         manualChunks(id) {
-          if (id.includes("node_modules")) {
-            if (id.includes("three") || id.includes("skinview3d")) {
-              return "vendor-three";
-            }
-            if (id.includes("deepslate")) {
-              return "vendor-deepslate";
-            }
-            if (
-              id.includes("naive-ui") ||
-              id.includes("seemly") ||
-              id.includes("vooks") ||
-              id.includes("evtd")
-            ) {
-              return "vendor-naive-ui";
-            }
-            if (id.includes("marked") || id.includes("dompurify")) {
-              return "vendor-markdown";
-            }
+          const dependency = id.replaceAll("\\", "/");
+          if (dependency.includes("/node_modules/skinview3d/node_modules/three/")) {
+            return "vendor-skin-three";
+          }
+          if (dependency.includes("/node_modules/skinview3d/")) {
+            return "vendor-skin-viewer";
+          }
+          if (dependency.endsWith("/node_modules/three/build/three.core.js")) {
+            return "vendor-three-core";
+          }
+          if (dependency.includes("/node_modules/three/")) {
+            return "vendor-three-renderer";
+          }
+          if (dependency.includes("/node_modules/deepslate/")) {
+            return "vendor-deepslate";
+          }
+          if (/\/node_modules\/(?:vue|vue-router|pinia|vue-i18n|@vue\/[^/]+|@intlify\/[^/]+|vue-demi)\//.test(dependency)) {
+            return "vendor-vue";
+          }
+          if (dependency.includes("/node_modules/lodash-es/")) {
+            return "vendor-lodash";
+          }
+          if (/\/node_modules\/(?:naive-ui|seemly|vooks|evtd|vueuc|css-render|@css-render\/[^/]+|date-fns|treemate|async-validator)\//.test(dependency)) {
+            return "vendor-naive-core";
+          }
+          if (/\/node_modules\/(marked|dompurify)\//.test(dependency)) {
+            return "vendor-markdown";
           }
         },
       },

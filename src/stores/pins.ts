@@ -1,6 +1,5 @@
 import { defineStore } from "pinia";
 import { api } from "../api";
-import { error as devError } from "../utils/logger";
 
 export type PinType = "server" | "world" | "instance";
 
@@ -29,6 +28,14 @@ export interface PinItem {
 }
 
 const LEGACY_KEY = "qookix.pins";
+const pendingWrites = new WeakMap<object, Promise<void>>();
+
+function enqueue<T>(store: object, operation: () => Promise<T>): Promise<T> {
+  const previous = pendingWrites.get(store) ?? Promise.resolve();
+  const next = previous.then(operation);
+  pendingWrites.set(store, next.then(() => {}, () => {}));
+  return next;
+}
 
 /**
  * 读取旧版本 localStorage 中的固定项，并补齐 target 字段做迁移：
@@ -71,53 +78,44 @@ export const usePinsStore = defineStore("pins", {
     ofTarget: (s) => (target: PinTarget) => s.items.filter((i) => i.target === target),
   },
   actions: {
-    /** 从后端文件（pins.json）加载固定项；若为首次且本地有旧数据则迁移过去 */
-    async init() {
-      try {
-        let items = await api.getPins();
-        if (items.length === 0) {
-          const legacy = migrateLegacy();
+    /** 从 SQLite 加载固定项，并在迁移成功后清理旧 WebView 数据。 */
+    init() {
+      return enqueue(this, async () => {
+        try {
+          const items = await api.getPins();
+          const legacy = items.length ? [] : migrateLegacy();
           if (legacy.length) {
+            await api.setPins(legacy);
             this.items = legacy;
-            await this.save();
             localStorage.removeItem(LEGACY_KEY);
-            return;
+          } else {
+            this.items = items;
           }
+        } finally {
+          this.loaded = true;
         }
-        this.items = items;
-      } catch {
-        /* 加载失败保留空列表 */
-      } finally {
-        this.loaded = true;
-      }
-    },
-    /** 持久化：写回数据目录下的 pins.json（经后端命令） */
-    async save() {
-      try {
-        await api.setPins(this.items);
-      } catch (e) {
-        devError("保存固定项失败", e);
-      }
+      });
     },
     /** target 参与 id 组成，首页与侧边栏的固定项互不覆盖 */
     makeId(type: PinType, instanceId: string, key: string, target: PinTarget = "home") {
       return `${instanceId}:${type}:${key}:${target}`;
     },
-    add(pin: PinItem) {
-      if (this.items.some((i) => i.id === pin.id)) return;
-      this.items.push(pin);
-      void this.save();
-    },
     remove(id: string) {
-      const next = this.items.filter((i) => i.id !== id);
-      if (next.length !== this.items.length) {
+      return enqueue(this, async () => {
+        const next = this.items.filter((i) => i.id !== id);
+        if (next.length === this.items.length) return;
+        await api.setPins(next);
         this.items = next;
-        void this.save();
-      }
+      });
     },
     toggle(pin: PinItem) {
-      if (this.items.some((i) => i.id === pin.id)) this.remove(pin.id);
-      else this.add(pin);
+      return enqueue(this, async () => {
+        const next = this.isPinned(pin.id)
+          ? this.items.filter((item) => item.id !== pin.id)
+          : [...this.items, pin];
+        await api.setPins(next);
+        this.items = next;
+      });
     },
   },
 });

@@ -30,7 +30,7 @@ $ErrorActionPreference = 'Stop'
 # parser, which mangles quoted arguments that contain spaces (e.g.
 # "QookiX Launcher_0.2.0_x64-setup.exe").
 $stdinFiles = @()
-if ([Console]::IsInputRedirected) {
+if ($Files.Count -eq 0 -and [Console]::IsInputRedirected) {
   $stdinFiles = @(
     [Console]::In.ReadToEnd() -split "`r?`n" |
       ForEach-Object { $_.Trim() } |

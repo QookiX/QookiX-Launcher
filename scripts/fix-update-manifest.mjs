@@ -1,136 +1,120 @@
-// ============================================================================
-//  fix-update-manifest.mjs - Regenerate a CORRECT `latest.json` straight from
-//  the assets already published on a GitHub Release, then upload it back to
-//  overwrite the broken manifest.
-//
-//  Why: the previous `latest.json` referenced a Windows asset name that does
-//  not exist on the release (e.g. `QookiX Launcher_...` vs the real
-//  `QookiX.Launcher_...`), so the updater hit a 404 and every auto-update
-//  failed. This script rebuilds the manifest from the release's actual
-//  `browser_download_url` + its matching `.sig`, guaranteeing URL/signature
-//  consistency.
-//
-//  Usage:
-//    GH_TOKEN=<token> GITHUB_REPOSITORY=owner/repo GITHUB_TAG=v0.3.1 \
-//      node scripts/fix-update-manifest.mjs
-//
-//  Environment:
-//    GH_TOKEN          GitHub token with write access to the repo's releases
-//    GITHUB_REPOSITORY e.g. "weimosheng/QookiX-Launcher"
-//    GITHUB_TAG        e.g. "v0.3.1"
-// ============================================================================
 import fs from 'node:fs'
-import { UPDATER_TARGETS } from './shared/updater-targets.mjs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { fileDigest, githubReleases, sha256 } from './shared/github-releases.mjs'
+import { requireUpdaterCoverage, selectUpdaterBundles } from './shared/updater-targets.mjs'
+import { buildUpdateManifest, readLocalSignature } from './shared/update-manifest.mjs'
+import { normalizeReleaseVersion } from './shared/release-version.mjs'
 
-const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN
-const repo = process.env.GITHUB_REPOSITORY
-const tag = process.env.GITHUB_TAG
-if (!token || !repo || !tag) {
-  throw new Error('GH_TOKEN, GITHUB_REPOSITORY and GITHUB_TAG are all required')
-}
+const manifestName = 'latest.json'
+const checksumName = 'SHA256SUMS.txt'
+const downloadFile = /\.(?:exe|msi|zip|dmg|AppImage|deb|rpm|tar\.gz)$/i
 
-const api = 'https://api.github.com'
-const headers = {
-  Authorization: `Bearer ${token}`,
-  Accept: 'application/vnd.github+json',
-  'X-GitHub-Api-Version': '2022-11-28',
-}
-
-const relRes = await fetch(`${api}/repos/${repo}/releases/tags/${tag}`, { headers })
-if (!relRes.ok) throw new Error(`Failed to fetch release: ${relRes.status} ${await relRes.text()}`)
-const release = await relRes.json()
-const assets = release.assets
-console.log(`Loaded release ${tag} with ${assets.length} asset(s)`)
-
-// Updater bundle matchers. Order matters; first match per platform wins.
-// Shared with verify-artifacts.mjs / create-update-manifest-local.mjs so all
-// three always agree on what counts as an updater bundle.
-const targets = UPDATER_TARGETS.map((t) => ({
-  platforms: t.platforms,
-  suffixes: t.suffixes,
-}))
-
-const platforms = {}
-for (const t of targets) {
-  // Prefer the FIRST matching suffix, mirroring create-update-manifest-local.
-  let asset
-  let usedSuffix
-  for (const suffix of t.suffixes) {
-    asset = assets.find((a) => a.name.endsWith(suffix))
-    if (asset) {
-      usedSuffix = suffix
-      break
+async function verifyDraftFiles(client, directory, assets) {
+  const local = fs.readdirSync(directory, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && ![manifestName, checksumName].includes(entry.name))
+  const localBundles = await selectUpdaterBundles(local, {
+    signatureFor: (asset) => readLocalSignature(directory, asset),
+  })
+  requireUpdaterCoverage(localBundles)
+  const matched = new Map()
+  for (const { name } of local) {
+    const normalized = name.replace(/\s+/g, '.')
+    const candidates = assets.filter((asset) => asset.name === name || asset.name === normalized)
+    if (candidates.length !== 1) throw new Error(`Expected exactly one uploaded copy of ${name}`)
+    const [asset] = candidates
+    if (matched.has(asset.name) || asset.state !== 'uploaded') throw new Error(`Invalid draft asset ${asset.name}`)
+    const localFile = path.join(directory, name)
+    const expected = await fileDigest(localFile)
+    if (asset.size !== fs.statSync(localFile).size || await client.digest(asset) !== expected) {
+      throw new Error(`Uploaded bytes differ from the verified build: ${asset.name}`)
     }
+    matched.set(asset.name, expected)
   }
-  if (!asset) {
-    console.log(`  - skip ${t.platforms.join('/')}: no asset matching ${t.suffixes.join(' or ')}`)
-    continue
+  if (assets.some(({ name }) => (downloadFile.test(name) || name.endsWith('.sig')) && !matched.has(name))) {
+    throw new Error('The draft contains binary or signature assets outside the verified release directory')
   }
-  const sigAsset = assets.find((a) => a.name === `${asset.name}.sig`)
-  if (!sigAsset) {
-    console.log(`  - skip ${t.platforms.join('/')}: no .sig for ${asset.name}`)
-    continue
-  }
-  const sigRes = await fetch(sigAsset.browser_download_url)
-  if (!sigRes.ok) {
-    console.log(`  - skip ${t.platforms.join('/')}: failed to download ${sigAsset.name}`)
-    continue
-  }
-  const signature = (await sigRes.text()).trim()
-  for (const p of t.platforms) {
-    platforms[p] = { signature, url: asset.browser_download_url }
-  }
-  console.log(`  - ok ${t.platforms.join('/')}: ${asset.name} (matched "${usedSuffix}")`)
+  return matched
 }
 
-if (Object.keys(platforms).length === 0) {
-  throw new Error('No signed updater bundles found on the release; nothing to publish')
+async function writeDraftAsset(client, release, name, bytes) {
+  const old = release.assets.find((asset) => asset.name === name)
+  if (old && await client.digest(old) === await sha256([bytes])) return
+  if (old) await client.remove(old.id)
+  await client.upload(release.id, name, bytes)
 }
 
-const old = assets.find((a) => a.name === 'latest.json')
+export async function finalizeRelease(client, release, { tag, minVersion, directory, publish = false }) {
+  if (!release?.id || release.tag_name !== tag || !Array.isArray(release.assets)) {
+    throw new Error('The requested GitHub release is missing')
+  }
+  const { assets } = release
+  const oldManifest = assets.find((asset) => asset.name === manifestName)
+  if (!release.draft && (publish || oldManifest)) {
+    throw new Error('This release is public. Prepare a draft release to publish a corrected update manifest.')
+  }
+  if (publish && !directory) throw new Error('The verified build directory is required to publish a draft')
+  const matched = directory ? await verifyDraftFiles(client, directory, assets) : null
 
-// 强制更新：低于此版本的客户端必须更新。
-// 优先使用 QOOKIX_MIN_VERSION 环境变量；若未指定，尝试从已有 latest.json 中保留。
-let minVersion = process.env.QOOKIX_MIN_VERSION
-if (!minVersion && old) {
-  try {
-    const oldRes = await fetch(old.browser_download_url)
-    if (oldRes.ok) {
-      const oldJson = await oldRes.json()
-      if (oldJson.minVersion) minVersion = oldJson.minVersion
+  const byName = new Map(assets.map((asset) => [asset.name, asset]))
+  const bundles = await selectUpdaterBundles(assets.filter((asset) => asset.state === 'uploaded'), {
+    signatureFor: (asset) => {
+      const signature = byName.get(`${asset.name}.sig`)
+      return signature?.state === 'uploaded' ? client.text(signature, 32 * 1024) : undefined
+    },
+  })
+  requireUpdaterCoverage(bundles)
+  if (matched && bundles.some(({ asset }) => !matched.has(asset.name) || !matched.has(`${asset.name}.sig`))) {
+    throw new Error('An updater bundle differs from the verified artifacts')
+  }
+
+  if (!minVersion && oldManifest) {
+    minVersion = JSON.parse(await client.text(oldManifest)).minVersion
+  }
+  const manifest = buildUpdateManifest({
+    tag,
+    notes: release.body ?? '',
+    minVersion,
+    bundles,
+    urlFor: (asset) => {
+      const url = new URL(asset.browser_download_url)
+      if (url.protocol !== 'https:' || url.hostname !== 'github.com') {
+        throw new Error(`Invalid GitHub download URL for ${asset.name}`)
+      }
+      return url.href
+    },
+  })
+  manifest.pub_date = release.created_at ?? manifest.pub_date
+  if (matched) {
+    const checksums = [...matched].filter(([name]) => downloadFile.test(name))
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([name, digest]) => `${digest.slice('sha256:'.length)}  ${name}`).join('\n')
+    await writeDraftAsset(client, release, checksumName, Buffer.from(`${checksums}\n`))
+  }
+  await writeDraftAsset(client, release, manifestName, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`))
+  if (publish) {
+    const published = await client.edit(release.id, { draft: false, make_latest: release.prerelease ? 'false' : 'true' })
+    if (published.id !== release.id || published.draft !== false) throw new Error('Could not confirm release publication')
+  }
+  return manifest
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const tag = process.env.GITHUB_TAG
+  if (!normalizeReleaseVersion(tag)) throw new Error('GITHUB_TAG must identify a SemVer release')
+  const args = process.argv.slice(2)
+  const client = githubReleases(process.env.GITHUB_REPOSITORY, process.env.GH_TOKEN || process.env.GITHUB_TOKEN)
+  const release = await client.find(tag)
+  if (args[0] === '--assert-unpublished') {
+    if (release && !release.draft) throw new Error(`Release ${tag} is already public`)
+  } else {
+    const publish = args[0] === '--publish-draft'
+    if ((publish && args.length !== 2) || (!publish && args.length)) {
+      throw new Error('Usage: fix-update-manifest.mjs [--assert-unpublished | --publish-draft <verified-artifacts>]')
     }
-  } catch {}
-}
-
-const manifest = {
-  version: tag.replace(/^v/, ''),
-  notes: release.body ?? '',
-  pub_date: new Date().toISOString(),
-  platforms,
-}
-if (minVersion) manifest.minVersion = minVersion
-
-fs.writeFileSync('latest.json', `${JSON.stringify(manifest, null, 2)}\n`)
-console.log('Wrote latest.json with platforms:', Object.keys(platforms).join(', '), minVersion ? `(minVersion=${minVersion})` : '')
-
-// Overwrite the old manifest on the release (delete then upload).
-if (old) {
-  const del = await fetch(`${api}/repos/${repo}/releases/assets/${old.id}`, { method: 'DELETE', headers })
-  if (!del.ok && del.status !== 404) {
-    throw new Error(`Failed to delete old latest.json: ${del.status} ${await del.text()}`)
+    const manifest = await finalizeRelease(client, release, {
+      tag, minVersion: process.env.QOOKIX_MIN_VERSION, directory: publish ? args[1] : undefined, publish,
+    })
+    console.log(`Verified updater manifest for ${tag}: ${Object.keys(manifest.platforms).join(', ')}`)
   }
-  console.log('Deleted old latest.json asset')
 }
-// IMPORTANT: release asset uploads MUST go to uploads.github.com, not
-// api.github.com (which returns 404 for asset uploads).
-const uploadsApi = 'https://uploads.github.com'
-const up = await fetch(
-  `${uploadsApi}/repos/${repo}/releases/${release.id}/assets?name=latest.json`,
-  {
-    method: 'POST',
-    headers: { ...headers, 'Content-Type': 'application/octet-stream' },
-    body: fs.readFileSync('latest.json'),
-  },
-)
-if (!up.ok) throw new Error(`Failed to upload latest.json: ${up.status} ${await up.text()}`)
-console.log('Uploaded corrected latest.json — updater should now work.')

@@ -1,8 +1,10 @@
 <script setup lang="ts">
+import { vSegmented } from "../composables/vSegmented";
+import { motionScrollBehavior } from "../composables/useMotionPreference";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch, type Ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { useRouter } from "vue-router";
 import {
   NButton,
@@ -32,6 +34,8 @@ import TimeMachineLightbox from "../components/TimeMachineLightbox.vue";
 import { fmtDuration, fmtSize } from "../utils/format";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import type { PlaySession, TimelineShot, TimelineSnapshot } from "../types";
+
+const { listen } = useTauriListenerScope();
 
 const { t } = useI18n();
 const message = useMessage();
@@ -585,7 +589,7 @@ watch(heroEl, (el) => {
   if (el && heroIo) heroIo.observe(el);
 });
 function backToLatest() {
-  heroEl.value?.scrollIntoView({ behavior: "smooth", block: "start" });
+  heroEl.value?.scrollIntoView({ behavior: motionScrollBehavior(), block: "start" });
 }
 
 // ---- 沉浸式看图 ----
@@ -1054,10 +1058,10 @@ onBeforeUnmount(() => {
 <template>
   <div id="timemachine-root" class="timemachine-view" data-tauri-drag-region>
     <!-- 顶部工具栏：视图切换 + 快捷操作 + 控制台 -->
-    <div class="toolbar">
+    <div class="toolbar qx-toolbar glass">
       <button
         v-if="pending > 0 && cloudEnabled"
-        class="btn pending"
+        class="qx-btn pending"
         :class="{ spin: flushing }"
         :title="t('timemachine.pendingN', { n: pending })"
         :disabled="flushing"
@@ -1066,7 +1070,7 @@ onBeforeUnmount(() => {
         <IconUploadCloud />
         {{ t("timemachine.pendingN", { n: pending }) }}
       </button>
-      <div ref="segRef" class="seg qx-seg">
+      <div ref="segRef" v-segmented="{ label: t('nav.timemachine') }" class="seg qx-seg">
         <div class="qx-seg__indicator" :style="segStyle"></div>
         <button
           v-for="v in viewOptions"
@@ -1077,16 +1081,16 @@ onBeforeUnmount(() => {
           {{ v.label }}
         </button>
       </div>
-      <button
-        class="btn ic"
+      <NButton
+        class="qx-btn--icon"
         :title="t('timemachine.refresh')"
         :disabled="busy"
         @click="loadShots(); loadSnapshots()"
       >
-        <IconRefresh />
-      </button>
-      <button
-        class="btn"
+        <template #icon><IconRefresh /></template>
+      </NButton>
+      <NButton
+
         :disabled="busy"
         :title="
           captureInstance
@@ -1095,11 +1099,11 @@ onBeforeUnmount(() => {
         "
         @click="testCapture"
       >
-        <IconCamera /> {{ t("timemachine.testCapture") }}
-      </button>
-      <button class="btn" @click="ctlOpen = true">
-        <IconSliders /> {{ t("timemachine.console") }}
-      </button>
+        <template #icon><IconCamera /></template> {{ t("timemachine.testCapture") }}
+      </NButton>
+      <NButton @click="ctlOpen = true">
+        <template #icon><IconSliders /></template> {{ t("timemachine.console") }}
+      </NButton>
     </div>
 
     <!-- 开了云保存但还没授权：引导先连 GitHub（纯本地模式不需要授权） -->
@@ -1108,8 +1112,8 @@ onBeforeUnmount(() => {
       <p class="gate-t">{{ t("timemachine.needGithub") }}</p>
       <p class="gate-p">{{ t("timemachine.needGithubHint") }}</p>
       <div class="gate-actions">
-        <button class="btn" @click="router.push('/settings')">{{ t("nav.settings") }}</button>
-        <button class="btn primary" @click="loadStatus">{{ t("timemachine.retry") }}</button>
+        <NButton @click="router.push('/settings')">{{ t("nav.settings") }}</NButton>
+        <NButton type="primary" @click="loadStatus">{{ t("timemachine.retry") }}</NButton>
       </div>
     </section>
 
@@ -1140,9 +1144,9 @@ onBeforeUnmount(() => {
             </span>
           </div>
           <div class="hero-actions">
-            <button class="btn hero-btn" @click="openShot(heroShot)">
-              <IconPlay /> {{ t("timemachine.heroOpen") }}
-            </button>
+            <NButton type="primary" class="hero-btn" @click="openShot(heroShot)">
+              <template #icon><IconPlay /></template> {{ t("timemachine.heroOpen") }}
+            </NButton>
           </div>
         </div>
       </section>
@@ -1156,9 +1160,9 @@ onBeforeUnmount(() => {
           <span><b>2</b> {{ t("timemachine.step2") }}</span>
           <span><b>3</b> {{ t("timemachine.step3") }}</span>
         </div>
-        <button class="btn" @click="ctlOpen = true">
-          <IconSliders /> {{ t("timemachine.console") }}
-        </button>
+        <NButton @click="ctlOpen = true">
+          <template #icon><IconSliders /></template> {{ t("timemachine.console") }}
+        </NButton>
       </section>
 
       <!-- 筛选 chips -->
@@ -1206,14 +1210,10 @@ onBeforeUnmount(() => {
             :style="{ '--d': `${(it.i % 12) * 28}ms` }"
           >
             <div class="shot-pic">
-              <img
-                v-if="thumbs[it.shot.id]"
-                :src="thumbs[it.shot.id]"
-                alt=""
-                loading="lazy"
-                @click="openShot(it.shot)"
-              />
-              <div v-else class="shot-skel" @click="openShot(it.shot)"></div>
+              <button type="button" class="shot-preview" :aria-label="t('common.imagePreview') + ' · ' + instanceName(it.shot.instanceId) + ' · ' + clock(it.shot.createdAt)" @click="openShot(it.shot)">
+                <img v-if="thumbs[it.shot.id]" :src="thumbs[it.shot.id]" alt="" loading="lazy" />
+                <span v-else class="shot-skel" aria-hidden="true"></span>
+              </button>
               <span class="shot-badge" :class="triggerClass(it.shot.trigger)">
                 {{ triggerLabel(it.shot.trigger) }}
               </span>
@@ -1284,14 +1284,10 @@ onBeforeUnmount(() => {
               :style="{ '--i': si }"
             >
               <div class="shot-pic">
-                <img
-                  v-if="thumbs[s.id]"
-                  :src="thumbs[s.id]"
-                  alt=""
-                  loading="lazy"
-                  @click="openShot(s)"
-                />
-                <div v-else class="shot-skel" @click="openShot(s)"></div>
+                <button type="button" class="shot-preview" :aria-label="t('common.imagePreview') + ' · ' + instanceName(s.instanceId) + ' · ' + clock(s.createdAt)" @click="openShot(s)">
+                  <img v-if="thumbs[s.id]" :src="thumbs[s.id]" alt="" loading="lazy" />
+                  <span v-else class="shot-skel" aria-hidden="true"></span>
+                </button>
                 <span class="shot-badge" :class="triggerClass(s.trigger)">
                   {{ triggerLabel(s.trigger) }}
                 </span>
@@ -1547,55 +1543,12 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
 }
 
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  min-height: 38px;
-  font-size: var(--fs-sm);
-  padding: 9px 18px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--border);
-  background: var(--panel);
-  backdrop-filter: blur(var(--glass-blur, 8px));
-  -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-  color: var(--text-2);
-  cursor: pointer;
-  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
-}
-.btn:hover:not(:disabled) {
-  background: var(--panel-hover);
-  border-color: var(--accent-35);
-  color: var(--text-1);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
-.btn.ic {
-  width: 38px;
-  height: 38px;
-  padding: 0 9px;
-}
-.btn.primary,
-.btn.hero-btn {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-.btn.primary:hover,
-.btn.hero-btn:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  color: #fff;
-}
-.btn.pending {
+.qx-btn.pending {
   border-color: var(--accent-40);
   background: var(--accent-soft);
   color: var(--accent);
 }
-.btn.pending.spin svg {
+.qx-btn.pending.spin svg {
   animation: spinY 1.1s linear infinite;
 }
 @keyframes spinY {
@@ -1987,6 +1940,17 @@ onBeforeUnmount(() => {
   gap: 7px;
   min-width: 0;
 }
+.shot-preview {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.shot-preview:focus-visible { outline: 2px solid var(--accent); outline-offset: -3px; }
+.shot-preview .shot-skel { display: block; }
 .shot-pic {
   position: relative;
   border-radius: var(--r-md);
@@ -2084,7 +2048,8 @@ onBeforeUnmount(() => {
   opacity: 0;
   transition: opacity 0.2s ease, background 0.2s ease;
 }
-.shot-pic:hover .shot-del {
+.shot-pic:hover .shot-del,
+.shot-pic:focus-within .shot-del {
   opacity: 1;
 }
 .shot-del:hover {

@@ -34,6 +34,8 @@ const agreedToTerms = ref(false);
 const runningSet = computed(() => new Set(running.value));
 
 interface LocalTunnel {
+  id: string;
+  running: boolean;
   name: string;
   protocol: string;
   local_port: number;
@@ -62,22 +64,24 @@ const protoOptions = [
 
 const logOpen = ref(false);
 const logName = ref("");
+const logRunId = ref("");
 const logText = ref("");
 const logEl = ref<HTMLElement | null>(null);
 let logTimer: ReturnType<typeof setInterval> | null = null;
 
 /// 读一次日志；有变化才更新并滚到底，避免无谓重渲染
 async function readLog(silent = false) {
-  const name = logName.value;
-  if (!name) return;
+  const runId = logRunId.value;
+  if (!runId || !logOpen.value) return;
   try {
-    const text = await api.frpLogs(name, 300);
+    const text = await api.frpLogs(runId, 300);
+    if (!logOpen.value || logRunId.value !== runId) return;
     if (text === logText.value) return;
     logText.value = text;
     await nextTick();
     if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
   } catch (e) {
-    if (!silent) logText.value = String(e);
+    if (!silent && logOpen.value && logRunId.value === runId) logText.value = String(e);
   }
 }
 
@@ -88,7 +92,8 @@ function stopLogPolling() {
   }
 }
 
-async function showLog(name: string) {
+async function showLog(runId: string, name: string) {
+  logRunId.value = runId;
   logName.value = name;
   logOpen.value = true;
   logText.value = t("frp.logLoading");
@@ -115,7 +120,7 @@ async function refresh() {
     const s = await api.frpStatus();
     loggedIn.value = s.loggedIn;
     user.value = s.user ?? null;
-    if (s.loggedIn) await Promise.all([loadTunnels(), loadLocal()]);
+    await Promise.all([s.loggedIn ? loadTunnels() : Promise.resolve(), loadLocal()]);
   } catch (e) {
     message.error(String(e));
   } finally {
@@ -179,10 +184,10 @@ async function start(tn: FrpTunnel) {
   try {
     const r = await api.frpStart(tn.id);
     await loadTunnels();
-    if (!running.value.includes(r.name)) {
+    if (!running.value.includes(r.runId)) {
       // 起来了又立刻退出：多半是端口不允许或 token 不对，直接引导看日志
       message.warning(t("frp.processExited"));
-      await showLog(r.name);
+      await showLog(r.runId, r.name);
       return;
     }
     message.success(t("frp.started", { name: r.name }));
@@ -191,11 +196,12 @@ async function start(tn: FrpTunnel) {
   }
 }
 
-async function stopName(name: string) {
+async function stopTunnel(runId: string) {
   try {
-    await api.frpStop(name);
+    await api.frpStop(runId);
     message.success(t("frp.stopped"));
-    await Promise.all([loadTunnels(), loadLocal()]);
+    if (runId.startsWith("local:")) await loadLocal();
+    else await loadTunnels();
   } catch (e) {
     message.error(String(e));
   }
@@ -207,7 +213,6 @@ async function logout() {
     loggedIn.value = false;
     user.value = null;
     tunnels.value = [];
-    localTunnels.value = [];
     running.value = [];
     message.success(t("frp.loggedOut"));
   } catch (e) {
@@ -217,6 +222,8 @@ async function logout() {
 
 function newLocal() {
   editing.value = {
+    id: "",
+    running: false,
     name: "",
     protocol: "tcp",
     local_port: 25565,
@@ -252,11 +259,11 @@ async function saveLocal() {
 
 async function startLocal(tn: LocalTunnel) {
   try {
-    await api.frpLocalStart(tn.name);
-    await Promise.all([loadTunnels(), loadLocal()]);
-    if (!running.value.includes(tn.name)) {
+    await api.frpLocalStart(tn.id);
+    await loadLocal();
+    if (!localTunnels.value.some((item) => item.id === tn.id && item.running)) {
       message.warning(t("frp.processExited"));
-      await showLog(tn.name);
+      await showLog(`local:${tn.id}`, tn.name);
       return;
     }
     message.success(t("frp.started", { name: tn.name }));
@@ -266,8 +273,12 @@ async function startLocal(tn: LocalTunnel) {
 }
 
 async function removeLocal(tn: LocalTunnel) {
-  await api.frpLocalDelete(tn.name);
-  await loadLocal();
+  try {
+    await api.frpLocalDelete(tn.id);
+    await loadLocal();
+  } catch (error) {
+    message.error(String(error));
+  }
 }
 
 function statusText(s: string): string {
@@ -297,7 +308,7 @@ onUnmounted(() => {
 <template>
   <div class="frp-root">
     <!-- 未登录：设备授权 -->
-    <section v-if="!loggedIn" class="frp-card">
+    <section v-if="!loggedIn && sub === 'panel'" class="frp-card">
       <header class="frp-card-head">
         <span class="qx-section-title frp-card-title"><IconGlobe /> {{ t("frp.brand") }}</span>
         <span class="qx-badge frp-status">{{ t("frp.notLoggedIn") }}</span>
@@ -378,16 +389,16 @@ onUnmounted(() => {
               <span class="frp-flow-remote">{{ remoteOf(tn) }}</span>
             </div>
             <div class="frp-tun-foot">
-              <span v-if="runningSet.has(tn.name)" class="frp-running">
+              <span v-if="runningSet.has(`panel:${tn.id}`)" class="frp-running">
                 <i></i> {{ t("frp.running") }}
               </span>
               <span v-else class="frp-idle">{{ t("frp.idle") }}</span>
               <span class="frp-spacer"></span>
-              <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link" @click="showLog(tn.name)">{{ t("frp.logs") }}</button>
+              <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link" @click="showLog(`panel:${tn.id}`, tn.name)">{{ t("frp.logs") }}</button>
               <button
-                v-if="runningSet.has(tn.name)"
+                v-if="runningSet.has(`panel:${tn.id}`)"
                 class="qx-btn qx-btn--sm qx-btn--danger"
-                @click="stopName(tn.name)"
+                @click="stopTunnel(`panel:${tn.id}`)"
               >
                 {{ t("frp.stop") }}
               </button>
@@ -463,7 +474,7 @@ onUnmounted(() => {
 
         <p v-if="!localTunnels.length" class="qx-empty frp-empty">{{ t("frp.localEmpty") }}</p>
         <div v-else class="qx-grid qx-grid--card">
-          <article v-for="tn in localTunnels" :key="tn.name" class="frp-tun">
+          <article v-for="tn in localTunnels" :key="tn.id" class="frp-tun">
             <div class="frp-tun-top">
               <span class="frp-tun-name">{{ tn.name }}</span>
               <span class="qx-badge frp-status">{{ tn.protocol.toUpperCase() }}</span>
@@ -474,20 +485,20 @@ onUnmounted(() => {
               <span class="frp-flow-remote">{{ tn.host }}:{{ tn.remote_port }}</span>
             </div>
             <div class="frp-tun-foot">
-              <span v-if="runningSet.has(tn.name)" class="frp-running">
+              <span v-if="tn.running" class="frp-running">
                 <i></i> {{ t("frp.running") }}
               </span>
               <span v-else class="frp-idle">{{ t("frp.idle") }}</span>
               <span class="frp-spacer"></span>
-              <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link" @click="showLog(tn.name)">{{ t("frp.logs") }}</button>
+              <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link" @click="showLog(`local:${tn.id}`, tn.name)">{{ t("frp.logs") }}</button>
               <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link" @click="editLocal(tn)">{{ t("frp.edit") }}</button>
               <button class="qx-btn qx-btn--xs qx-btn--ghost frp-link frp-link--danger" @click="removeLocal(tn)">
                 {{ t("frp.remove") }}
               </button>
               <button
-                v-if="runningSet.has(tn.name)"
+                v-if="tn.running"
                 class="qx-btn qx-btn--sm qx-btn--danger"
-                @click="stopName(tn.name)"
+                @click="stopTunnel(`local:${tn.id}`)"
               >
                 {{ t("frp.stop") }}
               </button>
@@ -512,7 +523,7 @@ onUnmounted(() => {
       <div class="frp-log-wrap">
         <pre ref="logEl" class="frp-log">{{ logText }}</pre>
         <div class="frp-log-ops">
-          <button class="qx-btn qx-btn--sm" @click="showLog(logName)">{{ t("frp.refresh") }}</button>
+          <button class="qx-btn qx-btn--sm" @click="readLog()">{{ t("frp.refresh") }}</button>
           <button class="qx-btn qx-btn--sm qx-btn--primary" @click="logOpen = false">{{ t("frp.close") }}</button>
         </div>
       </div>

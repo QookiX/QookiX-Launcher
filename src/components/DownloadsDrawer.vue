@@ -1,7 +1,13 @@
 <script setup lang="ts">
+import { staggeredCardDelay } from "../composables/staggeredCardDelay";
+import { vSegmented } from "../composables/vSegmented";
+import FloatingDrawer from "./FloatingDrawer.vue";
+import { useAccountsStore } from "../stores/accounts";
 import { computed, nextTick, watch, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
+import { NButton, useMessage } from "naive-ui";
+import { api } from "../api";
 import { useTasksStore, type TaskEntry } from "../stores/tasks";
 import { fmtBytes, fmtSpeed, fmtTimeMs as fmtTime } from "../utils/format";
 import { useInstancesStore } from "../stores/instances";
@@ -20,6 +26,7 @@ const { t } = useI18n();
 const tasks = useTasksStore();
 const instances = useInstancesStore();
 const router = useRouter();
+const message = useMessage();
 const expanded = ref<Set<number>>(new Set());
 const activeTab = ref<"active" | "finished">("active");
 const open = useDownloadsDrawerOpen();
@@ -85,7 +92,19 @@ function downloadPct(t: TaskEntry) {
 
 function statusText(task: TaskEntry) {
   if (task.finished) return task.ok === false ? t("downloads.status.failed") : t("downloads.status.done");
+  if (task.cancelRequested) return t("downloads.status.cancelling");
   return t("downloads.status.running");
+}
+
+async function cancelTask(task: TaskEntry) {
+  if (!task.cancellable || task.finished || task.cancelRequested) return;
+  task.cancelRequested = true;
+  try {
+    await api.cancelInstallTask(task.id);
+  } catch (error) {
+    task.cancelRequested = false;
+    message.error(String(error));
+  }
 }
 
 function toggle(t: TaskEntry) {
@@ -93,13 +112,6 @@ function toggle(t: TaskEntry) {
   if (next.has(t.id)) next.delete(t.id);
   else next.add(t.id);
   expanded.value = next;
-}
-
-// 任务卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：延迟由内联 style 下发。
-// 新任务出现时单张进场提示下载开始；切换 tab / 任务在活跃与已完成间移动时重播。
-function cardDelay(i: number): string {
-  const step = Math.min(0.045, 0.6 / Math.max(1, visibleTasks.value.length));
-  return `${(0.06 + i * step).toFixed(3)}s`;
 }
 
 // 整合包会自动创建新实例，不是用户选择的目标实例，所以不显示"目标实例"
@@ -138,28 +150,14 @@ watch(
 // 展开 / 收起动画（实现见 useHeightTransition.ts；gap 对应 .task-card 的 flex gap）
 const { onEnter: onExpandEnter, onLeave: onExpandLeave } = useHeightTransition({ gap: 10 });
 
-// Escape 关闭抽屉
-function onKeydown(e: KeyboardEvent) {
-  if (e.key === "Escape") closeDownloadsDrawer();
-}
-watch(open, (v) => {
-  if (v) window.addEventListener("keydown", onKeydown);
-  else window.removeEventListener("keydown", onKeydown);
+const accounts = useAccountsStore();
+watch(open, (show) => {
+  if (show) accounts.showManager = false;
 });
 </script>
 
 <template>
-  <Teleport to="body">
-    <!-- 半透明遮罩：点击关闭（浅淡不抢焦点，任务仍在后台跑） -->
-    <Transition name="dl-drawer-fade">
-      <div v-if="open" class="dl-mask" @click="closeDownloadsDrawer()"></div>
-    </Transition>
-
-    <!-- 右抽屉本体：悬浮岛样式（右侧留空 + 圆角 + 环绕投影 + 磨砂）。
-         ⚠ 滑入用 right（layout）而不是 transform：transform 会创建独立
-         合成层，抽屉的 backdrop-filter 磨砂在滑动期间采样不到背后内容。 -->
-    <Transition name="dl-drawer-slide">
-      <aside v-if="open" class="dl-drawer glass">
+  <FloatingDrawer :open="open" :label="t('nav.downloads')" wide @close="closeDownloadsDrawer">
         <header class="dl-head">
           <div class="dl-title">
             <IconDownload class="dl-title-icon" />
@@ -173,12 +171,12 @@ watch(open, (v) => {
           >
             <IconTrash />
           </button>
-          <button class="dl-close-btn" :title="t('titlebar.close')" @click="closeDownloadsDrawer()">
+          <button class="dl-close-btn" :aria-label="t('titlebar.close')" :title="t('titlebar.close')" data-drawer-close @click="closeDownloadsDrawer()">
             <IconClose />
           </button>
         </header>
 
-        <div ref="tabBox" class="tabs qx-seg qx-seg--sm">
+        <div ref="tabBox" v-segmented="{ label: t('nav.downloads'), panel: 'downloads-tab-panel' }" class="tabs qx-seg qx-seg--sm">
           <div class="qx-seg__indicator" :style="tabIndicatorStyle"></div>
           <button :class="{ active: activeTab === 'active' }" @click="activeTab = 'active'">
             {{ t('downloads.tab.active') }} <span v-if="activeTasks.length" class="tab-count">{{ activeTasks.length }}</span>
@@ -188,6 +186,7 @@ watch(open, (v) => {
           </button>
         </div>
 
+        <div id="downloads-tab-panel" class="downloads-tab-panel" role="tabpanel">
         <div v-if="!visibleTasks.length" class="qx-empty">
           <div class="empty-icon"><IconDownload /></div>
           <p>{{ activeTab === 'active' ? t('downloads.empty.noActive') : t('downloads.empty.noFinished') }}</p>
@@ -197,8 +196,8 @@ watch(open, (v) => {
           <div
             v-for="(task, i) in visibleTasks"
             :key="task.id"
-            class="task-card glass"
-            :style="{ animationDelay: cardDelay(i) }"
+            class="task-card glass qx-card-enter"
+            :style="{ animationDelay: staggeredCardDelay(i, visibleTasks.length) }"
           >
             <div class="task-top" @click="toggle(task)">
               <div class="task-main">
@@ -226,6 +225,10 @@ watch(open, (v) => {
                 </div>
               </div>
               <div class="task-side">
+                <NButton v-if="task.cancellable && !task.finished" size="tiny" secondary
+                  :disabled="task.cancelRequested" @click.stop="cancelTask(task)">
+                  {{ t("common.cancel") }}
+                </NButton>
                 <template v-if="task.activity === 'download' && !task.finished">
                   <div class="speed">{{ fmtSpeed(task.speed) }}</div>
                   <div v-if="task.fraction != null" class="stage">{{ Math.round(task.fraction * 100) }}%</div>
@@ -320,36 +323,13 @@ watch(open, (v) => {
             </Transition>
           </div>
         </div>
-      </aside>
-    </Transition>
-  </Teleport>
+        </div>
+  </FloatingDrawer>
 </template>
 
 <style scoped>
 /* —— 遮罩 —— */
-.dl-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  background: rgba(0, 0, 0, 0.18);
-}
-/* —— 抽屉本体 —— */
-.dl-drawer {
-  position: fixed;
-  top: 50px; /* 标题栏 40px + 10px 悬浮间距 */
-  bottom: 10px;
-  right: 10px;
-  width: 420px;
-  max-width: calc(100vw - 40px);
-  z-index: 95;
-  display: flex;
-  flex-direction: column;
-  padding: 14px 14px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-xl);
-  box-shadow: var(--layer-shadow);
-  overflow: hidden;
-}
+.downloads-tab-panel { display: flex; flex: 1; flex-direction: column; min-height: 0; }
 .dl-head {
   display: flex;
   align-items: center;
@@ -385,7 +365,8 @@ watch(open, (v) => {
   color: var(--text-3);
   font-size: var(--fs-base);
   cursor: pointer;
-  transition: all 0.12s;
+  transition: background var(--dur-xs) var(--ease-out),
+    color var(--dur-xs) var(--ease-out);
 }
 .dl-clear-btn:hover,
 .dl-close-btn:hover {
@@ -393,25 +374,6 @@ watch(open, (v) => {
   color: var(--text-1);
 }
 /* —— 遮罩淡入淡出 —— */
-.dl-drawer-fade-enter-active,
-.dl-drawer-fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.dl-drawer-fade-enter-from,
-.dl-drawer-fade-leave-to {
-  opacity: 0;
-}
-/* —— 抽屉滑入滑出（right 位移，layout 属性，磨砂全程有效） —— */
-.dl-drawer-slide-enter-active {
-  transition: right 0.26s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.dl-drawer-slide-leave-active {
-  transition: right 0.2s ease-in;
-}
-.dl-drawer-slide-enter-from,
-.dl-drawer-slide-leave-to {
-  right: -440px;
-}
 /* —— tabs：外观走全局 .qx-seg--sm，这里只留抽屉里的排布 —— */
 .tabs {
   align-self: flex-start;
@@ -446,19 +408,6 @@ watch(open, (v) => {
   flex-direction: column;
   gap: 10px;
   flex-shrink: 0;
-  /* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
-     未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
-  animation: dl-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
-}
-@keyframes dl-card-enter {
-  from {
-    transform: translateY(28px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
 }
 .task-top {
   display: flex;

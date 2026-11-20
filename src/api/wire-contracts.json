@@ -1,0 +1,47 @@
+{
+  "file": {
+    "rel": "options.txt",
+    "size": 5,
+    "modified": 100,
+    "content": "hello"
+  },
+  "session": {
+    "loggedIn": true,
+    "expiresAt": 200,
+    "user": {
+      "id": 3,
+      "username": "example",
+      "nickname": "Example",
+      "role": "user",
+      "status": "active",
+      "created_at": 100,
+      "email_verified": true
+    },
+    "share": null
+  },
+  "install": {
+    "taskId": 7,
+    "stage": "done",
+    "message": "failed",
+    "done": 0,
+    "total": 0,
+    "instanceId": "abc123",
+    "instanceName": "Example",
+    "source": "install",
+    "ok": false
+  },
+  "download": {
+    "taskId": 7,
+    "phase": "assets",
+    "done": 0,
+    "total": 1,
+    "current": "",
+    "ok": true,
+    "bytesDone": 5,
+    "bytesTotal": 9,
+    "verifiedBytes": 0,
+    "ts": 100,
+    "activeFiles": [{ "name": "example", "bytesDone": 5, "bytesTotal": 9 }]
+  },
+  "launch": {"taskId": 8, "instanceId": "abc123", "state": "running", "pid": 123, "code": null}
+}

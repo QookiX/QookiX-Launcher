@@ -153,7 +153,7 @@ onMounted(async () => {
           v-if="route.name === 'browse' && newsStore.active"
           class="tb-action"
           :disabled="newsStore.loading"
-          @click="newsStore.refreshSignal++"
+          @click="newsStore.load(true).catch((error) => message.error(String(error)))"
         >
           <IconRefresh class="tb-action-icon" />
           {{ newsStore.loading ? t("news.refreshing") : t("common.refresh") }}
@@ -171,7 +171,7 @@ onMounted(async () => {
            「账号/窗口控制」之间——右侧这一组是右锚定的，左边界面按钮怎么增减
            都不影响它的坐标（放进 tb-actions 里会被页面按钮顶来顶去）。 -->
       <button
-        v-if="tasks.gameRunning"
+        v-if="tasks.gameRunning || tasks.gamePreparing"
         class="tb-action danger tb-status-btn"
         :aria-label="t('sidebar.stopAll')"
         @click="stopAll"
@@ -218,6 +218,9 @@ onMounted(async () => {
 
 <style scoped>
 .titlebar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
   height: 40px;
   display: flex;
   align-items: center;

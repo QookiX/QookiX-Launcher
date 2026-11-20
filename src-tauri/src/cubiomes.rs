@@ -138,6 +138,21 @@ pub struct BiomeMapData {
     pub shade: Vec<u8>,
 }
 
+pub(crate) const MAX_TILE_SIDE: i32 = 512;
+pub(crate) const MAX_WORLD_COORD: i32 = 31_000_000;
+
+pub(crate) fn valid_world_coord(value: i32) -> bool {
+    (-MAX_WORLD_COORD..=MAX_WORLD_COORD).contains(&value)
+}
+
+pub(crate) fn valid_dimension(dim: i32) -> bool {
+    matches!(dim, -1..=1)
+}
+
+pub(crate) fn valid_tile_scale(scale: i32) -> bool {
+    matches!(scale, 1 | 4 | 16 | 64)
+}
+
 /// 批量生成 2D 生物群系地图（sy=1），并可选地附带山体阴影。
 /// biomes 布局为 out[z*sx + x]；阴影基于独立的 1:4 世界栅格，
 /// 因此地貌不会随显示缩放级别改变（只是采样更稀疏）。
@@ -160,12 +175,34 @@ pub fn gen_biome_map(
     kstep: i32,
     want_shade: bool,
 ) -> Result<BiomeMapData, String> {
-    if sx <= 0 || sz <= 0 {
-        return Err("地图尺寸必须为正".into());
+    if !(1..=MAX_TILE_SIDE).contains(&sx) || !(1..=MAX_TILE_SIDE).contains(&sz)
+        || !valid_dimension(dim) || !valid_tile_scale(scale)
+        || !valid_world_coord(x) || !valid_world_coord(z) || !(-2048..=2048).contains(&y)
+    {
+        return Err("瓦片的尺寸、维度、缩放或坐标超出限制".into());
     }
-    let mut out = vec![0u8; (sx as usize) * (sz as usize)];
+    let x_end = (i64::from(x) + i64::from(sx)) * i64::from(scale);
+    let z_end = (i64::from(z) + i64::from(sz)) * i64::from(scale);
+    let within_world = |v: i64| v.abs() <= i64::from(MAX_WORLD_COORD);
+    if ![i64::from(x) * i64::from(scale), i64::from(z) * i64::from(scale), x_end, z_end]
+        .into_iter().all(within_world)
+    {
+        return Err("瓦片超出可计算的世界范围".into());
+    }
+    let count = (sx as usize).checked_mul(sz as usize).ok_or("瓦片面积超过限制")?;
+    let mut out = vec![0u8; count];
     let slen = if want_shade && hs > 2 {
-        ((hs - 2) as usize) * ((hs - 2) as usize)
+        if !(3..=MAX_TILE_SIDE).contains(&hs)
+            || !(1..=32).contains(&hstep4) || !(1..=4).contains(&kstep)
+            || hs.checked_mul(kstep).is_none_or(|width| width > sx || width > sz)
+            || ![hx4, hz4].into_iter().all(|start| {
+                within_world(i64::from(start) * 4)
+                    && within_world((i64::from(start) + i64::from(hs - 1) * i64::from(hstep4)) * 4)
+            })
+        {
+            return Err("阴影采样范围超出限制".into());
+        }
+        ((hs - 2) as usize).checked_mul((hs - 2) as usize).ok_or("阴影面积超过限制")?
     } else {
         0
     };
@@ -271,6 +308,19 @@ pub fn parse_mc(ver: &str) -> Result<i32, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn biome_tiles_accept_normal_dimensions_and_reject_invalid_budgets() {
+        let normal = gen_biome_map(42, 28, 0, 4, -132, 80, -132, 264, 264, false, -132, -132, 1, 264, 1, false).unwrap();
+        assert_eq!(normal.biomes.len(), 264 * 264);
+        assert!(normal.shade.is_empty());
+        let oversized = gen_biome_map(42, 28, 0, 4, 0, 80, 0, MAX_TILE_SIDE + 1, 1, false, 0, 0, 1, 0, 1, false);
+        assert!(oversized.is_err());
+        let outside_world = gen_biome_map(42, 28, 0, 64, MAX_WORLD_COORD, 80, 0, 264, 264, false, 0, 0, 1, 0, 1, false);
+        assert!(outside_world.is_err());
+        let unexpected_scale = gen_biome_map(42, 28, 0, 2, 0, 80, 0, 264, 264, false, 0, 0, 1, 0, 1, false);
+        assert!(unexpected_scale.is_err());
+    }
 
     /// 滴水石洞穴 / 繁茂洞穴 / 深暗之域
     const CAVE_IDS: [i32; 3] = [174, 175, 183];

@@ -12,7 +12,7 @@
 // When the variable is unset the NSIS template falls back to the classic
 // (dark-styled) wizard, so building still works.
 import { spawnSync } from 'node:child_process'
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -102,42 +102,26 @@ if (existsSync(envLocal)) {
   }
 }
 
-// `sign_updaters` runs AFTER the installer bundles are produced and requires
-// the minisign private key matching plugins.updater.pubkey. CI supplies it via
-// TAURI_SIGNING_PRIVATE_KEY; a local build does not. Generating a fresh keypair
-// is NOT a workaround: already-shipped clients only trust the published public
-// key, so a new key's .sig would fail verification. Tauri's --no-sign skips
-// exactly this step (tauri-cli/src/bundle.rs::sign_updaters), leaving the full
-// NSIS/MSI installers intact. Authenticode signing below is unaffected - it is
-// done by sign-windows.ps1, not by the Tauri CLI.
+// The bundler signs Windows binaries before it packages and signs updater artifacts.
+if (isBuild && shouldSign()) {
+  const signCommand = {
+    cmd: 'powershell',
+    args: ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', signScript, '-Files', '%1'],
+  }
+  args.push('--config', JSON.stringify({ bundle: { windows: { signCommand } } }))
+}
+
 if (isBuild && !env.TAURI_SIGNING_PRIVATE_KEY && !args.includes('--no-sign')) {
   args.push('--no-sign')
   console.warn(
     '[run-tauri] WARNING: TAURI_SIGNING_PRIVATE_KEY is not set - skipping updater signature (.sig).\n' +
-      '            Installers are still built; only CI builds can be published as updater releases.',
+      '            Installers are still built; only builds with the trusted key can publish updater releases.',
   )
 }
 
-const result = spawnSync('tauri', args, {
-  stdio: 'inherit',
-  env,
-  shell: process.platform === 'win32',
-})
-
-// After a successful `tauri build`, sign the main binary, the NSIS installer(s)
-// and the MSI(s).
-if (result.status === 0 && isBuild && process.platform === 'win32') {
-  const releaseDir = path.join(cargoTargetDir(), 'release')
-  const mainExe = path.join(releaseDir, 'qookix-launcher.exe')
-  const nsisDir = path.join(releaseDir, 'bundle', 'nsis')
-  const installers = existsSync(nsisDir)
-    ? readdirSync(nsisDir).filter((f) => f.toLowerCase().endsWith('.exe')).map((f) => path.join(nsisDir, f))
-    : []
-  const msiDir = path.join(releaseDir, 'bundle', 'msi')
-  const msis = existsSync(msiDir)
-    ? readdirSync(msiDir).filter((f) => f.toLowerCase().endsWith('.msi')).map((f) => path.join(msiDir, f))
-    : []
-  signFiles([mainExe, ...installers, ...msis])
-}
+// Invoke the installed CLI directly so the structured Windows config and paths
+// with spaces are passed as single arguments without a shell quoting round trip.
+const tauriCli = path.join(projectRoot, 'node_modules', '@tauri-apps', 'cli', 'tauri.js')
+const result = spawnSync(process.execPath, [tauriCli, ...args], { stdio: 'inherit', env })
 
 process.exit(result.status ?? 1)

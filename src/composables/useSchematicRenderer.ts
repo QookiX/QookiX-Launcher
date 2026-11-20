@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { PointerLockControls } from "three/addons/controls/PointerLockControls.js";
 import type { MeshData } from "./schematicMeshWorker";
+import { prefersReducedMotion } from "./useMotionPreference";
 
 const CHUNK_VOLUME = 16 * 16 * 16;
 
@@ -273,7 +274,7 @@ export function createSchematicRenderer(canvas: HTMLCanvasElement): SchematicRen
       const startTime = performance.now();
       const animate = () => {
         if (disposed || !transitioning) return;
-        const t = Math.min((performance.now() - startTime) / duration, 1);
+        const t = prefersReducedMotion.value ? 1 : Math.min((performance.now() - startTime) / duration, 1);
         const e = easeInOutCubic(t);
         walkCamera.position.lerpVectors(startPos, endPos, e);
         walkCamera.quaternion.copy(startQuat);
@@ -283,7 +284,8 @@ export function createSchematicRenderer(canvas: HTMLCanvasElement): SchematicRen
         if (t < 1) requestAnimationFrame(animate);
         else { transitioning = false; viewMode = "walk"; walkControls.lock(); }
       };
-      requestAnimationFrame(animate);
+      if (prefersReducedMotion.value) animate();
+      else requestAnimationFrame(animate);
     } else {
       if (walkControls.isLocked) walkControls.unlock();
       const walkDir = new THREE.Vector3();
@@ -309,7 +311,7 @@ export function createSchematicRenderer(canvas: HTMLCanvasElement): SchematicRen
       const startTime = performance.now();
       const animate = () => {
         if (disposed || !transitioning) return;
-        const t = Math.min((performance.now() - startTime) / duration, 1);
+        const t = prefersReducedMotion.value ? 1 : Math.min((performance.now() - startTime) / duration, 1);
         const e = easeInOutCubic(t);
         orbitCamera.position.lerpVectors(startPos, endPos, e);
         orbitCamera.quaternion.slerpQuaternions(startQuat, endQuat, e);
@@ -331,7 +333,8 @@ export function createSchematicRenderer(canvas: HTMLCanvasElement): SchematicRen
           requestRender();
         }
       };
-      requestAnimationFrame(animate);
+      if (prefersReducedMotion.value) animate();
+      else requestAnimationFrame(animate);
     }
   }
 

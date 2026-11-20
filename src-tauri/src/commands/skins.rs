@@ -1,4 +1,4 @@
-use crate::accounts;
+use crate::{accounts, image_files};
 use crate::models::*;
 use crate::state::AppState;
 use tauri::State;
@@ -92,33 +92,27 @@ pub fn list_skins(state: State<AppState>) -> Result<Vec<SkinEntry>, String> {
 /// native file-picker) as a data URL.
 #[tauri::command]
 pub fn read_skin_data_url(state: State<AppState>, filename: String) -> Result<String, String> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
     let is_abs = std::path::Path::new(&filename).is_absolute();
     let path = if is_abs {
         std::path::PathBuf::from(&filename)
     } else {
-        if !crate::util::is_safe_filename(&filename) {
+        if !crate::fsutil::is_safe_filename(&filename) {
             return Err("非法文件名".into());
         }
         state.root.join("skins").join(&filename)
     };
-    if !path.is_file() {
-        return Err("皮肤文件不存在".into());
-    }
-    let bytes = std::fs::read(&path).map_err(|e| format!("读取皮肤文件失败: {e}"))?;
-    Ok(format!("data:image/png;base64,{}", STANDARD.encode(&bytes)))
+    let bytes = image_files::read_png(&path)?;
+    Ok(image_files::data_url(&bytes, "image/png"))
 }
 
 /// Save a skin PNG (base64 without data: prefix or with it) to the skins directory.
 #[tauri::command]
 pub fn save_skin_from_data(state: State<AppState>, name: String, data: String) -> Result<SkinEntry, String> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    let raw = data.trim();
-    let b64 = raw.strip_prefix("data:image/png;base64,").unwrap_or(raw);
-    let bytes = STANDARD.decode(b64).map_err(|e| format!("解析皮肤数据失败: {e}"))?;
-    if bytes.len() < 8 || &bytes[0..8] != b"\x89PNG\r\n\x1a\n" {
-        return Err("文件不是有效的 PNG".into());
-    }
+    let bytes = image_files::decode_png(&data)?;
+    save_skin(&state, &name, &bytes)
+}
+
+fn save_skin(state: &AppState, name: &str, bytes: &[u8]) -> Result<SkinEntry, String> {
     let safe_name: String = name
         .chars()
         .map(|c| match c {
@@ -129,11 +123,11 @@ pub fn save_skin_from_data(state: State<AppState>, name: String, data: String) -
     if safe_name.is_empty() {
         return Err("皮肤名称不能为空".into());
     }
-    let id = skin_id_from_bytes(&bytes);
+    let id = skin_id_from_bytes(bytes);
     let dir = state.root.join("skins");
     std::fs::create_dir_all(&dir).map_err(|e| format!("创建皮肤目录失败: {e}"))?;
     let path = dir.join(format!("{}.{}.png", safe_name, id));
-    std::fs::write(&path, &bytes).map_err(|e| format!("写入皮肤文件失败: {e}"))?;
+    crate::fsutil::atomic_write(&path, bytes).map_err(|e| format!("写入皮肤文件失败: {e}"))?;
     let meta = std::fs::metadata(&path).map_err(|e| format!("读取皮肤元信息失败: {e}"))?;
     Ok(SkinEntry {
         id,
@@ -155,52 +149,14 @@ pub async fn download_skin_from_url(
     name: String,
     url: String,
 ) -> Result<SkinEntry, String> {
-    let resp = state
-        .client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("下载皮肤失败: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("下载皮肤失败: HTTP {}", resp.status()));
-    }
-    let bytes = resp.bytes().await.map_err(|e| format!("读取皮肤数据失败: {e}"))?;
-    if bytes.len() < 8 || &bytes[0..8] != b"\x89PNG\r\n\x1a\n" {
-        return Err("下载的内容不是有效的 PNG".into());
-    }
-    let safe_name: String = name
-        .chars()
-        .map(|c| match c {
-            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' => c,
-            _ => '_',
-        })
-        .collect();
-    if safe_name.is_empty() {
-        return Err("皮肤名称不能为空".into());
-    }
-    let id = skin_id_from_bytes(&bytes);
-    let dir = state.root.join("skins");
-    std::fs::create_dir_all(&dir).map_err(|e| format!("创建皮肤目录失败: {e}"))?;
-    let path = dir.join(format!("{}.{}.png", safe_name, id));
-    std::fs::write(&path, &bytes).map_err(|e| format!("写入皮肤文件失败: {e}"))?;
-    let meta = std::fs::metadata(&path).map_err(|e| format!("读取皮肤元信息失败: {e}"))?;
-    Ok(SkinEntry {
-        id,
-        name: safe_name,
-        filename: path.file_name().and_then(|s| s.to_str()).unwrap_or("").to_string(),
-        path: path.to_string_lossy().to_string(),
-        size: meta.len(),
-        modified: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0),
-    })
+    let (bytes, _) = image_files::download(&state.client, &url, true).await?;
+    save_skin(&state, &name, &bytes)
 }
 
 /// Delete a skin file by filename in the skins directory.
 #[tauri::command]
 pub fn delete_skin(state: State<AppState>, filename: String) -> Result<(), String> {
-    if !crate::util::is_safe_filename(&filename) {
+    if !crate::fsutil::is_safe_filename(&filename) {
         return Err("非法文件名".into());
     }
     let path = state.root.join("skins").join(&filename);
@@ -219,54 +175,10 @@ pub struct PlayerSkinResult {
     pub cape_data_url: Option<String>,
 }
 
-/// 按文件头判定图片 MIME（`image/png` 之外的兜底）。
-///
-/// 以前这里的返回一律写成 `data:image/png;base64,...`：头像兜底源（minotar / crafatar）
-/// 有时直接回 JPEG，MIME 与内容不符时部分 WebView 会解码失败，表现就是「头像空白」。
-fn image_mime(bytes: &[u8], hinted: &str) -> String {
-    if bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-        return "image/png".into();
-    }
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        return "image/jpeg".into();
-    }
-    if bytes.starts_with(b"GIF8") {
-        return "image/gif".into();
-    }
-    if bytes.len() > 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
-        return "image/webp".into();
-    }
-    if hinted.starts_with("image/") {
-        return hinted.to_string();
-    }
-    "image/png".into()
-}
-
 #[tauri::command]
 pub async fn fetch_image_data_url(state: State<'_, AppState>, url: String) -> Result<String, String> {
-    let resp = state
-        .client
-        .get(&url)
-        .send()
-        .await
-        .map_err(|e| format!("请求失败: {e}"))?;
-    if !resp.status().is_success() {
-        return Err(format!("HTTP {}", resp.status()));
-    }
-    let hinted = resp
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .map(|s| s.split(';').next().unwrap_or("").trim().to_ascii_lowercase())
-        .unwrap_or_default();
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("读取失败: {e}"))?;
-    use base64::{engine::general_purpose::STANDARD, Engine};
-    let mime = image_mime(&bytes, &hinted);
-    let b64 = STANDARD.encode(&bytes);
-    Ok(format!("data:{mime};base64,{b64}"))
+    let (bytes, mime) = image_files::download(&state.client, &url, false).await?;
+    Ok(image_files::data_url(&bytes, mime))
 }
 
 #[tauri::command]
@@ -332,34 +244,15 @@ pub async fn fetch_player_skin(state: State<'_, AppState>, username: String) -> 
         }
     }
     let skin_url = skin_url.ok_or("该玩家未设置自定义皮肤")?;
-    let bytes = state
-        .client
-        .get(&skin_url)
-        .send()
-        .await
-        .map_err(|e| format!("下载皮肤图片失败: {e}"))?
-        .bytes()
-        .await
-        .map_err(|e| format!("读取皮肤图片失败: {e}"))?;
-
-    let cape_data_url = if let Some(cu) = cape_url {
-        match state.client.get(&cu).send().await {
-            Ok(resp) if resp.status().is_success() => {
-                match resp.bytes().await {
-                    Ok(cb) if cb.len() >= 8 && &cb[0..8] == b"\x89PNG\r\n\x1a\n" => {
-                        Some(format!("data:image/png;base64,{}", STANDARD.encode(&cb)))
-                    }
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
-    } else {
-        None
+    let (bytes, mime) = image_files::download(&state.client, &skin_url, true).await?;
+    let cape_data_url = match cape_url {
+        Some(url) => image_files::download(&state.client, &url, true).await.ok()
+            .map(|(data, mime)| image_files::data_url(&data, mime)),
+        None => None,
     };
 
     Ok(PlayerSkinResult {
-        data_url: format!("data:image/png;base64,{}", STANDARD.encode(&bytes)),
+        data_url: image_files::data_url(&bytes, mime),
         model: skin_model,
         cape_data_url,
     })
@@ -379,7 +272,6 @@ pub async fn fetch_player_capes(
     state: State<'_, AppState>,
     account_uuid: String,
 ) -> Result<Vec<CapeInfo>, String> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
     let accounts = accounts::load_accounts(&state);
     let account = accounts
         .iter()
@@ -433,18 +325,12 @@ pub async fn fetch_player_capes(
             Some(u) => u.to_string(),
             None => continue,
         };
-        let bytes = match state.client.get(&url).send().await {
-            Ok(r) if r.status().is_success() => match r.bytes().await {
-                Ok(b) if b.len() >= 8 && &b[0..8] == b"\x89PNG\r\n\x1a\n" => b,
-                _ => continue,
-            },
-            _ => continue,
-        };
+        let Ok((bytes, mime)) = image_files::download(&state.client, &url, true).await else { continue };
         result.push(CapeInfo {
             id,
             name,
             active,
-            data_url: format!("data:image/png;base64,{}", STANDARD.encode(&bytes)),
+            data_url: image_files::data_url(&bytes, mime),
         });
     }
     Ok(result)
@@ -510,7 +396,7 @@ pub async fn apply_skin_to_account(
     skin_data: String,
     variant: String,
 ) -> Result<(), String> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    let bytes = image_files::decode_png(&skin_data)?;
     let accounts = accounts::load_accounts(&state);
     let account = accounts
         .iter()
@@ -527,16 +413,6 @@ pub async fn apply_skin_to_account(
         } => msa_access_token.clone(),
         _ => return Err("账号类型错误".into()),
     };
-    let raw = skin_data.trim();
-    let b64 = raw
-        .strip_prefix("data:image/png;base64,")
-        .unwrap_or(raw);
-    let bytes = STANDARD
-        .decode(b64)
-        .map_err(|e| format!("解析皮肤数据失败: {e}"))?;
-    if bytes.len() < 8 || &bytes[0..8] != b"\x89PNG\r\n\x1a\n" {
-        return Err("文件不是有效的 PNG".into());
-    }
     let v = if variant == "slim" { "slim" } else { "classic" };
     let file_part = reqwest::multipart::Part::bytes(bytes)
         .file_name("skin.png")
@@ -573,18 +449,12 @@ pub fn apply_skin_offline(
     variant: String,
     uuid: String,
 ) -> Result<(), String> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
-
-    let raw = skin_data.trim();
-    let b64 = raw.strip_prefix("data:image/png;base64,").unwrap_or(raw);
-    let bytes = STANDARD.decode(b64).map_err(|e| format!("解析皮肤数据失败: {e}"))?;
-    if bytes.len() < 8 || &bytes[0..8] != b"\x89PNG\r\n\x1a\n" {
-        return Err("文件不是有效的 PNG".into());
-    }
+    crate::fsutil::validate_id(&uuid, "账号")?;
+    let bytes = image_files::decode_png(&skin_data)?;
 
     let skin_dir = state.root.join("skins").join("offline");
     std::fs::create_dir_all(&skin_dir).map_err(|e| format!("创建皮肤目录失败: {e}"))?;
-    std::fs::write(skin_dir.join(format!("{uuid}.png")), &bytes)
+    crate::fsutil::atomic_write(&skin_dir.join(format!("{uuid}.png")), &bytes)
         .map_err(|e| format!("保存皮肤失败: {e}"))?;
 
     let variant = if variant == "slim" { "slim" } else { "classic" };
@@ -603,15 +473,15 @@ pub fn get_offline_skin(
     state: State<AppState>,
     uuid: String,
 ) -> Result<Option<serde_json::Value>, String> {
-    use base64::{engine::general_purpose::STANDARD, Engine};
+    crate::fsutil::validate_id(&uuid, "账号")?;
 
     let skin_dir = state.root.join("skins").join("offline");
     let png_path = skin_dir.join(format!("{uuid}.png"));
     if !png_path.is_file() {
         return Ok(None);
     }
-    let bytes = std::fs::read(&png_path).map_err(|e| format!("读取皮肤失败: {e}"))?;
-    let src = format!("data:image/png;base64,{}", STANDARD.encode(&bytes));
+    let bytes = image_files::read_png(&png_path)?;
+    let src = image_files::data_url(&bytes, "image/png");
 
     // `None` when no meta file exists yet → frontend falls back to auto-detection.
     let variant = std::fs::read_to_string(skin_dir.join(format!("{uuid}.json")))

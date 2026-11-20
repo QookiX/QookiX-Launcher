@@ -1,3 +1,5 @@
+import { prefersReducedMotion } from "./useMotionPreference";
+
 /**
  * 展开 / 收起的高度过渡（`<Transition :css="false">` 的 JS 钩子），下载任务卡与云存档条目共用。
  * 结构：外层管高度 + overflow:hidden，内层放内容——直接量一个 height 正被改写的元素量不准。
@@ -33,7 +35,7 @@ export function useHeightTransition(options: HeightTransitionOptions = {}) {
   }
 
   /** 等 height 真正跑完；定时器只作兜底，不作正常结束信号 */
-  function whenHeightDone(el: AnimEl, done: () => void, after?: () => void) {
+  function whenHeightDone(el: AnimEl, done: () => void, clean: () => void) {
     let settled = false;
     const finish = () => {
       if (settled) return;
@@ -41,7 +43,7 @@ export function useHeightTransition(options: HeightTransitionOptions = {}) {
       el.removeEventListener("transitionend", onEnd);
       clearTimeout(timer);
       el._htCancel = undefined;
-      after?.();
+      clean();
       done();
     };
     // 子元素也会冒泡出 transitionend，认准 target 是自己 + 属性是 height
@@ -57,6 +59,7 @@ export function useHeightTransition(options: HeightTransitionOptions = {}) {
       el.removeEventListener("transitionend", onEnd);
       clearTimeout(timer);
       el._htCancel = undefined;
+      clean();
     };
     el.addEventListener("transitionend", onEnd);
   }
@@ -64,6 +67,7 @@ export function useHeightTransition(options: HeightTransitionOptions = {}) {
   function onEnter(el: Element, done: () => void) {
     const e = el as AnimEl;
     e._htCancel?.();
+    if (prefersReducedMotion.value) { done(); return; }
 
     e.style.transition = "none";
     e.style.overflow = "hidden";
@@ -102,6 +106,7 @@ export function useHeightTransition(options: HeightTransitionOptions = {}) {
   function onLeave(el: Element, done: () => void) {
     const e = el as AnimEl;
     e._htCancel?.();
+    if (prefersReducedMotion.value) { done(); return; }
 
     e.style.transition = "none";
     e.style.overflow = "hidden";

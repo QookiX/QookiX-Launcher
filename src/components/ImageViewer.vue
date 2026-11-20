@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import MediaDialog from "./MediaDialog.vue";
 /**
  * 标准图片查看器（内容详情页图库、投影库图集等通用场景）。
  *
@@ -11,7 +12,7 @@
  * 用法：
  *   <ImageViewer v-model:open="open" v-model:index="index" :images="urls" :titles="titles" />
  */
-import { computed, onBeforeUnmount, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import {
   IconChevronLeft,
@@ -180,10 +181,7 @@ function onBackdrop() {
 
 function onKey(e: KeyboardEvent) {
   if (!props.open) return;
-  if (e.key === "Escape") {
-    e.preventDefault();
-    close();
-  } else if (e.key === "ArrowLeft") {
+  if (e.key === "ArrowLeft") {
     e.preventDefault();
     step(-1);
   } else if (e.key === "ArrowRight") {
@@ -192,39 +190,16 @@ function onKey(e: KeyboardEvent) {
   }
 }
 
-/** 锁住页面滚动（遮罩内部不需要滚动） */
-function lockScroll(locked: boolean) {
-  const el = document.getElementById("app-content");
-  if (el) el.style.overflow = locked ? "hidden" : "";
-}
-
-watch(
-  () => props.open,
-  (open) => {
-    if (open) {
-      window.addEventListener("keydown", onKey);
-      lockScroll(true);
-    } else {
-      window.removeEventListener("keydown", onKey);
-      lockScroll(false);
-      resetView();
-    }
-  }
-);
+watch(() => props.open, (open) => { if (!open) resetView(); });
 
 // 换图时回到适应窗口，别继承上一张的缩放
 watch(current, () => resetView());
 
-onBeforeUnmount(() => {
-  window.removeEventListener("keydown", onKey);
-  lockScroll(false);
-});
 </script>
 
 <template>
-  <Teleport to="body">
-    <transition name="iv-fade">
-      <div v-if="open" class="iv" @click.self="onBackdrop">
+  <MediaDialog :open="open" :label="title || t('common.imagePreview')" @close="close" @keydown="onKey">
+    <div class="iv" @click.self="onBackdrop">
         <header class="iv-bar">
           <span v-if="title" class="iv-title" :title="title">{{ title }}</span>
           <button class="iv-icon" :title="t('common.close')" :aria-label="t('common.close')" @click="close">
@@ -314,30 +289,21 @@ onBeforeUnmount(() => {
             </button>
           </div>
         </footer>
-      </div>
-    </transition>
-  </Teleport>
+    </div>
+  </MediaDialog>
 </template>
 
 <style scoped>
 .iv {
-  position: fixed;
-  inset: 0;
-  z-index: 3000;
+  width: 100%;
+  height: 100%;
+  position: relative;
   display: flex;
   flex-direction: column;
   background: rgba(0, 0, 0, 0.92);
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
   user-select: none;
-}
-.iv-fade-enter-active,
-.iv-fade-leave-active {
-  transition: opacity 0.18s ease;
-}
-.iv-fade-enter-from,
-.iv-fade-leave-to {
-  opacity: 0;
 }
 
 /* —— 顶部条 —— */

@@ -8,11 +8,8 @@ export const useInstancesStore = defineStore("instances", {
     instances: [] as Instance[],
     groups: [] as InstanceGroup[],
     loading: false,
-    installingId: null as string | null,
-    launchingId: null as string | null,
-    installStage: "",
-    installDone: 0,
-    installTotal: 0,
+    scanWarnings: [] as string[],
+    scanError: "",
     /** 最近一次成功拉取的时间戳，用于短 TTL 内跳过重复请求 */
     lastLoadedAt: 0,
   }),
@@ -32,15 +29,20 @@ export const useInstancesStore = defineStore("instances", {
       state.instances.filter((i) => i.group === groupId),
   },
   actions: {
+    async readIndex() {
+      const [list, groups] = await Promise.all([api.listInstances(), api.listGroups()]);
+      this.instances = list.items;
+      this.scanWarnings = list.warnings;
+      this.scanError = "";
+      this.groups = groups;
+      this.lastLoadedAt = Date.now();
+    },
     /** 后台静默刷新（不改动 loading），失败保留旧数据 */
     async refresh() {
       try {
-        const [list, groups] = await Promise.all([api.listInstances(), api.listGroups()]);
-        this.instances = list;
-        this.groups = groups;
-        this.lastLoadedAt = Date.now();
-      } catch {
-        /* 后台刷新失败保留旧数据 */
+        await this.readIndex();
+      } catch (error) {
+        this.scanError = String(error);
       }
     },
     /**
@@ -59,10 +61,10 @@ export const useInstancesStore = defineStore("instances", {
       }
       this.loading = true;
       try {
-        const [list, groups] = await Promise.all([api.listInstances(), api.listGroups()]);
-        this.instances = list;
-        this.groups = groups;
-        this.lastLoadedAt = Date.now();
+        await this.readIndex();
+      } catch (error) {
+        this.scanError = String(error);
+        throw error;
       } finally {
         this.loading = false;
       }
@@ -119,23 +121,10 @@ export const useInstancesStore = defineStore("instances", {
       await this.load(true);
     },
     async installGame(id: string) {
-      this.installingId = id;
-      this.installStage = "准备中…";
-      this.installDone = 0;
-      this.installTotal = 0;
-      try {
-        await api.installGame(id);
-        await this.load(true);
-      } finally {
-        this.installingId = null;
-      }
-    },
-    cancelInstall() {
-      api.cancelInstall();
-      this.installingId = null;
+      await api.installGame(id);
+      await this.load(true);
     },
     async launch(id: string, world?: string, server?: string) {
-      this.launchingId = id;
       try {
         const res = await api.launchInstance(id, world, server);
         return res;
@@ -146,8 +135,6 @@ export const useInstancesStore = defineStore("instances", {
           useAccountsStore().showManager = true;
         }
         throw e;
-      } finally {
-        this.launchingId = null;
       }
     },
     async stop() {

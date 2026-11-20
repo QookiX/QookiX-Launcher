@@ -76,14 +76,14 @@ export const useServersStore = defineStore("servers", {
     },
     async start(id: string): Promise<number> {
       const { pid } = await api.startHostedServer(id);
-      this.runningIds = { ...this.runningIds, [id]: true };
+      this.setRunning(id, await api.isHostedServerRunning(id));
       const idx = this.servers.findIndex((s) => s.id === id);
       if (idx >= 0) this.servers[idx] = { ...this.servers[idx], last_started: Date.now() };
       return pid;
     },
     async stop(id: string) {
       await api.stopHostedServer(id);
-      this.runningIds = { ...this.runningIds, [id]: false };
+      this.setRunning(id, await api.isHostedServerRunning(id));
     },
     setRunning(id: string, running: boolean) {
       this.runningIds = { ...this.runningIds, [id]: running };

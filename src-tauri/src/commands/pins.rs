@@ -6,12 +6,12 @@ use tauri::State;
 
 /// 读取全部固定项（首页与侧边栏各自独立存储）。
 #[tauri::command]
-pub fn get_pins(state: State<AppState>) -> Vec<crate::models::PinItem> {
-    crate::pins::load_pins(&state.root)
+pub fn get_pins(state: State<AppState>) -> Result<Vec<crate::models::PinItem>, String> {
+    crate::pins::load_pins(&state)
 }
 
-/// 覆盖写入全部固定项到 `pins.json`。
+/// 在数据库事务内替换全部固定项。
 #[tauri::command]
 pub fn set_pins(state: State<AppState>, items: Vec<crate::models::PinItem>) -> Result<(), String> {
-    crate::pins::save_pins(&state.root, &items)
+    crate::pins::save_pins(&state, &items)
 }

@@ -58,9 +58,9 @@ function resetVars() {
 }
 
 /** 只持久化用户变量，内置占位符不落盘 */
-function persistVars() {
+function persistVars(values: HomeVars) {
   const out: HomeVars = {};
-  for (const [key, value] of Object.entries(vars)) {
+  for (const [key, value] of Object.entries(values)) {
     if (!BUILTIN_KEYS.has(key)) out[key] = value;
   }
   saveUserVars(out);
@@ -169,8 +169,13 @@ async function runOne(action: HomeAction) {
       return;
     case "set-var": {
       if (!action.name) return;
-      vars[action.name] = interp(action.value ?? "");
-      persistVars();
+      const value = interp(action.value ?? "");
+      try {
+        persistVars({ ...vars, [action.name]: value });
+        vars[action.name] = value;
+      } catch (error) {
+        message.error(String(error));
+      }
       return;
     }
     case "reload":

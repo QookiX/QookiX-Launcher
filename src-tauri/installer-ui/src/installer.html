@@ -889,7 +889,11 @@
 					retry: 'Retry',
 					finish: 'Finish',
 					launch: 'Launch QookiX Launcher',
+					retryLaunch: 'Retry launch',
 					absolutePath: 'Choose an absolute Windows path.',
+					invalidDirectory: 'Choose a directory that Windows can resolve.',
+					insideInstall: 'Choose separate folders for installation and data.',
+					unwritableData: 'Choose a data folder your Windows account can write to.',
 					installFailed: 'Installation failed',
 					installFailedDetail:
 						'The installation core returned an error. Check that QookiX Launcher is closed, then retry.',
@@ -941,7 +945,11 @@
 					retry: '重试',
 					finish: '完成',
 					launch: '启动 QookiX Launcher',
+					retryLaunch: '重试启动',
 					absolutePath: '请选择有效的 Windows 绝对路径。',
+					invalidDirectory: '请选择 Windows 可以访问的目录。',
+					insideInstall: '安装目录和数据目录需要分开，不能互相包含。',
+					unwritableData: '请选择当前 Windows 账号可以写入的数据目录。',
 					installFailed: '安装失败',
 					installFailedDetail:
 						'安装核心返回了错误。请确认 QookiX Launcher 已关闭，然后重试。',
@@ -951,7 +959,7 @@
 
 			const language = boot.language === 'zhCn' ? 'zhCn' : 'en'
 			const t = copy[language]
-			const state = { screen: 'welcome', progress: 4, failed: false, launchFailed: false }
+			const state = { screen: 'welcome', progress: 4, failed: false, launchFailed: false, finishing: false }
 			const screens = ['welcome', 'configure', 'installing', 'complete']
 			const $ = (selector) => document.querySelector(selector)
 			const post = (payload) => window.ipc.postMessage(JSON.stringify(payload))
@@ -1028,7 +1036,10 @@
 					note.classList.remove('launch-failed')
 				} else if (state.screen === 'complete') {
 					primary.classList.remove('hidden')
-					secondary.classList.add('hidden')
+					secondary.classList.toggle('hidden', !state.launchFailed)
+					secondary.textContent = t.retryLaunch
+					primary.disabled = state.finishing
+					secondary.disabled = state.finishing
 					$('#primary-label').textContent = state.launchFailed ? t.finish : $('#launch-after').checked ? t.launch : t.finish
 					note.textContent = state.launchFailed ? t.footerLaunchFailed : t.footerComplete
 					note.classList.toggle('launch-failed', state.launchFailed)
@@ -1041,6 +1052,7 @@
 				$('#launch-error').classList.remove('visible')
 				state.failed = false
 				state.launchFailed = false
+				state.finishing = false
 				post({
 					command: 'install',
 					installDir: $('#install-dir').value.trim(),
@@ -1091,16 +1103,24 @@
 			)
 			$('#launch-after').addEventListener('change', renderFooter)
 
+			function finish(launch) {
+				if (state.finishing) return
+				state.finishing = true
+				renderFooter()
+				post({ command: 'finish', launch })
+			}
+
 			$('#primary-action').addEventListener('click', () => {
 				if (state.screen === 'welcome') setScreen('configure')
 				else if (state.screen === 'configure' || (state.screen === 'installing' && state.failed))
 					install()
 				else if (state.screen === 'complete')
-					post({ command: 'finish', launch: $('#launch-after').checked })
+					finish(!state.launchFailed && $('#launch-after').checked)
 			})
 			$('#secondary-action').addEventListener('click', () => {
 				if (state.screen === 'configure') setScreen('welcome')
 				else if (state.screen === 'installing' && state.failed) setScreen('configure')
+				else if (state.screen === 'complete' && state.launchFailed) finish(true)
 			})
 
 			window.qookixInstaller = {
@@ -1112,8 +1132,8 @@
 						$('#field-error').textContent = t[message.code] || t.absolutePath
 						$(`#${message.field}-dir`).focus()
 					} else if (message.type === 'installStarted') {
-						$('#install-summary').textContent = $('#install-dir').value
-						$('#resource-summary').textContent = $('#resource-dir').value
+						$('#install-summary').textContent = message.installDir || $('#install-dir').value
+						$('#resource-summary').textContent = message.resourceDir || $('#resource-dir').value
 						$('#resource-summary-row').classList.toggle('hidden', !boot.freshInstall)
 						state.progress = 0
 						setProgress(4)
@@ -1124,6 +1144,7 @@
 						setProgress(100)
 						setScreen('complete')
 					} else if (message.type === 'launchFailed') {
+						state.finishing = false
 						state.launchFailed = true
 						setProgress(100)
 						$('#launch-error').textContent = t.launchFailed
@@ -1132,8 +1153,9 @@
 					} else if (message.type === 'installFailed') {
 						state.failed = true
 						const suffix = message.exitCode == null ? '' : ` (${message.exitCode})`
+						const detail = typeof message.message === 'string' ? message.message.trim() : ''
 						$('#install-error').textContent =
-							`${t.installFailed}${suffix}. ${t.installFailedDetail}`
+							`${t.installFailed}${suffix}. ${detail || t.installFailedDetail}`
 						$('#install-error').classList.add('visible')
 						setScreen('installing')
 					}

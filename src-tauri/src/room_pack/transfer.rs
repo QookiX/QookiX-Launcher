@@ -7,22 +7,28 @@
 //! 客户端按块追加到临时文件，断了可以从已有长度继续。
 
 use std::collections::HashMap;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{Read, SeekFrom};
+use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::{
-    extract::{Path as AxPath, Query, State},
+    extract::{ConnectInfo, Path as AxPath, Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::get,
     Router,
 };
+use futures_util::StreamExt;
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use super::PackFile;
 
 /// 一次最多返回多少字节（客户端也按这个量级分片）
 const MAX_SLICE: u64 = 4 * 1024 * 1024;
+const MAX_FILE: u64 = 2 * 1024 * 1024 * 1024;
+const SLICE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 清单里的 kind → 实例目录下的子目录
 pub fn kind_dir(kind: &str) -> Option<&'static str> {
@@ -40,8 +46,8 @@ struct ServeState {
     token: String,
     /// key = "kind/name"，只有登记过的才服务
     files: Arc<HashMap<String, PackFile>>,
-    /// 累计 token 失败次数：超过上限直接停止服务，挡住爆破
-    fails: Arc<std::sync::atomic::AtomicUsize>,
+    fails: Arc<Mutex<HashMap<IpAddr, FailureWindow>>>,
+    streams: Arc<tokio::sync::Semaphore>,
 }
 
 /// 定长比较，避免「按字节提前返回」泄露 token 前缀
@@ -57,8 +63,27 @@ fn ct_eq(a: &str, b: &str) -> bool {
     diff == 0
 }
 
-/// token 爆破上限：超过就拒绝一切请求（会话级，重启服务才恢复）
 const MAX_TOKEN_FAILS: usize = 20;
+const FAILURE_WINDOW: Duration = Duration::from_secs(60);
+const MAX_FAILURE_PEERS: usize = 1024;
+
+struct FailureWindow {
+    since: Instant,
+    count: usize,
+}
+
+fn record_failure(fails: &mut HashMap<IpAddr, FailureWindow>, peer: IpAddr, now: Instant) -> StatusCode {
+    fails.retain(|_, window| now.duration_since(window.since) < FAILURE_WINDOW);
+    if !fails.contains_key(&peer) && fails.len() >= MAX_FAILURE_PEERS {
+        return StatusCode::TOO_MANY_REQUESTS;
+    }
+    let window = fails.entry(peer).or_insert(FailureWindow { since: now, count: 0 });
+    if window.count >= MAX_TOKEN_FAILS {
+        return StatusCode::TOO_MANY_REQUESTS;
+    }
+    window.count += 1;
+    StatusCode::FORBIDDEN
+}
 
 fn err(status: StatusCode, msg: &str) -> Response {
     (status, msg.to_string()).into_response()
@@ -70,34 +95,31 @@ fn err(status: StatusCode, msg: &str) -> Response {
 /// 所以中继模式下客户端一律用 header，query 只为兼容旧调用保留。
 fn check_auth(
     st: &ServeState,
+    peer: IpAddr,
     q: &HashMap<String, String>,
     headers: &HeaderMap,
 ) -> Result<(), Response> {
-    use std::sync::atomic::Ordering;
-    if st.fails.load(Ordering::Relaxed) >= MAX_TOKEN_FAILS {
-        return Err(err(StatusCode::TOO_MANY_REQUESTS, "too many attempts"));
-    }
     let from_header = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(str::trim);
     let provided = from_header.or_else(|| q.get("token").map(String::as_str));
-    match provided {
-        Some(t) if ct_eq(t, &st.token) => Ok(()),
-        _ => {
-            st.fails.fetch_add(1, Ordering::Relaxed);
-            Err(err(StatusCode::FORBIDDEN, "bad token"))
-        }
+    if provided.is_some_and(|token| ct_eq(token, &st.token)) {
+        return Ok(());
     }
+    let mut fails = st.fails.lock().unwrap_or_else(|error| error.into_inner());
+    let status = record_failure(&mut fails, peer, Instant::now());
+    Err(err(status, if status == StatusCode::FORBIDDEN { "bad token" } else { "too many attempts" }))
 }
 
 async fn handle_manifest(
     State(st): State<ServeState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(r) = check_auth(&st, &q, &headers) {
+    if let Err(r) = check_auth(&st, peer.ip(), &q, &headers) {
         return r;
     }
     let list: Vec<&PackFile> = st.files.values().collect();
@@ -109,11 +131,12 @@ async fn handle_manifest(
 
 async fn handle_file(
     State(st): State<ServeState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
     AxPath((kind, name)): AxPath<(String, String)>,
     Query(q): Query<HashMap<String, String>>,
     headers: HeaderMap,
 ) -> Response {
-    if let Err(r) = check_auth(&st, &q, &headers) {
+    if let Err(r) = check_auth(&st, peer.ip(), &q, &headers) {
         return r;
     }
     let key = format!("{kind}/{name}");
@@ -125,57 +148,67 @@ async fn handle_file(
         return err(StatusCode::NOT_FOUND, "bad kind");
     };
     // 清单里的 name 是纯文件名（生成时来自 read_dir），这里再挡一次路径穿越
-    if name.contains('/') || name.contains('\\') || name.contains("..") {
+    if !crate::fsutil::is_portable_filename(&name) {
         return err(StatusCode::BAD_REQUEST, "bad name");
     }
-    let path = st.base.join(sub).join(&name);
-
     let total = entry.size;
-    if total == 0 {
-        return (StatusCode::OK, Vec::<u8>::new()).into_response();
+    if total > MAX_FILE {
+        return err(StatusCode::PAYLOAD_TOO_LARGE, "file too large");
     }
-    // 解析 Range: bytes=a-b；没写就从头给一片
-    let (mut start, mut end) = (0u64, total.saturating_sub(1).min(MAX_SLICE - 1));
-    if let Some(raw) = headers.get(header::RANGE).and_then(|v| v.to_str().ok()) {
-        if let Some(rest) = raw.strip_prefix("bytes=") {
-            let spec = rest.split(',').next().unwrap_or("");
-            let mut parts = spec.splitn(2, '-');
-            let a = parts.next().unwrap_or("").trim();
-            let b = parts.next().unwrap_or("").trim();
-            if let Ok(v) = a.parse::<u64>() {
-                start = v;
-            }
-            if let Ok(v) = b.parse::<u64>() {
-                end = v.min(total.saturating_sub(1));
-            } else {
-                end = (start + MAX_SLICE - 1).min(total.saturating_sub(1));
-            }
-        }
-    }
-    if start > end || start >= total {
-        return err(StatusCode::RANGE_NOT_SATISFIABLE, "bad range");
-    }
-    let len = (end - start + 1) as usize;
-
-    let mut buf = vec![0u8; len];
-    let read = (|| -> std::io::Result<usize> {
-        let mut f = std::fs::File::open(&path)?;
-        f.seek(SeekFrom::Start(start))?;
-        f.read(&mut buf)
-    })();
-    let n = match read {
-        Ok(n) => n,
-        Err(_) => return err(StatusCode::INTERNAL_SERVER_ERROR, "read"),
+    let value = headers.get(header::RANGE).map(|value| value.to_str().unwrap_or(""));
+    let Some((start, end)) = bounded_range(value, total) else {
+        return (StatusCode::RANGE_NOT_SATISFIABLE, [(header::CONTENT_RANGE, format!("bytes */{total}"))]).into_response();
     };
-    buf.truncate(n);
-
-    let mut resp = (StatusCode::PARTIAL_CONTENT, buf).into_response();
-    let h = resp.headers_mut();
-    if let Ok(v) = format!("bytes {start}-{}/{total}", start + n as u64 - 1).parse() {
-        h.insert(header::CONTENT_RANGE, v);
+    let Ok(permit) = st.streams.clone().try_acquire_owned() else {
+        return err(StatusCode::TOO_MANY_REQUESTS, "too many active transfers");
+    };
+    let relative = format!("{sub}/{name}");
+    let Ok(path) = crate::fsutil::resolve_in_dir(&st.base, &relative, "房间文件") else {
+        return err(StatusCode::NOT_FOUND, "not in instance");
+    };
+    let metadata = tokio::fs::symlink_metadata(st.base.join(&relative)).await;
+    if !metadata.is_ok_and(|m| m.is_file() && !crate::fsutil::is_link_or_reparse_point(&m) && m.len() == total) {
+        return err(StatusCode::CONFLICT, "file changed since manifest");
     }
-    h.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-    resp
+    let Ok(mut file) = tokio::fs::File::open(path).await else {
+        return err(StatusCode::NOT_FOUND, "file missing");
+    };
+    if file.seek(SeekFrom::Start(start)).await.is_err() {
+        return err(StatusCode::INTERNAL_SERVER_ERROR, "read");
+    }
+    let length = end - start + 1;
+    let stream = futures_util::stream::try_unfold((file, length, permit), |(mut file, remaining, permit)| async move {
+        if remaining == 0 {
+            return Ok::<_, std::io::Error>(None);
+        }
+        let mut chunk = vec![0; remaining.min(64 * 1024) as usize];
+        file.read_exact(&mut chunk).await?;
+        let remaining = remaining - chunk.len() as u64;
+        Ok(Some((bytes::Bytes::from(chunk), (file, remaining, permit))))
+    });
+    (
+        StatusCode::PARTIAL_CONTENT,
+        [
+            (header::CONTENT_RANGE, format!("bytes {start}-{end}/{total}")),
+            (header::CONTENT_LENGTH, length.to_string()),
+            (header::ACCEPT_RANGES, "bytes".to_string()),
+        ],
+        axum::body::Body::from_stream(stream),
+    ).into_response()
+}
+
+fn bounded_range(value: Option<&str>, total: u64) -> Option<(u64, u64)> {
+    let final_byte = total.checked_sub(1)?;
+    let (start, requested_end) = match value {
+        None => (0, final_byte),
+        Some(value) => {
+            let (start, end) = value.strip_prefix("bytes=")?.split_once('-')?;
+            let end = if end.is_empty() { final_byte } else { end.parse::<u64>().ok()? };
+            (start.parse::<u64>().ok()?, end)
+        }
+    };
+    let end = requested_end.min(final_byte).min(start.saturating_add(MAX_SLICE - 1));
+    (start <= end).then_some((start, end))
 }
 
 /// 起本地 HTTP 服务（只绑 127.0.0.1），返回实际端口与后台任务
@@ -195,7 +228,8 @@ pub async fn serve(
         base,
         token,
         files: Arc::new(map),
-        fails: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        fails: Arc::new(Mutex::new(HashMap::new())),
+        streams: Arc::new(tokio::sync::Semaphore::new(8)),
     };
     let app = Router::new()
         .route("/pack/manifest", get(handle_manifest))
@@ -207,14 +241,12 @@ pub async fn serve(
         .map_err(|e| format!("监听本地端口 {port} 失败: {e}"))?;
     let port = listener.local_addr().map_err(|e| e.to_string())?.port();
     let handle = tokio::spawn(async move {
-        let _ = axum::serve(listener, app).await;
+        let _ = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await;
     });
     Ok((port, handle))
 }
 
-/// 下载单个文件到 `dest`（先写 `.part`，校验通过再改名）
-///
-/// `expected_sha1` 为空时跳过校验（调用方自己兜底）。
+/// 流式读取每个有界分片，校验整文件后提交。失败时保留完整的已接收分片。
 pub async fn download_file(
     client: &reqwest::Client,
     origin: &str,
@@ -223,64 +255,97 @@ pub async fn download_file(
     dest_dir: &Path,
     expected_sha1: &str,
 ) -> Result<u64, String> {
-    let Some(sub) = kind_dir(&file.kind) else {
-        return Err(format!("未知类型 {}", file.kind));
-    };
-    if file.name.contains('/') || file.name.contains('\\') || file.name.contains("..") {
-        return Err("非法文件名".into());
+    let sub = kind_dir(&file.kind).ok_or_else(|| format!("未知类型 {}", file.kind))?;
+    if !crate::fsutil::is_portable_filename(&file.name) || file.size > MAX_FILE {
+        return Err("非法文件名或超过房间传输的单文件大小限制".into());
     }
-    let dir = dest_dir.join(sub);
-    std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败: {e}"))?;
+    if expected_sha1.len() != 40 || !expected_sha1.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("房间文件缺少有效 SHA-1 校验值".into());
+    }
+    let dir = crate::fsutil::resolve_in_dir(dest_dir, sub, "房间文件目录")?;
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| format!("建目录失败: {e}"))?;
     let final_path = dir.join(&file.name);
     let part_path = dir.join(format!("{}.part", file.name));
-
-    let mut written: u64 = std::fs::metadata(&part_path).map(|m| m.len()).unwrap_or(0);
+    let mut written = match tokio::fs::symlink_metadata(&part_path).await {
+        Ok(meta) if meta.is_file() && !crate::fsutil::is_link_or_reparse_point(&meta) => meta.len(),
+        Ok(_) => return Err("房间文件的暂存路径不是普通文件".into()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => 0,
+        Err(err) => return Err(format!("读取暂存文件失败: {err}")),
+    };
     if written > file.size {
-        // 长度对不上说明是上一次残留的坏数据，重来
-        let _ = std::fs::remove_file(&part_path);
+        tokio::fs::remove_file(&part_path).await.map_err(|e| e.to_string())?;
         written = 0;
     }
-
+    let mut output = tokio::fs::OpenOptions::new().create(true).append(true).open(&part_path).await
+        .map_err(|e| format!("打开临时文件失败: {e}"))?;
+    let name = crate::modrinth::urlencode(&file.name);
+    let url = format!("{origin}/pack/file/{}/{name}", file.kind);
     while written < file.size {
         let end = (written + MAX_SLICE - 1).min(file.size - 1);
-        // 凭据走 header：走 frp 中继时 URL 会落进对端 access log
-        let url = format!("{origin}/pack/file/{}/{}", file.kind, file.name);
-        let resp = client
-            .get(&url)
+        let response = client.get(&url)
+            .timeout(SLICE_TIMEOUT)
             .bearer_auth(token)
+            .header(header::ACCEPT_ENCODING, "identity")
             .header(header::RANGE, format!("bytes={written}-{end}"))
-            .send()
-            .await
-            .map_err(|e| format!("请求房主失败: {e}"))?;
-        if !resp.status().is_success() {
-            return Err(format!("房主返回 HTTP {}", resp.status().as_u16()));
+            .send().await.map_err(|e| format!("请求房主失败: {e}"))?;
+        let length = validate_slice_headers(response.status(), response.headers(), written, end, file.size)?;
+        let mut bytes = Vec::with_capacity(length);
+        let mut stream = response.bytes_stream();
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.map_err(|e| format!("读取分片失败: {e}"))?;
+            if chunk.len() > length.saturating_sub(bytes.len()) {
+                return Err("房主响应超过当前分片长度".into());
+            }
+            bytes.extend_from_slice(&chunk);
         }
-        let bytes = resp.bytes().await.map_err(|e| format!("读取数据失败: {e}"))?;
-        if bytes.is_empty() {
-            return Err("房主返回空数据".into());
+        if bytes.len() != length {
+            return Err("房主响应与请求的分片长度不符".into());
         }
-        {
-            use std::io::Write;
-            let mut f = std::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&part_path)
-                .map_err(|e| format!("写临时文件失败: {e}"))?;
-            f.write_all(&bytes).map_err(|e| format!("写入失败: {e}"))?;
-        }
-        written += bytes.len() as u64;
+        output.write_all(&bytes).await.map_err(|e| format!("写临时文件失败: {e}"))?;
+        written += length as u64;
     }
-
-    // 整文件校验：只认清单里的 sha1，对不上就删掉，绝不留半成品进实例目录
-    if !expected_sha1.is_empty() {
-        let actual = sha1_of(&part_path)?;
-        if actual != expected_sha1 {
-            let _ = std::fs::remove_file(&part_path);
-            return Err(format!("{} 校验失败（期望 {expected_sha1}）", file.name));
-        }
+    output.sync_all().await.map_err(|e| format!("同步临时文件失败: {e}"))?;
+    drop(output);
+    let verify_path = part_path.clone();
+    let (length, checksum) = tokio::task::spawn_blocking(move || {
+        let length = std::fs::metadata(&verify_path).map_err(|e| e.to_string())?.len();
+        Ok::<_, String>((length, sha1_of(&verify_path)?))
+    }).await.map_err(|e| e.to_string())??;
+    if length != file.size || !checksum.eq_ignore_ascii_case(expected_sha1) {
+        tokio::fs::remove_file(&part_path).await.map_err(|e| format!("校验失败，无法清理暂存文件: {e}"))?;
+        return Err(format!("{} 长度或校验失败", file.name));
     }
-    std::fs::rename(&part_path, &final_path).map_err(|e| format!("落盘失败: {e}"))?;
+    tokio::fs::rename(&part_path, &final_path).await.map_err(|e| format!("落盘失败: {e}"))?;
     Ok(written)
+}
+
+fn validate_slice_headers(
+    status: StatusCode,
+    headers: &HeaderMap,
+    start: u64,
+    end: u64,
+    total: u64,
+) -> Result<usize, String> {
+    if status != StatusCode::PARTIAL_CONTENT {
+        return Err(format!("房主返回 HTTP {}，需要 206 分片响应", status.as_u16()));
+    }
+    let range = headers.get(header::CONTENT_RANGE).and_then(|header| header.to_str().ok())
+        .and_then(crate::download::parse_content_range);
+    if range != Some((start, end, total)) {
+        return Err("房主返回的 Content-Range 与请求不符".into());
+    }
+    let length = (end - start + 1) as usize;
+    if length as u64 > MAX_SLICE {
+        return Err("分片超过大小限制".into());
+    }
+    if headers.get(header::CONTENT_LENGTH).is_some_and(|value|
+        value.to_str().ok().and_then(|value| value.parse::<usize>().ok()) != Some(length)) {
+        return Err("分片的 Content-Length 与请求不符".into());
+    }
+    if headers.get(header::CONTENT_ENCODING).is_some_and(|value| value != "identity") {
+        return Err("房间分片必须使用原始字节编码".into());
+    }
+    Ok(length)
 }
 
 fn sha1_of(path: &Path) -> Result<String, String> {
@@ -325,8 +390,8 @@ mod tests {
             let root = temp_dir("serve");
             let mods = root.join("mods");
             std::fs::create_dir_all(&mods).unwrap();
-            // 3 MB 的文件，强制走多个 4MB 以内的分片
-            let payload: Vec<u8> = (0..3 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
+            // 跨越 4 MiB 边界，验证真实多分片下载。
+            let payload: Vec<u8> = (0..5 * 1024 * 1024).map(|i| (i % 251) as u8).collect();
             let src = mods.join("big.jar");
             std::fs::write(&src, &payload).unwrap();
             let sha = sha1_of(&src).unwrap();
@@ -442,7 +507,7 @@ mod tests {
                 "tok",
                 &file,
                 &dest,
-                "0000deadbeef",
+                &"0".repeat(40),
             )
             .await
             .unwrap_err();
@@ -456,9 +521,9 @@ mod tests {
         });
     }
 
-    /// 爆破防护：连续试错到上限后，即使拿对 token 也不再服务
+    /// 限流只拦截错误凭据。共享同一个转发地址的合法成员仍可下载。
     #[test]
-    fn token_bruteforce_locks_out() {
+    fn limits_invalid_tokens_without_blocking_valid_members() {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -478,18 +543,15 @@ mod tests {
                     .unwrap();
                 assert_eq!(r.status(), reqwest::StatusCode::FORBIDDEN);
             }
-            // 达到上限后：正确的 token 也一律 429，避免继续试探
+            let limited = client.get(&base).bearer_auth("wrong").send().await.unwrap();
+            assert_eq!(limited.status(), StatusCode::TOO_MANY_REQUESTS);
             let r = client
                 .get(&base)
                 .bearer_auth("secret-token")
                 .send()
                 .await
                 .unwrap();
-            assert_eq!(
-                r.status(),
-                reqwest::StatusCode::TOO_MANY_REQUESTS,
-                "超过失败上限后应直接拒绝"
-            );
+            assert_eq!(r.status(), StatusCode::OK);
             handle.abort();
         });
     }
@@ -550,5 +612,53 @@ mod tests {
             assert_eq!(r.status().as_u16(), 403);
             handle.abort();
         });
+    }
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    #[test]
+    fn an_explicit_range_is_capped_and_response_range_must_match() {
+        let total = MAX_SLICE * 3;
+        assert_eq!(bounded_range(Some("bytes=1-999999999"), total), Some((1, MAX_SLICE)));
+        assert_eq!(bounded_range(Some("bytes=1-20,50-70"), total), None);
+        assert_eq!(bounded_range(Some("bytes=18446744073709551615-"), total), None);
+        let mut headers = HeaderMap::new();
+        headers.insert(header::CONTENT_RANGE, "bytes 2-5/10".parse().unwrap());
+        headers.insert(header::CONTENT_LENGTH, "4".parse().unwrap());
+        assert_eq!(validate_slice_headers(StatusCode::PARTIAL_CONTENT, &headers, 2, 5, 10).unwrap(), 4);
+        assert!(validate_slice_headers(StatusCode::OK, &headers, 2, 5, 10).is_err());
+        assert!(validate_slice_headers(StatusCode::PARTIAL_CONTENT, &headers, 1, 5, 10).is_err());
+        headers.insert(header::CONTENT_LENGTH, "12".parse().unwrap());
+        assert!(validate_slice_headers(StatusCode::PARTIAL_CONTENT, &headers, 2, 5, 10).is_err());
+    }
+
+    #[test]
+    fn repeated_invalid_tokens_expire_per_peer_and_do_not_block_a_valid_token() {
+        let st = ServeState {
+            base: PathBuf::new(),
+            token: "fixture-token".into(),
+            files: Arc::new(HashMap::new()),
+            fails: Arc::new(Mutex::new(HashMap::new())),
+            streams: Arc::new(tokio::sync::Semaphore::new(1)),
+        };
+        let now = Instant::now();
+        let one = "127.0.0.1".parse().unwrap();
+        let another = "127.0.0.2".parse().unwrap();
+        {
+            let mut failures = st.fails.lock().unwrap();
+            for _ in 0..MAX_TOKEN_FAILS {
+                assert_eq!(record_failure(&mut failures, one, now), StatusCode::FORBIDDEN);
+            }
+            assert_eq!(record_failure(&mut failures, one, now), StatusCode::TOO_MANY_REQUESTS);
+            assert_eq!(record_failure(&mut failures, another, now), StatusCode::FORBIDDEN);
+        }
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, "Bearer fixture-token".parse().unwrap());
+        assert!(check_auth(&st, one, &HashMap::new(), &headers).is_ok());
+        let mut failures = st.fails.lock().unwrap();
+        assert_eq!(record_failure(&mut failures, one, now + FAILURE_WINDOW), StatusCode::FORBIDDEN);
     }
 }

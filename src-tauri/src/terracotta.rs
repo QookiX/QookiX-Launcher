@@ -4,11 +4,11 @@ use futures_util::StreamExt;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tar::Archive;
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::io::AsyncWriteExt;
+use tokio::process::{Child, Command};
 
 /// 陶瓦联机下载页地址（GitHub Releases）
 pub const DOWNLOAD_URL: &str = "https://github.com/burningtnt/Terracotta/releases/latest";
@@ -163,7 +163,8 @@ fn flatten_package(dir: &Path) -> Option<PathBuf> {
     let target = dir.join("Terracotta.exe");
     if !target.is_file() && target != exe {
         // 先移动，失败则复制
-        let _ = std::fs::rename(&exe, &target).or_else(|_| std::fs::copy(&exe, &target).map(|_| ()));
+        let _ =
+            std::fs::rename(&exe, &target).or_else(|_| std::fs::copy(&exe, &target).map(|_| ()));
     }
 
     target.is_file().then_some(target)
@@ -182,9 +183,7 @@ fn extract_exe_icon_impl(exe: &Path) -> Option<String> {
     use std::mem::{size_of, zeroed};
     use windows_sys::Win32::Graphics::Gdi::*;
     use windows_sys::Win32::UI::Shell::ExtractIconExW;
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        DestroyIcon, GetIconInfo, HICON, ICONINFO,
-    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{DestroyIcon, GetIconInfo, HICON, ICONINFO};
 
     // 转为 UTF-16 宽字符路径
     let wide: Vec<u16> = exe
@@ -361,17 +360,32 @@ async fn fetch_windows_asset_url(client: &reqwest::Client) -> Result<String, Str
 }
 
 /// 等待陶瓦联机写入端口文件，返回端口
-fn wait_for_port(port_file: &Path, timeout: Duration) -> Option<u16> {
-    let start = Instant::now();
-    while start.elapsed() < timeout {
-        if let Ok(content) = std::fs::read_to_string(port_file) {
+async fn wait_for_port(port_file: &Path) -> u16 {
+    loop {
+        if let Ok(content) = tokio::fs::read_to_string(port_file).await {
             if let Ok(pf) = serde_json::from_str::<PortFile>(&content) {
-                return Some(pf.port);
+                if pf.port != 0 {
+                    return pf.port;
+                }
             }
         }
-        std::thread::sleep(Duration::from_millis(300));
+        tokio::time::sleep(Duration::from_millis(200)).await;
     }
-    None
+}
+
+async fn stop_child(child: &mut Child) {
+    #[cfg(windows)]
+    if child.try_wait().ok().flatten().is_none() {
+        if let Some(pid) = child.id() {
+            let mut stop_tree = Command::new("taskkill");
+            stop_tree.args(["/PID", &pid.to_string(), "/F", "/T"]);
+            stop_tree.creation_flags(0x0800_0000);
+            stop_tree.kill_on_drop(true);
+            let _ = tokio::time::timeout(Duration::from_secs(2), stop_tree.output()).await;
+        }
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
 }
 
 /// 访问 127.0.0.1 的专用客户端：**不继承任何代理设置**。
@@ -401,7 +415,11 @@ fn snippet(text: &str) -> String {
 }
 
 /// 向陶瓦联机本地服务发送 GET 请求并解析 JSON
-async fn fetch_state(state: &AppState, path: &str, query: &str) -> Result<serde_json::Value, String> {
+async fn fetch_state(
+    state: &AppState,
+    path: &str,
+    query: &str,
+) -> Result<serde_json::Value, String> {
     let session = state
         .terracotta
         .lock()
@@ -446,6 +464,41 @@ pub(crate) async fn local_state(state: &AppState) -> Result<serde_json::Value, S
     fetch_state(state, "/state/", "").await
 }
 
+/// 从陶瓦状态里取玩家列表，转成后端 `/rooms` 需要的 `members` 结构。
+///
+/// 陶瓦把玩家放在 `room.profiles`，字段名随版本可能是 name/username/playerName/displayName；
+/// 这里只取名字、统一标成 member，最多 50 人（后端也有长度约束）。
+pub(crate) fn members_of(v: &serde_json::Value) -> Vec<serde_json::Value> {
+    let Some(profiles) = v
+        .get("room")
+        .and_then(|r| r.get("profiles"))
+        .and_then(|p| p.as_array())
+    else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for p in profiles.iter().take(50) {
+        let name = ["name", "username", "playerName", "displayName"]
+            .iter()
+            .find_map(|k| p.get(*k).and_then(|x| x.as_str()))
+            .map(str::trim)
+            .filter(|s| !s.is_empty());
+        if let Some(name) = name {
+            out.push(serde_json::json!({ "name": name, "role": "member" }));
+        }
+    }
+    out
+}
+
+/// 陶瓦状态里是否带了 profiles 数组。
+/// 用来区分"还没拿到玩家列表"（不传 members，保留后端旧快照）和"确实没人了"（传空数组清空）。
+pub(crate) fn has_profiles(v: &serde_json::Value) -> bool {
+    v.get("room")
+        .and_then(|r| r.get("profiles"))
+        .map(|p| p.is_array())
+        .unwrap_or(false)
+}
+
 /// 从陶瓦状态里取房间码：`room` 可能是字符串，也可能是 `{ code }` 对象
 pub(crate) fn room_code_of(v: &serde_json::Value) -> Option<String> {
     let pick = |s: &str| {
@@ -454,10 +507,7 @@ pub(crate) fn room_code_of(v: &serde_json::Value) -> Option<String> {
     };
     match v.get("room") {
         Some(serde_json::Value::String(s)) => pick(s),
-        Some(serde_json::Value::Object(o)) => o
-            .get("code")
-            .and_then(|c| c.as_str())
-            .and_then(pick),
+        Some(serde_json::Value::Object(o)) => o.get("code").and_then(|c| c.as_str()).and_then(pick),
         _ => None,
     }
 }
@@ -545,7 +595,11 @@ pub async fn terracotta_download(
                 .await
                 .map_err(|e| format!("写入失败: {e}"))?;
             written += chunk.len() as u64;
-            let pct = if total > 0 { (written * 100 / total) as i64 } else { -1 };
+            let pct = if total > 0 {
+                (written * 100 / total) as i64
+            } else {
+                -1
+            };
             if pct != last_pct {
                 last_pct = pct;
                 let _ = app.emit(
@@ -559,7 +613,9 @@ pub async fn terracotta_download(
         break;
     }
     if !written_ok {
-        return Err(format!("下载陶瓦联机失败（直连与加速镜像均不可用）: {last_err}"));
+        return Err(format!(
+            "下载陶瓦联机失败（直连与加速镜像均不可用）: {last_err}"
+        ));
     }
     let gz_path = dir.join("terracotta.pkg.tar.gz");
     tokio::fs::rename(&tmp, &gz_path)
@@ -607,22 +663,28 @@ pub async fn terracotta_launch(
             path: s.exe.to_string_lossy().to_string(),
         });
     }
+    let lease = state.jobs.reserve_terracotta()?;
 
     let exe = detect_executable(&state)
         .ok_or_else(|| "未检测到陶瓦联机程序，请先前往下载并安装".to_string())?;
 
-    let port_file = state.root.join("terracotta_port.json");
-    let _ = std::fs::remove_file(&port_file);
-
-    let child = Command::new(&exe)
+    let handoff = tempfile::tempdir_in(&state.root).map_err(|err| err.to_string())?;
+    let port_file = handoff.path().join("port.json");
+    let mut child = Command::new(&exe)
         .arg("--hmcl2")
         .arg(&port_file)
+        .kill_on_drop(true)
         .spawn()
         .map_err(|e| format!("启动陶瓦联机失败: {e}"))?;
-
-    let pid = child.id();
-    let port = wait_for_port(&port_file, Duration::from_secs(20))
-        .ok_or_else(|| "陶瓦联机启动超时，未获取到本地端口".to_string())?;
+    let pid = child.id().ok_or("无法获取陶瓦联机进程 ID")?;
+    lease.set_pid(pid);
+    let port = match await_startup(&mut child, &port_file, &lease.cancel, Duration::from_secs(20)).await {
+        Ok(port) => port,
+        Err(err) => {
+            stop_child(&mut child).await;
+            return Err(err);
+        }
+    };
 
     let session = TerracottaSession {
         exe: exe.clone(),
@@ -635,6 +697,19 @@ pub async fn terracotta_launch(
         "terracotta://state",
         serde_json::json!({ "running": true, "port": port }),
     );
+    tauri::async_runtime::spawn(async move {
+        let _handoff = handoff;
+        tokio::select! {
+            result = child.wait() => {
+                if result.is_err() { stop_child(&mut child).await; }
+            }
+            _ = lease.cancel.cancelled() => stop_child(&mut child).await,
+        }
+        let state = app.state::<AppState>();
+        *state.terracotta.lock().unwrap() = None;
+        let _ = app.emit("terracotta://state", serde_json::json!({ "running": false, "port": null }));
+        drop(lease);
+    });
 
     Ok(TerracottaLaunch {
         port,
@@ -643,20 +718,41 @@ pub async fn terracotta_launch(
     })
 }
 
-/// 停止陶瓦联机进程
-#[tauri::command]
-pub async fn terracotta_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
-    if let Some(s) = state.terracotta.lock().unwrap().take() {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &s.pid.to_string(), "/F", "/T"])
-            .spawn();
+async fn await_startup(
+    child: &mut Child,
+    port_file: &Path,
+    cancel: &tokio_util::sync::CancellationToken,
+    timeout: Duration,
+) -> Result<u16, String> {
+    tokio::select! {
+        biased;
+        exited = child.wait() => Err(format!("陶瓦联机在就绪前退出：{}", exited.map(|s| s.to_string()).unwrap_or_else(|e| e.to_string()))),
+        _ = cancel.cancelled() => Err("陶瓦联机启动已取消".into()),
+        port = tokio::time::timeout(timeout, wait_for_port(port_file)) =>
+            port.map_err(|_| "陶瓦联机启动超时，未获取到本地端口".into()),
+    }
+}
+
+pub(crate) async fn stop_session(state: &AppState) -> Result<(), String> {
+    if let Some(finished) = state.jobs.request_terracotta_shutdown() {
+        tokio::time::timeout(Duration::from_secs(5), finished.cancelled())
+            .await
+            .map_err(|_| "等待陶瓦联机退出超时")?;
     }
     Ok(())
 }
 
+/// 停止陶瓦联机进程
+#[tauri::command]
+pub async fn terracotta_stop(state: tauri::State<'_, AppState>) -> Result<(), String> {
+    stop_session(&state).await
+}
+
 /// 获取陶瓦联机当前状态
 #[tauri::command]
-pub async fn terracotta_status(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn terracotta_status(
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
     fetch_state(&state, "/state/", "").await
 }
 
@@ -682,7 +778,10 @@ pub async fn terracotta_create_room(
     player: Option<String>,
 ) -> Result<serde_json::Value, String> {
     // 玩家名可选，非空时拼到扫描接口的查询参数中
-    let query = match player.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
+    let query = match player
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+    {
         Some(p) => format!("?player={}", utf8_percent_encode(&p, NON_ALPHANUMERIC)),
         None => String::new(),
     };
@@ -710,7 +809,10 @@ pub async fn terracotta_join_room(
     // 房间码由字母数字与短横线组成，进行 URL 编码后放入查询参数
     let mut query = format!("?room={}", utf8_percent_encode(room, NON_ALPHANUMERIC));
     // 玩家名可选，非空时追加到查询参数
-    if let Some(p) = player.map(|p| p.trim().to_string()).filter(|p| !p.is_empty()) {
+    if let Some(p) = player
+        .map(|p| p.trim().to_string())
+        .filter(|p| !p.is_empty())
+    {
         query.push_str(&format!(
             "&player={}",
             utf8_percent_encode(&p, NON_ALPHANUMERIC)
@@ -724,6 +826,64 @@ pub async fn terracotta_join_room(
 
 /// 退出当前房间（回到等待状态）
 #[tauri::command]
-pub async fn terracotta_leave(state: tauri::State<'_, AppState>) -> Result<serde_json::Value, String> {
+pub async fn terracotta_leave(
+    state: tauri::State<'_, AppState>,
+) -> Result<serde_json::Value, String> {
     fetch_state(&state, "/state/ide", "").await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::members_of;
+
+    #[test]
+    fn members_from_profiles_prefers_known_fields() {
+        let v = serde_json::json!({
+            "room": { "profiles": [
+                {"name": "Steve"},
+                {"username": "Alex"},
+                {"playerName": "Herobrine"},
+                {"displayName": "  "},
+                {"name": ""},
+                {}
+            ]}
+        });
+        let m = members_of(&v);
+        assert_eq!(m.len(), 3, "空名字和未知字段应被跳过");
+        assert_eq!(m[0]["name"], "Steve");
+        assert_eq!(m[1]["name"], "Alex");
+        assert_eq!(m[2]["name"], "Herobrine");
+        assert_eq!(m[0]["role"], "member");
+    }
+
+    #[test]
+    fn members_missing_room_is_empty() {
+        assert!(members_of(&serde_json::json!({ "state": "host-ok" })).is_empty());
+    }
+
+    #[test]
+    #[ignore = "run in a child by startup_timeout_reaps_the_child"]
+    fn delayed_port_fixture() {
+        std::thread::sleep(std::time::Duration::from_secs(10));
+    }
+
+    #[tokio::test]
+    async fn startup_timeout_reaps_the_child() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut child = super::Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "terracotta::tests::delayed_port_fixture"])
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let result = super::await_startup(
+            &mut child,
+            &workspace.path().join("missing.json"),
+            &tokio_util::sync::CancellationToken::new(),
+            std::time::Duration::from_millis(200),
+        )
+        .await;
+        assert!(result.unwrap_err().contains("超时"));
+        super::stop_child(&mut child).await;
+        assert!(child.try_wait().unwrap().is_some());
+    }
 }

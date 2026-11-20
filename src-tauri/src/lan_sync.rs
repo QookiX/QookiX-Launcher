@@ -8,17 +8,21 @@
 
 use axum::{
     extract::{Path, Query, State},
-    http::{Request, StatusCode},
+    http::{HeaderMap, Request, StatusCode},
     response::{IntoResponse, Json, Response},
     routing::{get, post},
     Router,
 };
 use bytes::Bytes;
 use futures_util::stream::unfold;
+use futures_util::StreamExt;
 use serde::{Deserialize, Serialize};
 use std::io::Write;
 use std::path::{Path as StdPath, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+use tauri::Manager;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::oneshot;
 
 /// 运行中的同步服务句柄。存入 AppState，关闭时发 shutdown 信号。
@@ -53,6 +57,7 @@ struct SyncState {
     servers_dir: PathBuf,
     token: String,
     device_name: String,
+    import_slots: Arc<tokio::sync::Semaphore>,
     /// 用来把传输进度推给前端面板（2026-10-30）。
     /// 之前桌面端界面上完全看不出「手机正在拉哪个实例、传到哪了」，
     /// 用户只能盯着手机那边等。
@@ -129,6 +134,7 @@ pub async fn start_server(
         servers_dir,
         token: token.clone(),
         device_name,
+        import_slots: Arc::new(tokio::sync::Semaphore::new(2)),
         app,
     });
     let app = Router::new()
@@ -254,6 +260,45 @@ fn list_lan_ips() -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::score_ipv4;
+
+    #[tokio::test]
+    async fn upload_writes_incrementally_and_rejects_a_chunk_that_exceeds_the_limit() {
+        use super::{receive_zip, Bytes, StatusCode};
+        let stream = futures_util::stream::iter([
+            Ok::<_, std::io::Error>(Bytes::from_static(b"123")),
+            Ok(Bytes::from_static(b"456")),
+        ]);
+        let mut output = Vec::new();
+        let mut progress = Vec::new();
+        let error = receive_zip(axum::body::Body::from_stream(stream), &mut output, 5, |bytes| {
+            progress.push(bytes);
+        }).await.unwrap_err();
+        assert_eq!(error.0, StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(output, b"123");
+        assert_eq!(progress, [3]);
+    }
+
+    #[test]
+    fn simultaneous_uploads_cannot_publish_two_instances_with_the_same_name() {
+        use super::{commit_instance, StatusCode};
+        let root = tempfile::tempdir().unwrap();
+        let stage = root.path().join("staging");
+        let paths = [stage.join("first"), stage.join("second")];
+        for path in &paths {
+            std::fs::create_dir_all(path).unwrap();
+            let instance = crate::models::Instance { name: "shared".into(), ..Default::default() };
+            std::fs::write(path.join("qookix.json"), serde_json::to_vec(&instance).unwrap()).unwrap();
+        }
+        let (first, second) = std::thread::scope(|threads| {
+            let first = threads.spawn(|| commit_instance(root.path(), &paths[0], "first", "shared"));
+            let second = threads.spawn(|| commit_instance(root.path(), &paths[1], "second", "shared"));
+            (first.join().unwrap(), second.join().unwrap())
+        });
+        assert_eq!([first, second].iter().filter(|result| result.is_ok()).count(), 1);
+        let present = ["first", "second"].iter().filter(|id| root.path().join(id).exists()).count();
+        assert_eq!(present, 1);
+        assert_eq!(commit_instance(root.path(), &stage, "third", "shared").unwrap_err().0, StatusCode::CONFLICT);
+    }
 
     #[test]
     fn real_lan_beats_virtual_adapters() {
@@ -559,14 +604,14 @@ async fn download_servers(State(state): State<Arc<SyncState>>) -> Response {
 
 // ── 上传：手机 → 电脑 ───────────────────────────────────────────────────────
 
-/// 单实例最大允许上传 2 GB。
-///
-/// Windows 的 IO 层有 `u32::MAX`（≈4.3 GB）硬限制 —— `IoSlice` 断言
-/// `buf.len() <= u32::MAX`。`axum::body::to_bytes` 的 limit 参数若超过这个值，
-/// 内部预分配会直接 panic。取 2 GB 既留足余量，也覆盖绝大多数实例体积。
-const MAX_UPLOAD_BYTES: usize = 2 * 1024 * 1024 * 1024;
+const MAX_UPLOAD_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+const MAX_UPLOAD_DURATION: Duration = Duration::from_secs(30 * 60);
+const UPLOAD_IDLE_LIMIT: Duration = Duration::from_secs(30);
+static IMPORT_COMMIT: Mutex<()> = Mutex::new(());
 
-#[derive(Deserialize)]
+type UploadError = (StatusCode, String);
+
+#[derive(Clone, Deserialize)]
 struct UploadQuery {
     name: String,
     mc_version: String,
@@ -587,172 +632,147 @@ struct UploadErr {
     error: String,
 }
 
-/// `POST /api/instances/upload?name=...&mc_version=...&loader=...&loader_version=...`
-///
-/// 手机端把实例打成 zip 直接 POST。桌面端流式接收 → 解压 → 转换元数据 → 注册实例。
+/// 接收压缩包到临时文件。在工作线程校验并解压，通过后提交实例。
 async fn upload_instance(
     State(state): State<Arc<SyncState>>,
-    Query(q): Query<UploadQuery>,
+    Query(query): Query<UploadQuery>,
+    headers: HeaderMap,
     body: axum::body::Body,
 ) -> Response {
-    // 0. 通知面板：手机开始往这边发（2026-10-30）
-    let up_id = uuid::Uuid::new_v4().simple().to_string();
-    emit_transfer(
-        &state.app,
-        serde_json::json!({
-            "id": up_id, "direction": "upload",
-            "instanceId": "", "instanceName": q.name,
-            "phase": "prepare", "bytesDone": 0, "bytesTotal": 0,
-            "file": "", "message": "",
-        }),
-    );
-
-    // 1. 同名检查（409）
-    if instance_name_exists(&state.instances_dir, &q.name) {
-        return (
-            StatusCode::CONFLICT,
-            Json(UploadErr {
-                ok: false,
-                error: format!("同名实例已存在: {}", q.name),
-            }),
-        )
-            .into_response();
-    }
-
-    // 2. 收集 body（限制大小，超限返回 413）
-    let bytes = match axum::body::to_bytes(body, MAX_UPLOAD_BYTES).await {
-        Ok(b) => b,
-        Err(e) => {
-            let msg = e.to_string();
-            if msg.contains("length limit") || msg.contains("overflow") {
-                return (
-                    StatusCode::PAYLOAD_TOO_LARGE,
-                    Json(UploadErr {
-                        ok: false,
-                        error: "实例过大，超过 2 GB 限制".into(),
-                    }),
-                )
-                    .into_response();
-            }
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(UploadErr {
-                    ok: false,
-                    error: format!("接收数据失败: {msg}"),
-                }),
-            )
-                .into_response();
-        }
+    let transfer_id = uuid::Uuid::new_v4().simple().to_string();
+    let expected = headers.get(axum::http::header::CONTENT_LENGTH)
+        .and_then(|value| value.to_str().ok()).and_then(|size| size.parse::<u64>().ok());
+    let emit = |phase: &str, bytes: u64, instance: &str, message: &str| {
+        emit_transfer(&state.app, serde_json::json!({
+            "id": transfer_id, "direction": "upload",
+            "instanceId": instance, "instanceName": query.name,
+            "phase": phase, "bytesDone": bytes, "bytesTotal": expected.unwrap_or(bytes),
+            "file": "", "message": message,
+        }));
     };
+    emit("prepare", 0, "", "");
+    let mut received = 0;
+    let mut last_report = Instant::now();
+    let result = receive_instance(&state, &query, body, expected, |bytes| {
+        received = bytes;
+        if last_report.elapsed() >= Duration::from_millis(250) {
+            emit("send", bytes, "", "");
+            last_report = Instant::now();
+        }
+    }).await;
+    match result {
+        Ok(instance_id) => {
+            emit("done", received, &instance_id, "");
+            (StatusCode::CREATED, Json(UploadOk { ok: true, instance_id, name: query.name })).into_response()
+        }
+        Err((status, error)) => {
+            emit("error", received, "", &error);
+            (status, Json(UploadErr { ok: false, error })).into_response()
+        }
+    }
+}
 
-    // 3. 生成新实例 ID + 目标目录
+async fn receive_instance(
+    state: &Arc<SyncState>,
+    query: &UploadQuery,
+    body: axum::body::Body,
+    expected: Option<u64>,
+    progress: impl FnMut(u64),
+) -> Result<String, UploadError> {
+    if query.name.trim().is_empty() || query.name.len() > 512 || query.name.chars().any(char::is_control) {
+        return Err((StatusCode::BAD_REQUEST, "实例名称无效".into()));
+    }
+    if expected.is_some_and(|size| size > MAX_UPLOAD_BYTES) {
+        return Err(over_limit());
+    }
+    let slot = Arc::clone(&state.import_slots).try_acquire_owned()
+        .map_err(|_| (StatusCode::TOO_MANY_REQUESTS, "已有实例正在传输，请稍后再试".into()))?;
     let new_id = uuid::Uuid::new_v4().simple().to_string();
-    let dest_dir = state.instances_dir.join(&new_id);
+    let app_state = state.app.state::<crate::state::AppState>();
+    let lease = app_state.jobs.register_install(app_state.next_task_id(), &new_id, None)
+        .map_err(|e| (StatusCode::CONFLICT, e))?;
 
-    if let Err(e) = std::fs::create_dir_all(&dest_dir) {
-        return server_error(format!("创建实例目录失败: {e}"));
+    tokio::fs::create_dir_all(&state.instances_dir).await.map_err(upload_io)?;
+    let stage = tempfile::tempdir_in(&state.instances_dir).map_err(upload_io)?;
+    let package = stage.path().join("upload.zip");
+    let mut output = tokio::fs::File::create(&package).await.map_err(upload_io)?;
+    let received = tokio::time::timeout(MAX_UPLOAD_DURATION,
+        receive_zip(body, &mut output, MAX_UPLOAD_BYTES, progress))
+        .await.map_err(|_| (StatusCode::REQUEST_TIMEOUT, "接收实例超时".into()))??;
+    output.sync_all().await.map_err(upload_io)?;
+    drop(output);
+    if expected.is_some_and(|size| size != received) || received == 0 {
+        return Err((StatusCode::BAD_REQUEST, "上传文件大小与请求不符或文件为空".into()));
     }
-
-    // 4. 解压 zip 到目标目录
-    let cursor = std::io::Cursor::new(bytes);
-    let mut archive = match zip::ZipArchive::new(cursor) {
-        Ok(a) => a,
-        Err(e) => {
-            let _ = std::fs::remove_dir_all(&dest_dir);
-            return server_error(format!("zip 解析失败: {e}"));
+    let root = state.instances_dir.clone();
+    let query = query.clone();
+    let id = new_id.clone();
+    let cancellation = tokio_util::sync::CancellationToken::new();
+    let cancel = cancellation.clone();
+    let _cancel_on_drop = cancellation.drop_guard();
+    tokio::task::spawn_blocking(move || {
+        let _guards = (slot, lease);
+        let directory = stage.path().join("instance");
+        let file = std::fs::File::open(package).map_err(upload_io)?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|err| (StatusCode::BAD_REQUEST, format!("ZIP 解析失败: {err}")))?;
+        let limits = crate::archive::ZipLimits { entries: 150_000, expanded_bytes: 32 * 1024 * 1024 * 1024 };
+        let extracted = crate::archive::extract_zip_mapped_with_limits(&mut archive, &directory, limits, |name, _| {
+            if cancel.is_cancelled() { return Err("传输已取消".into()); }
+            Ok(Some(name.to_string()))
+        }).map_err(|err| (StatusCode::BAD_REQUEST, err))?;
+        if extracted == 0 {
+            return Err((StatusCode::BAD_REQUEST, "ZIP 不含实例文件".into()));
         }
-    };
-
-    if let Err(e) = extract_zip(&mut archive, &dest_dir) {
-        let _ = std::fs::remove_dir_all(&dest_dir);
-        return server_error(e);
-    }
-
-    // 5. 转换元数据：instance.json（安卓） → qookix.json（桌面）
-    if let Err(e) = convert_android_to_desktop(&dest_dir, &new_id, &q) {
-        let _ = std::fs::remove_dir_all(&dest_dir);
-        return server_error(e);
-    }
-
-    // 6. 成功
-    emit_transfer(
-        &state.app,
-        serde_json::json!({
-            "id": up_id, "direction": "upload",
-            "instanceId": new_id, "instanceName": q.name,
-            "phase": "done", "bytesDone": 0, "bytesTotal": 0,
-            "file": "", "message": "",
-        }),
-    );
-    (
-        StatusCode::CREATED,
-        Json(UploadOk {
-            ok: true,
-            instance_id: new_id,
-            name: q.name,
-        }),
-    )
-        .into_response()
+        convert_android_to_desktop(&directory, &id, &query).map_err(upload_io)?;
+        if cancel.is_cancelled() {
+            return Err((StatusCode::REQUEST_TIMEOUT, "传输已取消".into()));
+        }
+        commit_instance(&root, &directory, &id, &query.name)
+    }).await.map_err(upload_io)??;
+    Ok(new_id)
 }
 
-fn server_error(msg: String) -> Response {
-    (
-        StatusCode::INTERNAL_SERVER_ERROR,
-        Json(UploadErr { ok: false, error: msg }),
-    )
-        .into_response()
+async fn receive_zip(
+    body: axum::body::Body,
+    output: &mut (impl tokio::io::AsyncWrite + Unpin),
+    limit: u64,
+    mut progress: impl FnMut(u64),
+) -> Result<u64, UploadError> {
+    let mut stream = body.into_data_stream();
+    let mut received = 0u64;
+    loop {
+        let next = tokio::time::timeout(UPLOAD_IDLE_LIMIT, stream.next()).await
+            .map_err(|_| (StatusCode::REQUEST_TIMEOUT, "接收实例超时".into()))?;
+        let Some(next) = next else {
+            output.flush().await.map_err(upload_io)?;
+            return Ok(received);
+        };
+        let bytes = next.map_err(|err| (StatusCode::BAD_REQUEST, format!("接收实例失败: {err}")))?;
+        received = received.checked_add(bytes.len() as u64).filter(|size| *size <= limit).ok_or_else(over_limit)?;
+        output.write_all(&bytes).await.map_err(upload_io)?;
+        progress(received);
+    }
 }
 
-/// 检查同名实例是否已存在
-fn instance_name_exists(instances_dir: &StdPath, name: &str) -> bool {
-    if let Ok(entries) = std::fs::read_dir(instances_dir) {
-        for entry in entries.flatten() {
-            let json_path = entry.path().join("qookix.json");
-            if let Ok(text) = std::fs::read_to_string(&json_path) {
-                if let Ok(inst) = serde_json::from_str::<crate::models::Instance>(&text) {
-                    if inst.name == name {
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
+fn over_limit() -> UploadError {
+    (StatusCode::PAYLOAD_TOO_LARGE, "实例过大，超过 2 GiB 限制".into())
 }
 
-/// 解压 zip 到目标目录（带路径穿越防护）
-fn extract_zip<R: std::io::Read + std::io::Seek>(
-    archive: &mut zip::ZipArchive<R>,
-    dest: &StdPath,
-) -> Result<(), String> {
-    for i in 0..archive.len() {
-        let mut file = archive
-            .by_index(i)
-            .map_err(|e| format!("zip 读取失败: {e}"))?;
+fn upload_io(error: impl std::fmt::Display) -> UploadError {
+    (StatusCode::INTERNAL_SERVER_ERROR, error.to_string())
+}
 
-        let entry_name = file.name().to_string();
-        // 路径穿越防护
-        if entry_name.contains("..") || entry_name.starts_with('/') {
-            continue;
-        }
-
-        let outpath = dest.join(&entry_name);
-
-        if file.is_dir() {
-            std::fs::create_dir_all(&outpath)
-                .map_err(|e| format!("创建目录失败: {e}"))?;
-        } else {
-            if let Some(p) = outpath.parent() {
-                std::fs::create_dir_all(p)
-                    .map_err(|e| format!("创建父目录失败: {e}"))?;
-            }
-            let mut outfile = std::fs::File::create(&outpath)
-                .map_err(|e| format!("创建文件失败: {e}"))?;
-            std::io::copy(&mut file, &mut outfile)
-                .map_err(|e| format!("写入文件失败: {e}"))?;
+fn commit_instance(root: &StdPath, staged: &StdPath, id: &str, name: &str) -> Result<(), UploadError> {
+    let _commit = IMPORT_COMMIT.lock().map_err(upload_io)?;
+    for entry in std::fs::read_dir(root).map_err(upload_io)? {
+        let entry = entry.map_err(upload_io)?;
+        let Ok(text) = std::fs::read_to_string(entry.path().join("qookix.json")) else { continue };
+        if serde_json::from_str::<crate::models::Instance>(&text).is_ok_and(|instance| instance.name == name) {
+            return Err((StatusCode::CONFLICT, format!("同名实例已存在: {name}")));
         }
     }
-    Ok(())
+    std::fs::rename(staged, root.join(id)).map_err(upload_io)
 }
 
 /// 将安卓 instance.json 转换为桌面 qookix.json
@@ -769,7 +789,14 @@ fn convert_android_to_desktop(
     let desktop_json_path = dest.join("qookix.json");
 
     // 尝试读取安卓 instance.json
-    let android_data = std::fs::read_to_string(&android_json_path).ok();
+    let android_data = match std::fs::metadata(&android_json_path) {
+        Ok(meta) if meta.is_file() && meta.len() <= 2 * 1024 * 1024 => {
+            Some(std::fs::read_to_string(&android_json_path).map_err(|err| err.to_string())?)
+        }
+        Ok(_) => return Err("实例元数据超过大小限制或不是普通文件".into()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => return Err(err.to_string()),
+    };
 
     // 解析 loader
     let loader: crate::models::LoaderType = q

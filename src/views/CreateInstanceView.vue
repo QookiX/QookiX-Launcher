@@ -1,12 +1,13 @@
 <script setup lang="ts">
+import { vSegmented } from "../composables/vSegmented";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { fmtBytes } from "../utils/format";
 import { isAprilFools } from "../utils/versions";
 import { useRouter } from "vue-router";
-import { NSelect, NInput, NModal, useMessage } from "naive-ui";
+import { NButton, NSelect, NInput, NModal, useMessage } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { open } from "@tauri-apps/plugin-dialog";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { api } from "../api";
 import { useInstancesStore } from "../stores/instances";
 import AppIcon from "../components/AppIcon.vue";
@@ -14,6 +15,8 @@ import IconPickerDialog from "../components/IconPickerDialog.vue";
 import { IconChevronLeft, IconFolder, IconPlus } from "../components/icons";
 import { useSlidingIndicator } from "../composables/useSlidingIndicator";
 import type { Loader } from "../types";
+
+const { listen } = useTauriListenerScope();
 
 const router = useRouter();
 const instances = useInstancesStore();
@@ -448,7 +451,7 @@ onUnmounted(() => {
       <IconChevronLeft /> {{ t("createInstance.backToInstances") }}
     </button>
 
-    <div ref="modeSegRef" class="mode-tabs qx-seg">
+    <div ref="modeSegRef" v-segmented="{ label: t('nav.instances') }" class="mode-tabs qx-seg">
       <div class="qx-seg__indicator" :style="modeSegStyle"></div>
       <button :class="{ active: mode === 'fresh' }" @click="mode = 'fresh'">{{ t("createInstance.modeFresh") }}</button>
       <button :class="{ active: mode === 'import' }" @click="mode = 'import'">{{ t("createInstance.modeImport") }}</button>
@@ -521,9 +524,9 @@ onUnmounted(() => {
               {{ mcVersion || t("createInstance.noVersionSelected") }} · {{ loaderLabel(loader) }}<template v-if="loader !== 'vanilla'"> · {{ loaderVersion || t("createInstance.latestStable") }}</template>
             </div>
           </div>
-          <button class="qx-btn qx-btn--primary" :disabled="creating || !mcVersion" @click="create">
-            <IconPlus /> {{ creating ? t("createInstance.creating") : t("createInstance.createInstance") }}
-          </button>
+          <NButton type="primary" :loading="creating" :disabled="creating || !mcVersion" :aria-busy="creating" @click="create">
+            <template #icon><IconPlus /></template> {{ creating ? t("createInstance.creating") : t("createInstance.createInstance") }}
+          </NButton>
         </div>
       </div>
 
@@ -568,9 +571,9 @@ onUnmounted(() => {
       <h2>{{ t("createInstance.importModpackTitle") }}</h2>
       <p>{{ t("createInstance.importModpackDesc") }}</p>
       <p class="sub-p">{{ t("createInstance.importModpackSubDesc") }}</p>
-      <button class="qx-btn qx-btn--primary qx-btn--lg" :disabled="importing" @click="importPack">
-        <IconFolder /> {{ importing ? t("createInstance.importing") : t("createInstance.selectModpackFile") }}
-      </button>
+      <NButton type="primary" size="large" :loading="importing" :disabled="importing" :aria-busy="importing" @click="importPack">
+        <template #icon><IconFolder /></template> {{ importing ? t("createInstance.importing") : t("createInstance.selectModpackFile") }}
+      </NButton>
       <p class="drop-hint">{{ t("createInstance.dropModpackHint") }}</p>
     </div>
 
@@ -671,14 +674,14 @@ onUnmounted(() => {
         </div>
         <template #footer>
           <div class="dialog-actions">
-            <button v-if="importStep === 2" class="qx-btn" @click="importStep = 1">{{ t("createInstance.prevStep") }}</button>
-            <button v-if="importStep === 1" class="qx-btn" @click="showVersionDialog = false">{{ t("createInstance.cancel") }}</button>
-            <button v-if="importStep === 1" class="qx-btn qx-btn--primary" :disabled="selectedVersions.length === 0" @click="goStep2">
+            <NButton v-if="importStep === 2" @click="importStep = 1">{{ t("createInstance.prevStep") }}</NButton>
+            <NButton v-if="importStep === 1" @click="showVersionDialog = false">{{ t("createInstance.cancel") }}</NButton>
+            <NButton v-if="importStep === 1" type="primary" :disabled="selectedVersions.length === 0" @click="goStep2">
               {{ t("createInstance.nextStep") }}
-            </button>
-            <button v-if="importStep === 2" class="qx-btn qx-btn--primary" :disabled="importingMc || calcSize || !scan" @click="importMc">
-              <IconPlus /> {{ importingMc ? t("createInstance.importing") : t("createInstance.migrateNVersions", { count: selectedVersions.length }) }}
-            </button>
+            </NButton>
+            <NButton v-if="importStep === 2" type="primary" :loading="importingMc" :disabled="importingMc || calcSize || !scan" :aria-busy="importingMc" @click="importMc">
+              <template #icon><IconPlus /></template> {{ importingMc ? t("createInstance.importing") : t("createInstance.migrateNVersions", { count: selectedVersions.length }) }}
+            </NButton>
           </div>
         </template>
       </NModal>

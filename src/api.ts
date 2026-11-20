@@ -1,15 +1,17 @@
-import { invoke as rawInvoke } from "@tauri-apps/api/core";
-import { trackStart, trackEnd, trackError } from "./loadingBar";
+import { invoke } from "./api/invoke";
+import { authApi } from "./api/auth";
+import { fileApi } from "./api/files";
+import { taskApi } from "./api/tasks";
 import type { PinItem } from "./stores/pins";
 import type {
   Account,
   CacheClearResult,
   CloudSnapshot,
   ContentItem,
+  CrashAIAnalysis,
   CrashDiagnosis,
   DependencyReport,
   ResolvedMissingMod,
-  FsEntry,
   Instance,
   InstanceGroup,
   JavaInfo,
@@ -50,6 +52,7 @@ import type {
   ShimuConfig,
   ShimuDownloadResult,
   YggOauthConfig,
+  YggOauthResult,
   ShimuCategory,
   ShimuPage,
   ShimuPost,
@@ -74,32 +77,6 @@ import type {
   TimelineSnapshot,
   PlaySession,
 } from "./types";
-
-/**
- * 包装 tauri invoke：只有**网络请求**（显式传 { net: true }）才触发顶部加载条。
- * 本地命令（读写文件、保存设置、列表查询等）默认静默，避免加载条随交互频繁闪烁。
- * 下载/安装类长任务由页面内进度 UI 负责，即使走网络也不传 net。
- * 顶部加载条的另一个出现时机是「页面加载」（路由切换，见 router.ts）。
- */
-function invoke<T>(
-  cmd: string,
-  args?: Record<string, unknown>,
-  opts?: { net?: boolean }
-): Promise<T> {
-  if (!opts?.net) return rawInvoke<T>(cmd, args);
-  trackStart();
-  return rawInvoke<T>(cmd, args).then(
-    (res) => {
-      trackEnd();
-      return res;
-    },
-    (err) => {
-      trackError();
-      trackEnd();
-      throw err;
-    },
-  );
-}
 
 export const api = {
   // settings & java
@@ -129,8 +106,10 @@ export const api = {
     invoke<MirrorTestResult>("test_content_mirror", { base }),
   testProxy: (proxyMode: string, proxy: string | null) =>
     invoke<MirrorTestResult>("test_proxy", { proxyMode, proxy }),
+  dataRootMigrationError: () => invoke<string | null>("data_root_migration_error"),
+  cancelFailedDataRootMigration: () => invoke<void>("cancel_failed_data_root_migration"),
   changeDataDir: (newDir: string, mode: "move" | "copy" | "pointer") =>
-    invoke<{ ok: boolean; new_dir: string; need_restart: boolean }>("change_data_dir", {
+    invoke<{ ok: boolean; new_dir: string; need_restart: boolean; scheduled: boolean }>("change_data_dir", {
       newDir,
       mode,
     }),
@@ -158,7 +137,7 @@ export const api = {
     invoke<string[]>("get_loader_versions", { loader, mcVersion: mc_version }, { net: true }),
 
   // instances
-  listInstances: () => invoke<Instance[]>("list_instances"),
+  listInstances: () => invoke<{ items: Instance[]; warnings: string[] }>("list_instances"),
   getInstance: (id: string) => invoke<Instance>("get_instance_info", { id }),
   createInstance: (name: string, mc_version: string, loader: string, loader_version: string | null) =>
     invoke<Instance>("create_instance", { name, mcVersion: mc_version, loader, loaderVersion: loader_version }),
@@ -173,26 +152,13 @@ export const api = {
     invoke<InstanceGroup>("rename_instance_group", { id, name, color: color ?? null }),
   deleteGroup: (id: string) => invoke<void>("delete_instance_group", { id }),
   reorderGroups: (ids: string[]) => invoke<InstanceGroup[]>("reorder_instance_groups", { ids }),
-  installGame: (instanceId: string) =>
-    invoke<{ instance_id: string; total_bytes: number; file_count: number }>("install_game", { instanceId }),
-  cancelInstall: () => invoke<void>("cancel_install"),
-  launchInstance: (instanceId: string, world?: string, server?: string) =>
-    invoke<{ pid: number; command: string[] }>(
-      "launch_instance",
-      {
-        instanceId,
-        world: world ?? null,
-        server: server ?? null,
-      }
-    ),
-  stopGame: () => invoke<void>("stop_game"),
-  isGameRunning: () => invoke<boolean>("is_game_running"),
+  ...taskApi,
   /** options.txt 按键绑定：读取 / 保存（后端只写提交的动作，其余行原样保留） */
   optionsListKeybinds: (instanceId: string) =>
     invoke<{ exists: boolean; binds: { action: string; key: string }[] }>("options_list_keybinds", {
       instanceId,
     }),
-  optionsSetKeybinds: (instanceId: string, changes: Record<string, string>) =>
+  optionsSetKeybinds: (instanceId: string, changes: Record<string, string | null>) =>
     invoke<{ updated: number }>("options_set_keybinds", { instanceId, changes }),
   openInstanceFolder: (instanceId: string, sub?: string) =>
     invoke<void>("open_instance_folder", { instanceId, sub: sub ?? null }),
@@ -259,12 +225,14 @@ export const api = {
     ),
   nbtCanEdit: (instanceId: string, world: string) =>
     invoke<{ editable: boolean; reason: string | null }>("nbt_can_edit", { instanceId, world }),
+  nbtValidateWorldPatch: (instanceId: string, world: string, patch: Record<string, unknown>) =>
+    invoke<void>("nbt_validate_world_patch", { instanceId, world, patch }),
   nbtSaveWorld: (instanceId: string, world: string, patch: Record<string, unknown>) =>
-    invoke<{ backup: string }>("nbt_save_world", { instanceId, world, patch }),
+    invoke<{ backup: string; form: WorldForm }>("nbt_save_world", { instanceId, world, patch }),
   nbtTreeView: (instanceId: string, world: string) =>
     invoke<{ root: NbtNode }>("nbt_tree_view", { instanceId, world }),
   nbtListPlayers: (instanceId: string, world: string) =>
-    invoke<{ players: PlayerSummary[] }>("nbt_list_players", { instanceId, world }),
+    invoke<{ players: PlayerSummary[]; warnings: string[] }>("nbt_list_players", { instanceId, world }),
   nbtReadPlayer: (instanceId: string, world: string, uuid: string) =>
     invoke<PlayerData>("nbt_read_player", { instanceId, world, uuid }),
   nbtSavePlayer: (instanceId: string, world: string, uuid: string, patch: Record<string, unknown>) =>
@@ -675,7 +643,11 @@ export const api = {
   uninstallContent: (instanceId: string, kind: string, filename: string) =>
     invoke<void>("uninstall_content", { instanceId, kind, filename }),
   listContent: (instanceId: string, kind: string) =>
-    invoke<{ items: ContentItem[]; onDisk: string[] }>("list_content", { instanceId, kind }),
+    invoke<{ items: ContentItem[]; onDisk: string[]; warnings: string[]; needsReconciliation: boolean }>(
+      "list_content", { instanceId, kind },
+    ),
+  reconcileContent: (instanceId: string, kind: string) =>
+    invoke<string[]>("reconcile_content", { instanceId, kind }),
   identifyContent: (instanceId: string, kind: string) =>
     invoke<void>("identify_content", { instanceId, kind }),
   toggleContentEnabled: (instanceId: string, kind: string, filename: string, enabled: boolean) =>
@@ -684,27 +656,7 @@ export const api = {
     invoke<{ ok: boolean }>("import_local_file", { instanceId, kind, sourcePath }),
   saveTextFile: (path: string, content: string) => invoke<void>("save_text_file", { path, content }),
 
-  // instance file manager
-  listInstanceDir: (instanceId: string, rel: string) =>
-    invoke<{ rel: string; entries: FsEntry[] }>("list_instance_dir", { instanceId, rel }),
-  readInstanceFile: (instanceId: string, rel: string) =>
-    invoke<{ rel: string; content: string; size: number; modified: number }>(
-      "read_instance_file",
-      { instanceId, rel }
-    ),
-  writeInstanceFile: (instanceId: string, rel: string, content: string) =>
-    invoke<{ rel: string; size: number; modified: number }>(
-      "write_instance_file",
-      { instanceId, rel, content }
-    ),
-  createInstanceEntry: (instanceId: string, rel: string, isDir: boolean) =>
-    invoke<{ rel: string; is_dir: boolean }>("create_instance_entry", { instanceId, rel, isDir }),
-  deleteInstancePath: (instanceId: string, rel: string) =>
-    invoke<void>("delete_instance_path", { instanceId, rel }),
-  renameInstancePath: (instanceId: string, rel: string, newName: string) =>
-    invoke<{ rel: string; name: string }>("rename_instance_path", { instanceId, rel, newName }),
-  revealInstancePath: (instanceId: string, rel: string) =>
-    invoke<void>("reveal_instance_path", { instanceId, rel }),
+  ...fileApi,
   revealPath: (path: string) => invoke<void>("reveal_path", { path }),
   extractGameIcons: (instanceId?: string) =>
     invoke<{ name: string; label: string; path: string }[]>("extract_game_icons", {
@@ -780,20 +732,6 @@ export const api = {
     invoke<{
       files: { name: string; path: string; size: number; modified: number; isDir: boolean; icon: string | null }[];
     }>("list_hosted_server_files", { id, sub }),
-  listHostedServerDir: (id: string, rel: string) =>
-    invoke<{ rel: string; entries: FsEntry[] }>("list_hosted_server_dir", { id, rel }),
-  revealHostedServerPath: (id: string, rel: string) =>
-    invoke<void>("reveal_hosted_server_path", { id, rel }),
-  readHostedServerFile: (id: string, rel: string) =>
-    invoke<{ rel: string; content: string; size: number; modified: number }>(
-      "read_hosted_server_file",
-      { id, rel }
-    ),
-  writeHostedServerFile: (id: string, rel: string, content: string) =>
-    invoke<{ rel: string; size: number; modified: number }>(
-      "write_hosted_server_file",
-      { id, rel, content }
-    ),
   listHostedServerConfigFiles: (id: string) =>
     invoke<{ name: string; rel: string; size: number; modified: number }[]>(
       "list_hosted_server_config_files",
@@ -813,25 +751,7 @@ export const api = {
   terracottaLeave: () => invoke<Record<string, unknown>>("terracotta_leave"),
 
   // qookix（可选账号：好友 + 陶瓦联机房间目录）
-  qookixStatus: () => invoke<QookixStatus>("qookix_status"),
-  qookixLogin: (login: string, password: string) =>
-    invoke<QookixStatus>("qookix_login", { login, password }, { net: true }),
-  qookixRegister: (username: string, email: string, password: string, nickname?: string) =>
-    invoke<{
-      user?: Record<string, unknown>;
-      email_verification_required?: boolean;
-      email_sent?: boolean;
-      message?: string;
-    }>(
-      "qookix_register",
-      { username, email, password, nickname: nickname ?? null },
-      { net: true },
-    ),
-  qookixResendVerification: (login: string) =>
-    invoke<{ message: string }>("qookix_resend_verification", { login }, { net: true }),
-  qookixForgotPassword: (login: string) =>
-    invoke<{ message: string }>("qookix_forgot_password", { login }, { net: true }),
-  qookixLogout: () => invoke<QookixStatus>("qookix_logout", undefined, { net: true }),
+  ...authApi,
   qookixMe: () => invoke<QookixMe>("qookix_me", undefined, { net: true }),
   /** 绑定正版 MC 账号（也用于刷新正版名）：令牌由 Rust 侧从本地账号读取，不过 IPC */
   qookixBindMc: (uuid?: string) =>
@@ -989,15 +909,16 @@ export const api = {
   frpTunnels: () =>
     invoke<{ tunnels: FrpTunnel[]; running: string[] }>("frp_tunnels", undefined, { net: true }),
   frpStart: (tunnelId: number) =>
-    invoke<{ name: string; log: string }>("frp_start", { tunnelId }, { net: true }),
-  frpStop: (name: string) => invoke<void>("frp_stop", { name }),
+    invoke<{ runId: string; name: string; log: string }>("frp_start", { tunnelId }, { net: true }),
+  frpStop: (runId: string) => invoke<void>("frp_stop", { runId }),
   frpLogout: () => invoke<void>("frp_logout"),
   // 本地自定义隧道（不经面板创建，配置由启动器生成）
   frpLocalList: () =>
     invoke<
-      { name: string; protocol: string; local_port: number; remote_port: number; host: string; port: number }[]
+      { id: string; running: boolean; name: string; protocol: string; local_port: number; remote_port: number; host: string; port: number }[]
     >("frp_local_list"),
   frpLocalSave: (tunnel: {
+    id: string;
     name: string;
     protocol: string;
     local_port: number;
@@ -1005,10 +926,10 @@ export const api = {
     host: string;
     port: number;
   }) => invoke<string>("frp_local_save", { tunnel }),
-  frpLocalDelete: (name: string) => invoke<void>("frp_local_delete", { name }),
-  frpLocalStart: (name: string) => invoke<void>("frp_local_start", { name }),
-  frpLogs: (name: string, lines = 300) =>
-    invoke<string>("frp_logs", { name, lines }),
+  frpLocalDelete: (id: string) => invoke<void>("frp_local_delete", { id }),
+  frpLocalStart: (id: string) => invoke<void>("frp_local_start", { id }),
+  frpLogs: (runId: string, lines = 300) =>
+    invoke<string>("frp_logs", { runId, lines }),
 
   // 皮肤托管（QookiX 账号自带，替代第三方皮肤站）
   qookixMySkin: () => invoke<QookixSkin>("qookix_my_skin", undefined, { net: true }),
@@ -1103,18 +1024,23 @@ export const api = {
     invoke<YggOauthConfig>("yggdrasil_set_credentials", { clientId, clientSecret }),
   /** 第一步：生成授权页地址（用系统浏览器打开） */
   yggdrasilOauthStart: () =>
-    invoke<{ url: string; state: string; redirectUri: string }>("yggdrasil_oauth_start"),
+    invoke<{
+      mode: "callback" | "device";
+      url: string;
+      state: string;
+      userCode?: string;
+      interval?: number;
+      expiresIn?: number;
+    }>("yggdrasil_oauth_start", undefined, { net: true }),
+  yggdrasilOauthPoll: (state: string) =>
+    invoke<{ status: "pending" } | { status: "ok"; result: YggOauthResult }>("yggdrasil_oauth_poll", { state }, { net: true }),
+  yggdrasilOauthCancel: (state: string) => invoke<void>("yggdrasil_oauth_cancel", { state }),
   /** 第三步：授权码换 OAuth token + 拉角色列表（多角色时前端展示选择） */
   yggdrasilOauthComplete: (code: string, state: string) =>
-    invoke<{
-      profiles: { id: string; name: string }[];
-      server: string;
-      serverName: string;
-      links: { homepage: string; register: string };
-    }>("yggdrasil_oauth_complete", { code, state }, { net: true }),
+    invoke<YggOauthResult>("yggdrasil_oauth_complete", { code, state }, { net: true }),
   /** 第四步：为选定角色签发 Minecraft 令牌并登记为皮肤站账号 */
-  yggdrasilOauthAddAccount: (profileId: string) =>
-    invoke<Account>("yggdrasil_oauth_add_account", { profileId }, { net: true }),
+  yggdrasilOauthAddAccount: (profileId: string, authorizationId: string) =>
+    invoke<Account>("yggdrasil_oauth_add_account", { profileId, authorizationId }, { net: true }),
 
   // ---------------------------------------------------------------
   // 拾木空间（www.mcimg.com）OAuth 授权登录 + 开放 API
@@ -1206,6 +1132,10 @@ export const api = {
     invoke<{ filename: string; modified: number; size: number; kind: string }[]>("list_crash_logs", { id: instanceId }),
   analyzeCrash: (instanceId: string, filename: string) =>
     invoke<CrashDiagnosis>("analyze_crash_log", { id: instanceId, filename }),
+  aiAnalyzeCrash: (instanceId: string, filename: string) =>
+    invoke<CrashAIAnalysis>("ai_analyze_crash", { id: instanceId, filename }, { net: true }),
+  submitCrashAIFeedback: (hash: string, helpful: boolean, reason: string, detail: string) =>
+    invoke<boolean>("submit_crash_ai_feedback", { hash, helpful, reason, detail }, { net: true }),
   getCrashReportContent: (instanceId: string, filename: string) =>
     invoke<string>("get_crash_report_content", { id: instanceId, filename }),
 

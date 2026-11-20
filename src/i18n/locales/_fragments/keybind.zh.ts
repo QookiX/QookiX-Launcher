@@ -6,6 +6,7 @@ export default {
   conflictHint: "同一按键被多个动作使用，游戏里可能互相干扰，建议修改",
   listening: "按下任意键…",
   pressEsc: "Esc 取消 · Delete 清除绑定",
+  none: "无",
   unbound: "未绑定",
   dirty: "{n} 项未保存",
   save: "保存修改",

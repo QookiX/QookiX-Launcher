@@ -8,6 +8,7 @@ export default {
     noFinished: "没有已完成的任务",
   },
   status: {
+    cancelling: "正在取消…",
     running: "进行中",
     failed: "失败",
     done: "完成",

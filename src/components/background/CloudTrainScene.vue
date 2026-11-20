@@ -17,6 +17,7 @@
  * WebGL 不可用静默回落到渐变底色。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { prefersReducedMotion } from "../../composables/useMotionPreference";
 import { resolveQuality, type BgQualityProfile } from "./quality";
 
 const props = withDefaults(
@@ -630,21 +631,6 @@ function init() {
   applyPalette();
   resize();
 
-  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-  if (reduced) {
-    // 减少动态效果：只给一帧静止画面；尺寸仍要跟着变，否则窗口一缩放就拉伸
-    if (typeof ResizeObserver !== "undefined") {
-      observer = new ResizeObserver(() => resize());
-      observer.observe(c);
-    }
-    window.addEventListener("resize", resize);
-    renderOnce();
-    return;
-  }
-
-  active = true;
-  startedAt = performance.now();
-  lastFrameAt = 0;
   // ResizeObserver 盯画布自身尺寸：窗口最大化、侧栏折叠、DPI 切换这些场景
   // 不一定触发 window.resize，只靠它会出现画布尺寸没跟上、整幅画面被拉伸变形
   if (typeof ResizeObserver !== "undefined") {
@@ -652,6 +638,22 @@ function init() {
     observer.observe(c);
   }
   window.addEventListener("resize", resize);
+  syncMotion(prefersReducedMotion.value);
+}
+
+function syncMotion(reduced: boolean) {
+  if (!gl || !prog) return;
+  if (reduced) {
+    cancelAnimationFrame(raf);
+    raf = 0;
+    active = false;
+    renderOnce();
+    return;
+  }
+  if (active) return;
+  active = true;
+  startedAt = performance.now();
+  lastFrameAt = 0;
   raf = requestAnimationFrame(loop);
 }
 
@@ -675,6 +677,7 @@ function destroy() {
 
 onMounted(init);
 onBeforeUnmount(destroy);
+watch(prefersReducedMotion, syncMotion);
 
 watch(
   () => props.dark,
@@ -686,7 +689,10 @@ watch(
 
 watch(
   () => props.accent,
-  () => applyPalette(),
+  () => {
+    applyPalette();
+    if (!active) renderOnce();
+  },
 );
 </script>
 

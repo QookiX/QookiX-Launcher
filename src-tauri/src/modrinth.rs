@@ -2,23 +2,8 @@ use crate::models::{InstalledContent, Instance};
 use crate::state::AppState;
 use crate::util::file_sha1;
 use serde_json::{json, Value};
-use std::path::{Path, PathBuf};
-use tauri::{Emitter, Manager};
-
-/// Best-effort pack display name from the zip's index.json.
-fn index_name_hint(pack_path: &Path) -> String {
-    if let Ok(bytes) = crate::util::read_zip_entry(pack_path, "modrinth.index.json") {
-        if let Ok(v) = serde_json::from_slice::<Value>(&bytes) {
-            if let Some(n) = v.get("name").and_then(|n| n.as_str()) {
-                return n.to_string();
-            }
-        }
-    }
-    pack_path
-        .file_name()
-        .map(|s| s.to_string_lossy().to_string())
-        .unwrap_or_else(|| "整合包".into())
-}
+use std::path::PathBuf;
+use tauri::Manager;
 
 /// 当前生效的 Modrinth API 根地址（跟随设置里的「内容 API 镜像」，官方源为默认）。
 /// 每次请求都重新解析，切镜像后立即生效。
@@ -327,6 +312,23 @@ pub async fn install_version(
     version_id: &str,
     kind: &str,
 ) -> Result<Value, String> {
+    install_version_replacing(app, state, instance, version_id, kind, None).await
+}
+
+pub(crate) async fn install_version_replacing(
+    app: tauri::AppHandle,
+    state: &AppState,
+    instance: &Instance,
+    version_id: &str,
+    kind: &str,
+    replacement: Option<crate::content_replacement::Replacement>,
+) -> Result<Value, String> {
+    if kind == "modpack" {
+        if replacement.is_some() {
+            return Err("请在实例中单独更新整合包".into());
+        }
+        return install_modpack(app, state, version_id).await;
+    }
     let ver = version(state, version_id).await?;
     let project_id = ver
         .get("project_id")
@@ -344,14 +346,13 @@ pub async fn install_version(
         .unwrap_or("")
         .to_string();
 
-    if kind == "modpack" {
-        return install_modpack(app, state, &ver).await;
+    if replacement.as_ref().is_some_and(|plan| !plan.matches_project(&project_id)) {
+        return Err("新版本与已安装内容的项目不匹配".into());
     }
-
     let (url, filename, size, sha1) = primary_file(&ver).ok_or("该版本没有可下载的文件")?;
     // `filename` comes from the Modrinth API (untrusted); ensure it is a plain
     // file name so it can never escape the content folder via traversal.
-    if !crate::util::is_safe_filename(&filename) {
+    if !crate::fsutil::is_safe_filename(&filename) {
         return Err(format!("文件名为非法路径: {filename}"));
     }
     let dest = state
@@ -360,6 +361,7 @@ pub async fn install_version(
         .join(kind_folder(kind))
         .join(&filename);
 
+    let dest = replacement.as_ref().map_or(dest, |plan| plan.download_path());
     let items = vec![crate::download::DownloadItem {
         url,
         dest: dest.clone(),
@@ -370,32 +372,11 @@ pub async fn install_version(
     }];
     let task_id = state.next_task_id();
     let source = format!("Modrinth：{project_name}（{version_number}）");
-    crate::install::emit_progress(
-        &app,
-        task_id,
-        "content",
-        &format!("正在下载 {filename}…"),
-        0,
-        1,
-        instance,
-        &source,
-    );
-    if let Err(e) = crate::download::download_many(app.clone(), state, task_id, "content", items).await {
-        let _ = app.emit(
-            "install://progress",
-            serde_json::json!({
-                "taskId": task_id,
-                "stage": "done",
-                "message": format!("安装失败：{e}"),
-                "done": 1,
-                "total": 1,
-                "instanceId": &instance.id,
-                "instanceName": &instance.name,
-                "source": &source,
-                "ok": false,
-            }),
-        );
-        return Err(e);
+    let mut task = crate::install::TaskCtx::new(&app, instance, &source, task_id);
+    task.emit("content", &format!("正在下载 {filename}…"), 0, 1);
+    if let Err(error) = crate::download::download_many(app.clone(), state, task_id, "content", items).await {
+        task.finish_err(&format!("安装失败：{error}"));
+        return Err(error);
     }
 
     let slug = project_info(state, &project_id)
@@ -427,8 +408,15 @@ pub async fn install_version(
         icon: project_icon(&state, &project_id).await,
         enabled: true,
     };
-    crate::instances::add_content(state, &instance.id, kind, record)?;
-    crate::install::emit_progress(&app, task_id, "done", "安装完成", 1, 1, instance, &format!("Modrinth：{project_name}（{version_number}）"));
+    let committed = match replacement {
+        Some(plan) => plan.commit(state, instance, kind, record),
+        None => crate::instances::add_content(state, &instance.id, kind, record),
+    };
+    if let Err(error) = committed {
+        task.finish_err(&format!("安装失败：{error}"));
+        return Err(error);
+    }
+    task.finish_ok("安装完成");
     Ok(json!({ "ok": true, "filename": filename }))
 }
 
@@ -603,26 +591,20 @@ pub async fn resolve_by_hashes(
 pub async fn install_modpack(
     app: tauri::AppHandle,
     state: &AppState,
-    ver: &Value,
+    version_id: &str,
 ) -> Result<Value, String> {
     let task_id = state.next_task_id();
-    let app_err = app.clone();
-    let result = install_modpack_inner(app, state, task_id, ver).await;
-    if let Err(ref e) = result {
-        let _ = app_err.emit(
-            "install://progress",
-            serde_json::json!({
-                "taskId": task_id,
-                "stage": "done",
-                "message": format!("安装失败：{e}"),
-                "done": 0,
-                "total": 0,
-                "instanceId": "",
-                "instanceName": "",
-                "source": "整合包安装",
-                "ok": false,
-            }),
-        );
+    let lease = state.jobs.register_install(task_id, &format!("@pack:{task_id}"), None)?;
+    let placeholder = Instance::default();
+    let mut task = crate::install::TaskCtx::new(&app, &placeholder, "整合包：Modrinth", task_id);
+    task.emit("prepare", "正在读取整合包信息…", 0, 1);
+    let result = async {
+        let version = lease.until_cancelled(version(state, version_id)).await??;
+        install_modpack_inner(app.clone(), state, &lease, &version).await
+    }.await;
+    match &result {
+        Ok(_) => task.finish_ok("整合包安装完成"),
+        Err(err) => task.finish_err(&format!("安装失败：{err}")),
     }
     result
 }
@@ -630,23 +612,21 @@ pub async fn install_modpack(
 async fn install_modpack_inner(
     app: tauri::AppHandle,
     state: &AppState,
-    task_id: u64,
+    lease: &crate::runtime_jobs::InstallLease,
     ver: &Value,
 ) -> Result<Value, String> {
-    let (url, filename, size, _) = primary_file(ver).ok_or("该版本没有可下载的文件")?;
-    let dl_dir = state.root.join("runtimes");
-    std::fs::create_dir_all(&dl_dir).map_err(|e| e.to_string())?;
-    let pack_path = dl_dir.join(&filename);
-    let _ = std::fs::remove_file(&pack_path);
+    let task_id = lease.task_id;
+    let (url, filename, size, sha1) = primary_file(ver).ok_or("该版本没有可下载的文件")?;
+    let (_stage, pack_path) = crate::modpack::stage_pack_download(state, &filename)?;
     let items = vec![crate::download::DownloadItem {
         url,
         dest: pack_path.clone(),
-        sha1: None,
+        sha1,
         sha512: None,
         size: Some(size),
         label: filename.clone(),
     }];
-    let pack_name = index_name_hint(&pack_path);
+    let pack_name = ver.get("name").and_then(Value::as_str).unwrap_or(&filename).to_string();
     let source = format!("整合包：{pack_name}");
     let placeholder = Instance {
         name: pack_name.clone(),
@@ -662,15 +642,15 @@ async fn install_modpack_inner(
         &placeholder,
         &source,
     );
-    crate::download::download_many(app.clone(), state, task_id, "modpack", vec![items[0].clone()]).await?;
+    crate::download::download_many(app.clone(), state, task_id, "modpack", items).await?;
 
     // ---- 公共骨架第一步：建实例 + 图标（mrpack 通常不内嵌图标，用项目图标兜底）----
     let project_id = ver.get("project_id").and_then(|v| v.as_str()).unwrap_or("");
     let icon_fallback_url = if project_id.is_empty() {
         None
     } else {
-        crate::modrinth::project_info(state, project_id)
-            .await
+        lease.until_cancelled(crate::modrinth::project_info(state, project_id))
+            .await?
             .ok()
             .and_then(|info| info.get("icon_url").and_then(|v| v.as_str()).map(|s| s.to_string()))
     };
@@ -680,10 +660,12 @@ async fn install_modpack_inner(
             pack_path: pack_path.clone(),
             icon_fallback_url,
         },
+        Some(lease),
     )
     .await?;
+    crate::install::emit_progress(&app, task_id, "prepare", "正在识别整合包文件…", 0, 1, &instance, &source);
 
-    let index_bytes = crate::util::read_zip_entry(&pack_path, "modrinth.index.json")
+    let index_bytes = crate::archive::read_zip_entry(&pack_path, "modrinth.index.json")
         .map_err(|e| format!("整合包缺少 modrinth.index.json: {e}"))?;
     let index: Value = serde_json::from_slice(&index_bytes).map_err(|e| e.to_string())?;
 
@@ -692,7 +674,8 @@ async fn install_modpack_inner(
     // ---- 公共骨架第二步：下载内容 → 扫盘登记 → 解压 overrides →
     //      安装游戏本体 → 标记已安装 ----
     // 先按文件哈希批量反查 Project/Version，供扫盘登记时补上在线来源信息
-    let resolved = resolve_by_hashes(state, &hash_by_name.values().cloned().collect::<Vec<_>>()).await;
+    let hashes = hash_by_name.values().cloned().collect::<Vec<_>>();
+    let resolved = lease.until_cancelled(resolve_by_hashes(state, &hashes)).await?;
     let mut hash_meta: std::collections::HashMap<String, (String, String)> =
         std::collections::HashMap::new();
     for (fname, h) in &hash_by_name {
@@ -711,8 +694,8 @@ async fn install_modpack_inner(
         state,
         &instance,
         &pack_path,
+        lease,
         crate::modpack::PackContentsSpec {
-            task_id,
             source: source.clone(),
             download_label: format!("正在下载 {file_count} 个文件…"),
             downloads: items,
@@ -724,7 +707,6 @@ async fn install_modpack_inner(
     )
     .await?;
 
-    crate::install::emit_progress(&app, task_id, "done", "整合包安装完成", 1, 1, &instance, &source);
     Ok(json!({ "ok": true, "files": file_count, "mods": count, "instanceId": instance.id }))
 }
 
@@ -773,9 +755,10 @@ pub fn urlencode(s: &str) -> String {
 pub fn uninstall(state: &AppState, instance: &Instance, kind: &str, filename: &str) -> Result<(), String> {
     // `filename` originates from the Modrinth API / pack metadata (untrusted);
     // block path traversal before it is joined onto the instance folder.
-    if !crate::util::is_safe_filename(filename) {
+    if !crate::fsutil::is_safe_filename(filename) {
         return Err("非法文件名".into());
     }
+    let _files = state.jobs.reserve_game_files(&instance.id)?;
     let dir: PathBuf = state
         .instances_dir()
         .join(&instance.id)

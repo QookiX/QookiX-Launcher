@@ -30,6 +30,41 @@ pub async fn get(
     }
 }
 
+/// Read a complete GitHub collection, including the pages used for quota cleanup.
+pub async fn get_collection(
+    client: &reqwest::Client,
+    url: &str,
+    token: &str,
+) -> Result<Option<Vec<Value>>, String> {
+    collect_pages(|page| async move {
+        let next = format!("{url}?per_page=100&page={page}");
+        get(client, &next, token).await
+    }).await
+}
+
+async fn collect_pages<F, Request>(request: F) -> Result<Option<Vec<Value>>, String>
+where
+    F: Fn(u64) -> Request,
+    Request: std::future::Future<Output = Result<Option<Value>, String>>,
+{
+    let mut output = Vec::new();
+    for page in 1.. {
+        let Some(value) = request(page).await? else {
+            return if page == 1 { Ok(None) } else { Err("GitHub 列表在分页读取期间消失".into()) };
+        };
+        let entries = match value {
+            Value::Array(entries) => entries,
+            _ => return Err("GitHub 列表响应格式无效".into()),
+        };
+        let done = entries.len() < 100;
+        output.extend(entries);
+        if done {
+            return Ok(Some(output));
+        }
+    }
+    unreachable!()
+}
+
 /// 带令牌的 POST / PATCH / DELETE（JSON body），返回响应 JSON（204 返回 null）。
 pub async fn send_json(
     client: &reqwest::Client,
@@ -66,4 +101,27 @@ async fn short_body(resp: reqwest::Response) -> String {
         .chars()
         .take(200)
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn collects_following_pages_and_detects_an_incomplete_listing() {
+        let entries = collect_pages(|page| async move {
+            Ok(Some(Value::Array(match page {
+                1 => (0..100).map(Value::from).collect(),
+                2 => vec![Value::from(100), Value::from(101)],
+                page => panic!("unexpected page {page}"),
+            })))
+        }).await.unwrap().unwrap();
+        assert_eq!(entries.len(), 102);
+        assert_eq!(entries.last(), Some(&Value::from(101)));
+
+        let interrupted = collect_pages(|page| async move {
+            Ok((page == 1).then(|| Value::Array(vec![Value::Null; 100])))
+        }).await;
+        assert!(interrupted.is_err());
+    }
 }

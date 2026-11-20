@@ -18,7 +18,7 @@ export function hexToRgb(hex: string): Rgb {
       .join("");
   }
   const num = parseInt(h, 16);
-  if (Number.isNaN(num) || h.length !== 6) {
+  if (!/^[\da-f]{6}$/i.test(h)) {
     return { r: 232, g: 154, b: 75 };
   }
   return { r: (num >> 16) & 255, g: (num >> 8) & 255, b: num & 255 };
@@ -48,26 +48,70 @@ export function rgba(hex: string, alpha: number): string {
   return `rgba(${r}, ${g}, ${b}, ${alpha})`;
 }
 
-/**
- * Pick a readable text color (dark ink or white) for a filled button of the
- * given accent. Uses W3C relative luminance; the 0.55 threshold favors dark
- * ink for warm/light accents (amber, gold) and white for dark/saturated ones
- * (blue, violet, deep green) so contrast stays legible when the user picks a
- * custom theme color.
- */
-export function accentContrast(hex: string): string {
+function luminance(hex: string): number {
   const { r, g, b } = hexToRgb(hex);
   const toLin = (v: number) => {
     const s = v / 255;
-    return s <= 0.03928 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
+    return s <= 0.04045 ? s / 12.92 : Math.pow((s + 0.055) / 1.055, 2.4);
   };
-  const L = 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
-  return L > 0.55 ? "#1a1208" : "#ffffff";
+  return 0.2126 * toLin(r) + 0.7152 * toLin(g) + 0.0722 * toLin(b);
+}
+
+export function contrastRatio(a: string, b: string): number {
+  const first = luminance(a);
+  const second = luminance(b);
+  return (Math.max(first, second) + 0.05) / (Math.min(first, second) + 0.05);
+}
+
+export function accentContrast(hex: string): string {
+  return contrastRatio(hex, "#000000") >= contrastRatio(hex, "#ffffff")
+    ? "#000000"
+    : "#ffffff";
+}
+
+export function buildActionPalette(accent: string) {
+  const { r, g, b } = hexToRgb(accent);
+  const fill = rgbToHex(r, g, b);
+  const ink = accentContrast(fill);
+  // Keep the user's selected color visible even when one gradient endpoint would
+  // cross the minimum contrast for the same text color.
+  const readable = (candidate: string) => contrastRatio(candidate, ink) >= 4.5 ? candidate : fill;
+  return { fill, ink, deep: readable(darken(fill)), hover: readable(lighten(fill)) };
+}
+
+function primaryButtonOverrides(accent: string): NonNullable<GlobalThemeOverrides["Button"]> {
+  const { fill, ink, deep, hover } = buildActionPalette(accent);
+  return {
+    borderRadiusMedium: "10px",
+    fontWeight: "600",
+    colorPrimary: fill,
+    colorHoverPrimary: hover,
+    colorFocusPrimary: hover,
+    colorPressedPrimary: deep,
+    textColorPrimary: ink,
+    textColorHoverPrimary: ink,
+    textColorFocusPrimary: ink,
+    textColorPressedPrimary: ink,
+  };
 }
 
 export const ACCENT = DEFAULT_ACCENT;
 export const ACCENT_DEEP = darken(DEFAULT_ACCENT);
 export const ACCENT_SOFT = rgba(DEFAULT_ACCENT, 0.14);
+
+const controls = {
+  borderRadius: "10px",
+  borderRadiusSmall: "8px",
+  fontSize: "14px",
+  fontSizeTiny: "12px",
+  fontSizeSmall: "12px",
+  fontSizeMedium: "13px",
+  fontSizeLarge: "13px",
+  heightTiny: "24px",
+  heightSmall: "28px",
+  heightMedium: "32px",
+  heightLarge: "36px",
+};
 
 export function buildDarkOverrides(accent: string): GlobalThemeOverrides {
   const primary = accent;
@@ -75,13 +119,11 @@ export function buildDarkOverrides(accent: string): GlobalThemeOverrides {
   const pressed = darken(accent, 0.14);
   return {
     common: {
+      ...controls,
       primaryColor: primary,
       primaryColorHover: hover,
       primaryColorPressed: pressed,
       primaryColorSuppl: primary,
-      borderRadius: "10px",
-      borderRadiusSmall: "8px",
-      fontSize: "14px",
       textColorBase: "#e8e8ee",
       textColor1: "#f2f3f7",
       textColor2: "#d4d5dd",
@@ -99,10 +141,7 @@ export function buildDarkOverrides(accent: string): GlobalThemeOverrides {
       warningColor: "#e0a030",
       infoColor: "#5aa2f0",
     },
-    Button: {
-      borderRadiusMedium: "10px",
-      fontWeight: "600",
-    },
+    Button: primaryButtonOverrides(accent),
     Card: {
       borderRadius: "14px",
       borderColor: "transparent",
@@ -133,13 +172,11 @@ export function buildLightOverrides(accent: string): GlobalThemeOverrides {
   const pressed = darken(accent, 0.12);
   return {
     common: {
+      ...controls,
       primaryColor: primary,
       primaryColorHover: hover,
       primaryColorPressed: pressed,
       primaryColorSuppl: primary,
-      borderRadius: "10px",
-      borderRadiusSmall: "8px",
-      fontSize: "14px",
       textColorBase: "#3a3d48",
       textColor1: "#1a1d24",
       textColor2: "#4a4d58",
@@ -157,10 +194,7 @@ export function buildLightOverrides(accent: string): GlobalThemeOverrides {
       warningColor: "#c87420",
       infoColor: "#3b82c4",
     },
-    Button: {
-      borderRadiusMedium: "10px",
-      fontWeight: "600",
-    },
+    Button: primaryButtonOverrides(accent),
     Card: {
       borderRadius: "14px",
       borderColor: "transparent",

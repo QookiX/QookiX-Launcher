@@ -241,6 +241,8 @@ export default {
     clearContent:
       "将清理 Java 下载临时文件、Java 检测缓存等可安全删除的缓存，不会影响任何实例、库、资源或版本文件。确定继续吗？",
     clearSuccess: "已清除缓存，释放 {size}",
+    clearPartial: "已释放 {size}。未清理的缓存：{details}",
+    javaDownloadInUse: "Java 下载缓存正在使用中",
     clearFailed: "清除缓存失败：{error}",
   },
   about: {
@@ -357,7 +359,7 @@ export default {
     newDir: "新数据目录：",
     mode: "迁移方式：",
     moveTitle: "移动数据",
-    moveDesc: "把所有数据移动到新目录（推荐，同盘瞬间完成）",
+    moveDesc: "把数据完整复制并核验后切换到新目录，再清理旧目录",
     copyTitle: "复制数据",
     copyDesc: "复制到新目录，保留旧目录作为备份",
     pointerTitle: "仅切换目录",
@@ -366,6 +368,8 @@ export default {
     migrating: "迁移中…",
     start: "开始迁移",
     done: "数据目录已更改：",
+    scheduled: "重启后将迁移数据到：",
+    cancelFailed: "取消未完成的迁移",
     restartWarn: "需要重启应用以完全生效。",
     later: "稍后重启",
     now: "立即重启",

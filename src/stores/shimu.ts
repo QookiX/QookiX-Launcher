@@ -45,6 +45,7 @@ export const useShimuStore = defineStore("shimu", {
     } as ShimuStatus,
     /** 正在等待浏览器回调的授权 state（空 = 没在等） */
     pendingState: "",
+    authRevision: 0,
     /** 正在换 token */
     loading: false,
   }),
@@ -72,36 +73,47 @@ export const useShimuStore = defineStore("shimu", {
       }
     },
     async refreshStatus() {
+      const revision = this.authRevision;
       try {
-        this.status = await api.shimuStatus();
+        const status = await api.shimuStatus();
+        if (revision === this.authRevision) this.status = status;
       } catch {
         /* 保持原状态 */
       }
     },
     /** 第一步：拿授权页地址（调用方负责用系统浏览器打开） */
     async startAuth(): Promise<string> {
+      const revision = ++this.authRevision;
+      this.loading = false;
       const info = await api.shimuOauthStart();
+      if (revision !== this.authRevision) throw new Error(i18n.global.t("shimu.errBadCallback"));
       this.pendingState = info.state;
       return info.url;
     },
     /** 第三步：授权码换 access_token（深链回调与手动粘贴共用） */
     async completeAuth(code: string, state: string) {
+      if (this.pendingState && this.pendingState !== state) return null;
+      const revision = this.authRevision;
       this.loading = true;
       try {
         const res = await api.shimuOauthComplete(code, state);
+        if (revision !== this.authRevision) return null;
         if (res.user) this.status = { ...this.status, loggedIn: true, expired: false, user: res.user };
         this.pendingState = "";
         await this.refreshStatus();
-        return res;
+        return revision === this.authRevision ? res : null;
+      } catch (error) {
+        if (revision !== this.authRevision) return null;
+        throw error;
       } finally {
-        this.loading = false;
+        if (revision === this.authRevision) this.loading = false;
       }
     },
     /**
      * 处理回调地址（深链 `qookix://oauth/callback?code=..&state=..` 或用户手动粘贴）。
      * 返回 `denied` 表示用户在授权页点了拒绝。
      */
-    async handleCallback(input: string): Promise<"ok" | "denied"> {
+    async handleCallback(input: string): Promise<"ok" | "denied" | "ignored"> {
       const raw = input.trim();
       let url: URL;
       try {
@@ -109,18 +121,21 @@ export const useShimuStore = defineStore("shimu", {
       } catch {
         throw new Error(i18n.global.t("shimu.errBadCallback"));
       }
-      if (url.searchParams.get("error")) return "denied";
       const code = url.searchParams.get("code")?.trim() ?? "";
       const state = url.searchParams.get("state")?.trim() ?? "";
+      if (this.pendingState && this.pendingState !== state) return "ignored";
+      if (url.searchParams.get("error")) return "denied";
       if (!code) throw new Error(i18n.global.t("shimu.errNoCode"));
-      await this.completeAuth(code, state);
-      return "ok";
+      return await this.completeAuth(code, state) ? "ok" : "ignored";
     },
     async setCredentials(clientId: string, clientSecret?: string) {
       this.config = await api.shimuSetCredentials(clientId, clientSecret);
     },
     async logout() {
+      const revision = ++this.authRevision;
+      this.loading = false;
       await api.shimuLogout();
+      if (revision !== this.authRevision) return;
       this.pendingState = "";
       await this.refreshStatus();
     },

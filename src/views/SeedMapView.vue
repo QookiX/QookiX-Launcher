@@ -1580,7 +1580,7 @@ onUnmounted(() => {
 
 <template>
   <div id="seed-root" class="seed-view" data-tauri-drag-region>
-    <div class="glass param-bar">
+    <div class="glass qx-toolbar param-bar">
       <div class="field seed-field">
         <label>{{ t("seedMap.seed") }}</label>
         <NInput v-model:value="seedText" :placeholder="t('seedMap.seedPlaceholder')" @keyup.enter="applySeed" />
@@ -1625,7 +1625,7 @@ onUnmounted(() => {
       </div>
     </div>
 
-    <div class="glass map-toolbar">
+    <div class="glass qx-toolbar map-toolbar">
       <div class="coord-field"><label>X</label><NInputNumber v-model:value="gotoX" size="small" :show-button="false" /></div>
       <div class="coord-field"><label>Z</label><NInputNumber v-model:value="gotoZ" size="small" :show-button="false" /></div>
       <button class="mini-btn primary" @click="goTo"><IconMapPin />{{ t("seedMap.goTo") }}</button>
@@ -1835,7 +1835,7 @@ onUnmounted(() => {
 .link-btn:hover { color: var(--accent); }
 
 /* —— 参数栏 —— */
-.param-bar { padding: 10px 14px; display: flex; gap: 10px; flex-wrap: wrap; align-items: flex-end; }
+.param-bar { align-items: flex-end; }
 .param-bar .field { width: 128px; }
 .seed-field { flex: 1 1 180px; min-width: 180px; }
 .seed-actions { display: flex; align-items: center; gap: 6px; padding-bottom: 1px; }
@@ -1855,7 +1855,6 @@ onUnmounted(() => {
 .map-side .panel-title { margin: 0 0 2px; }
 
 /* —— 工具栏 —— */
-.map-toolbar { padding: 8px 12px; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; row-gap: 7px; }
 .tb-sep { width: 1px; height: 20px; background: var(--border); margin: 0 2px; }
 .tb-scale { margin-left: auto; white-space: nowrap; }
 .coord-field { display: flex; align-items: center; gap: 5px; }

@@ -23,24 +23,26 @@ fn world_dir(root: &Path, instance_id: &str, world: &str) -> PathBuf {
 }
 
 /// 取本地世界对应的云端 world_id；没有则分配一个并持久化。
-pub fn world_id_for(state: &AppState, instance_id: &str, world: &str) -> String {
-    let mut cs = store::load(state);
-    if let Some(link) = cs
-        .worlds
-        .iter()
-        .find(|w| w.instance_id == instance_id && w.world_dir == world)
-    {
-        return link.world_id.clone();
-    }
-    let id = uuid::Uuid::new_v4().simple().to_string();
-    cs.worlds.push(WorldLink {
-        instance_id: instance_id.to_string(),
-        world_dir: world.to_string(),
-        world_id: id.clone(),
-        auto_sync: false,
-    });
-    let _ = store::save(state, &cs);
-    id
+pub fn world_link(
+    state: &AppState,
+    expected: &store::CloudState,
+    instance_id: &str,
+    world: &str,
+) -> Result<WorldLink, String> {
+    store::edit(state, |cs| {
+        cs.check_session(expected)?;
+        if let Some(link) = cs.worlds.iter().find(|w| w.instance_id == instance_id && w.world_dir == world) {
+            return Ok(link.clone());
+        }
+        let link = WorldLink {
+            instance_id: instance_id.to_string(),
+            world_dir: world.to_string(),
+            world_id: uuid::Uuid::new_v4().simple().to_string(),
+            auto_sync: false,
+        };
+        cs.worlds.push(link.clone());
+        Ok(link)
+    })
 }
 
 /// 设置某个世界的自动同步开关。
@@ -50,22 +52,19 @@ pub fn set_auto_sync(
     world: &str,
     enabled: bool,
 ) -> Result<(), String> {
-    let mut cs = store::load(state);
-    if let Some(link) = cs
-        .worlds
-        .iter_mut()
-        .find(|w| w.instance_id == instance_id && w.world_dir == world)
-    {
-        link.auto_sync = enabled;
-    } else {
-        cs.worlds.push(WorldLink {
-            instance_id: instance_id.to_string(),
-            world_dir: world.to_string(),
-            world_id: uuid::Uuid::new_v4().simple().to_string(),
-            auto_sync: enabled,
-        });
-    }
-    store::save(state, &cs)
+    store::edit(state, |cs| {
+        if let Some(link) = cs.worlds.iter_mut().find(|w| w.instance_id == instance_id && w.world_dir == world) {
+            link.auto_sync = enabled;
+        } else {
+            cs.worlds.push(WorldLink {
+                instance_id: instance_id.to_string(),
+                world_dir: world.to_string(),
+                world_id: uuid::Uuid::new_v4().simple().to_string(),
+                auto_sync: enabled,
+            });
+        }
+        Ok(())
+    })
 }
 
 /// 兼容保留（旧单卷打包路径，暂未使用）
@@ -113,26 +112,7 @@ fn write_dir_to_zip(
     Ok(())
 }
 
-/// 递归统计目录字节数（排除 session.lock）
-fn dir_size(dir: &Path) -> u64 {
-    let mut total = 0u64;
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            let p = e.path();
-            if p.is_dir() {
-                total += dir_size(&p);
-            } else if let Ok(m) = p.metadata() {
-                let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-                if !is_excluded(&name) {
-                    total += m.len();
-                }
-            }
-        }
-    }
-    total
-}
-
-/// GitHub Release 单个附件上限 2 GiB；分卷按 1.9 GiB 切，留安全余量
+/// Maximum compressed size of one uploaded volume.
 pub const MAX_ASSET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const PART_TARGET_BYTES: u64 = 1900 * 1024 * 1024;
 
@@ -141,6 +121,19 @@ pub struct PackedPart {
     pub path: PathBuf,
     pub asset_name: String,
     pub size: u64,
+}
+
+pub struct PackedWorld {
+    pub parts: Vec<PackedPart>,
+    pub size: u64,
+    _temp: tempfile::TempDir,
+}
+
+pub fn task_temp(root: &Path) -> Result<tempfile::TempDir, String> {
+    let base = root.join("cloud_sync").join("tmp");
+    std::fs::create_dir_all(&base).map_err(|e| format!("创建临时目录失败: {e}"))?;
+    tempfile::Builder::new().prefix("snapshot-").tempdir_in(base)
+        .map_err(|error| format!("创建快照暂存目录失败: {error}"))
 }
 
 /// 打包世界到临时文件（超 2GB 时自动按文件边界分卷）。
@@ -152,25 +145,25 @@ pub fn pack_world(
     instance_id: &str,
     world: &str,
     progress: &(dyn Fn(u64, u64) + Send + Sync),
-) -> Result<(Vec<PackedPart>, u64), String> {
-    if !crate::util::is_safe_filename(world) {
+) -> Result<PackedWorld, String> {
+    if !crate::fsutil::is_safe_filename(world) {
         return Err("非法的世界目录名".into());
     }
+    crate::instances::validate_instance_id(instance_id)?;
     let src = world_dir(root, instance_id, world);
     if !src.is_dir() {
         return Err(format!("世界目录不存在: {}", src.display()));
     }
-    let total = dir_size(&src);
-    let tmp_dir = root.join("cloud_sync").join("tmp");
-    std::fs::create_dir_all(&tmp_dir).map_err(|e| format!("创建临时目录失败: {e}"))?;
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let tmp_dir = task_temp(root)?;
 
     // 收集所有文件（相对路径 + 大小），按大小降序排（大文件先进卷，减少碎片空间浪费）
     let mut files: Vec<(PathBuf, String, u64)> = Vec::new();
     collect_files(&src, "", &mut files)?;
+    if files.is_empty() {
+        return Err("世界存档没有可上传的内容".into());
+    }
+    let total = files.iter().try_fold(0u64, |total, file| total.checked_add(file.2))
+        .ok_or("世界存档大小超出限制")?;
     files.sort_by(|a, b| b.2.cmp(&a.2));
     // 单文件本身就超上限则无法分卷
     if let Some((p, _, sz)) = files.iter().find(|(_, _, s)| *s > MAX_ASSET_BYTES) {
@@ -216,7 +209,7 @@ pub fn pack_world(
         } else {
             String::new()
         };
-        let zip_path = tmp_dir.join(format!("{world}-{stamp}{suffix}.zip"));
+        let zip_path = tmp_dir.path().join(format!("save{suffix}.zip"));
         let file = std::fs::File::create(&zip_path).map_err(|e| format!("创建压缩包失败: {e}"))?;
         let mut zw = zip::ZipWriter::new(file);
         for (abs, rel, _sz) in list {
@@ -232,7 +225,10 @@ pub fn pack_world(
             progress(done.min(total), total);
         }
         zw.finish().map_err(|e| format!("完成压缩失败: {e}"))?;
-        let size = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&zip_path).map_err(|error| error.to_string())?.len();
+        if size > MAX_ASSET_BYTES {
+            return Err("压缩分卷超过附件大小限制".into());
+        }
         out.push(PackedPart {
             path: zip_path,
             asset_name: format!("save{suffix}.zip"),
@@ -240,13 +236,13 @@ pub fn pack_world(
         });
     }
     let total_zipped = out.iter().map(|p| p.size).sum();
-    Ok((out, total_zipped))
+    Ok(PackedWorld { parts: out, size: total_zipped, _temp: tmp_dir })
 }
 
 fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<(PathBuf, String, u64)>) -> Result<(), String> {
     let rd = std::fs::read_dir(dir).map_err(|e| format!("读取目录失败: {e}"))?;
-    for e in rd.flatten() {
-        let p = e.path();
+    for entry in rd {
+        let p = entry.map_err(|error| error.to_string())?.path();
         let name = p
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
@@ -259,11 +255,14 @@ fn collect_files(dir: &Path, prefix: &str, out: &mut Vec<(PathBuf, String, u64)>
         } else {
             format!("{prefix}/{name}")
         };
-        if p.is_dir() {
+        let metadata = std::fs::symlink_metadata(&p).map_err(|error| error.to_string())?;
+        if crate::fsutil::is_link_or_reparse_point(&metadata) {
+            return Err(format!("存档包含无法随快照上传的链接: {rel}"));
+        }
+        if metadata.is_dir() {
             collect_files(&p, &rel, out)?;
-        } else if p.is_file() {
-            let sz = p.metadata().map(|m| m.len()).unwrap_or(0);
-            out.push((p, rel, sz));
+        } else if metadata.is_file() {
+            out.push((p, rel, metadata.len()));
         }
     }
     Ok(())
@@ -301,48 +300,64 @@ pub fn unpack_to_world(
     world: &str,
     zip_paths: &[PathBuf],
 ) -> Result<Option<String>, String> {
-    if !crate::util::is_safe_filename(world) {
+    if !crate::fsutil::is_safe_filename(world) {
         return Err("非法的世界目录名".into());
     }
-    let dest = world_dir(root, instance_id, world);
-    let mut backup_name: Option<String> = None;
-    if dest.exists() {
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        let bak = format!("{world}.bak-{stamp}");
-        let bak_path = dest
-            .parent()
-            .ok_or("路径异常")?
-            .join(&bak);
-        std::fs::rename(&dest, &bak_path).map_err(|e| format!("备份现有世界失败: {e}"))?;
-        backup_name = Some(bak);
+    crate::instances::validate_instance_id(instance_id)?;
+    if zip_paths.is_empty() {
+        return Err("云快照没有可恢复的分卷".into());
     }
-    std::fs::create_dir_all(&dest).map_err(|e| format!("创建世界目录失败: {e}"))?;
+    let dest = world_dir(root, instance_id, world);
+    let saves = dest.parent().ok_or("无法确定存档父目录")?;
+    std::fs::create_dir_all(saves).map_err(|error| format!("创建存档目录失败: {error}"))?;
+    let stage = tempfile::Builder::new().prefix(".qookix-cloud-restore-").tempdir_in(saves)
+        .map_err(|error| format!("创建恢复暂存目录失败: {error}"))?;
+    let staged_world = stage.path().join("world");
     for zip_path in zip_paths {
-        let file = std::fs::File::open(zip_path).map_err(|e| format!("打开压缩包失败: {e}"))?;
-        let mut archive =
-            zip::ZipArchive::new(file).map_err(|e| format!("解析压缩包失败: {e}"))?;
-        for i in 0..archive.len() {
-            let mut entry = archive
-                .by_index(i)
-                .map_err(|e| format!("读取压缩条目失败: {e}"))?;
-            let Some(rel) = entry.enclosed_name().map(|p| p.to_path_buf()) else {
-                continue; // 拒绝越界路径
-            };
-            let out_path = dest.join(&rel);
-            if entry.is_dir() {
-                std::fs::create_dir_all(&out_path).ok();
-                continue;
-            }
-            if let Some(parent) = out_path.parent() {
-                std::fs::create_dir_all(parent).ok();
-            }
-            let mut out = std::fs::File::create(&out_path)
-                .map_err(|e| format!("写入 {} 失败: {e}", out_path.display()))?;
-            std::io::copy(&mut entry, &mut out).map_err(|e| format!("解压失败: {e}"))?;
+        if crate::archive::extract_zip(zip_path, &staged_world, &[])? == 0 {
+            return Err("云快照包含空分卷".into());
         }
     }
-    Ok(backup_name)
+    crate::world_backup::validate_staged_world(&staged_world)?;
+    match std::fs::symlink_metadata(&dest) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            std::fs::rename(&staged_world, &dest).map_err(|error| format!("提交恢复存档失败: {error}"))?;
+            crate::nbt::map::invalidate_world(&dest);
+            Ok(None)
+        }
+        Err(error) => Err(format!("检查现有存档失败: {error}")),
+        Ok(_) if !dest.is_dir() => Err("现有存档路径不是目录".into()),
+        Ok(_) => {
+            let backup = format!("{world}.bak-{}", uuid::Uuid::new_v4().simple());
+            crate::world_backup::commit_staged_world(&staged_world, &dest, &saves.join(&backup))?;
+            Ok(Some(backup))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn invalid_download_does_not_change_world_and_task_temporary_files_are_removed() {
+        let fixture = tempfile::tempdir().unwrap();
+        let world = world_dir(fixture.path(), "instance", "example");
+        std::fs::create_dir_all(&world).unwrap();
+        let data = fastnbt::Value::Compound([
+            ("LevelName".into(), fastnbt::Value::String("Current".into())),
+        ].into());
+        let root = fastnbt::Value::Compound([("Data".into(), data)].into());
+        crate::nbt::level::write_level(&world.join("level.dat"), &root).unwrap();
+        std::fs::write(world.join("marker"), "original").unwrap();
+        let packed = pack_world(fixture.path(), "instance", "example", &|_, _| {}).unwrap();
+        let volume = packed.parts[0].path.clone();
+        let corrupt = fixture.path().join("corrupt.zip");
+        std::fs::write(&corrupt, "invalid archive contents").unwrap();
+        assert!(unpack_to_world(fixture.path(), "instance", "example", &[volume.clone(), corrupt]).is_err());
+        assert_eq!(std::fs::read_to_string(world.join("marker")).unwrap(), "original");
+        assert_eq!(std::fs::read_dir(world.parent().unwrap()).unwrap().count(), 1);
+        drop(packed);
+        assert!(!volume.exists());
+    }
 }

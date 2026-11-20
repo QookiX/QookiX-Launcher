@@ -9,8 +9,9 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useRouter } from "vue-router";
-import { NButton, NModal, useMessage } from "naive-ui";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { NButton, NInput, NModal, useMessage } from "naive-ui";
+import { useTauriListenerScope } from "../../composables/tauriListeners";
+import { type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { api } from "../../api";
@@ -34,6 +35,8 @@ import type {
   ResolvedMissingMod,
   UpdateInfo,
 } from "../../types";
+
+const { listen } = useTauriListenerScope();
 
 const props = defineProps<{
   instanceId: string;
@@ -81,12 +84,27 @@ const filteredItems = computed(() => {
 let loadSeq = 0;
 async function loadContent() {
   const seq = ++loadSeq;
+  const { instanceId, kind } = props;
   loadingContent.value = true;
   try {
-    const res = await api.listContent(props.instanceId, props.kind);
+    let res = await api.listContent(instanceId, kind);
+    if (seq !== loadSeq) return;
+    if (res.needsReconciliation) {
+      try {
+        const warnings = await api.reconcileContent(instanceId, kind);
+        if (seq !== loadSeq) return;
+        res = await api.listContent(instanceId, kind);
+        res.warnings.push(...warnings.filter((warning) => !res.warnings.includes(warning)));
+      } catch (error) {
+        if (seq === loadSeq) message.error(String(error));
+      }
+    }
     if (seq !== loadSeq) return;
     contentItems.value = res.items;
-    api.identifyContent(props.instanceId, props.kind).catch(() => {});
+    if (res.warnings.length) message.warning(res.warnings[0]);
+    void api.identifyContent(instanceId, kind).catch((error) => {
+      if (seq === loadSeq) console.warn("Failed to identify installed content:", error);
+    });
   } catch (e) {
     if (seq !== loadSeq) return;
     message.error(String(e));
@@ -498,11 +516,11 @@ defineExpose({
             <div class="dep-actions">
               <template v-if="depResolved[m.modId]">
                 <span class="dep-title text-ellipsis">{{ depResolved[m.modId]!.title }}</span>
-                <button class="btn ok" :disabled="installingDeps.includes(m.modId)" @click="installMissing(m)">
+                <button class="qx-btn qx-btn--primary" :disabled="installingDeps.includes(m.modId)" @click="installMissing(m)">
                   {{ installingDeps.includes(m.modId) ? t("instanceContent.installing") : t("instanceContent.install") }}
                 </button>
               </template>
-              <button v-else class="btn ghost" @click="searchMissing(m)">{{ t("instanceContent.searchInCenter") }}</button>
+              <button v-else class="qx-btn" @click="searchMissing(m)">{{ t("instanceContent.searchInCenter") }}</button>
             </div>
           </div>
         </div>
@@ -514,27 +532,25 @@ defineExpose({
     </NModal>
 
     <!-- 搜索过滤：仅在列表非空时显示 -->
-    <div v-if="contentItems.length > 3" class="filter-bar glass">
-      <IconSearch />
-      <input
-        v-model="filterText"
-        class="filter-input"
-        :placeholder="t('instanceContent.searchPlaceholder', { count: contentItems.length })"
-      />
-      <button v-if="filterText" class="filter-clear" :title="t('instanceContent.clear')" @click="filterText = ''">
-        <IconClose />
-      </button>
-    </div>
+    <NInput
+      v-if="contentItems.length > 3"
+      v-model:value="filterText"
+      class="filter-input"
+      :placeholder="t('instanceContent.searchPlaceholder', { count: contentItems.length })"
+      clearable
+    >
+      <template #prefix><IconSearch /></template>
+    </NInput>
     <div v-if="!loadingContent && !filteredItems.length" class="qx-empty glass">
       <template v-if="contentItems.length">
         <p>{{ t("instanceContent.noMatch", { keyword: filterText }) }}</p>
-        <button class="btn ghost" @click="filterText = ''">{{ t("instanceContent.clearSearch") }}</button>
+        <button class="qx-btn" @click="filterText = ''">{{ t("instanceContent.clearSearch") }}</button>
       </template>
       <template v-else>
         <p>{{ t("instanceContent.emptyList") }}</p>
         <div class="empty-actions">
-          <button class="btn ghost" @click="importLocal"><IconPlus /> {{ t("instanceContent.importLocal") }}</button>
-          <button class="btn ghost" @click="router.push('/browse')">{{ t("instanceContent.installFromCenter") }}</button>
+          <button class="qx-btn" @click="importLocal"><IconPlus /> {{ t("instanceContent.importLocal") }}</button>
+          <button class="qx-btn" @click="router.push('/browse')">{{ t("instanceContent.installFromCenter") }}</button>
         </div>
       </template>
     </div>
@@ -674,56 +690,7 @@ defineExpose({
 </template>
 
 <style scoped>
-.filter-bar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 14px;
-  margin-bottom: 12px;
-  color: var(--text-3);
-}
-.filter-input {
-  flex: 1;
-  background: none;
-  border: none;
-  outline: none;
-  color: var(--text-1);
-  font-size: var(--fs-sm);
-  font-family: inherit;
-}
-.filter-clear {
-  border: none;
-  background: transparent;
-  color: var(--text-3);
-  cursor: pointer;
-  display: inline-flex;
-  padding: 2px;
-  font-size: var(--fs-sm);
-}
-.filter-clear:hover {
-  color: var(--text-1);
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  border: none;
-  border-radius: var(--r-md);
-  padding: 9px 16px;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.14s;
-}
-.btn.ghost {
-  background: var(--w-06);
-  color: var(--text-1);
-  border: 1px solid var(--border);
-}
-.btn.ghost:hover {
-  background: var(--w-10);
-}
+.filter-input { margin-bottom: var(--sp-4); }
 .content-list {
   padding: 18px;
 }
@@ -912,13 +879,7 @@ defineExpose({
 }
 
 /* ---- 模组工具栏 / 依赖体检 ---- */
-.btn.ok {
-  background: var(--success-12);
-  color: var(--success);
-}
-.btn.ok:hover {
-  opacity: 0.85;
-}
+
 .dep-dialog {
   width: 640px;
   max-width: 94vw;

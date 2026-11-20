@@ -316,10 +316,7 @@ pub async fn yggdrasil_add_account(
             server_name.trim().to_string()
         },
     };
-    let mut list = load_accounts(state.inner());
-    list.retain(|a| a.uuid() != account.uuid());
-    list.push(account.clone());
-    save_accounts(state.inner(), &list)?;
+    crate::accounts::save_account(state.inner(), &account)?;
     Ok(account)
 }
 
@@ -405,357 +402,119 @@ async fn refresh(
     })
 }
 
-/// 启动前调用：令牌有效则原样返回；失效则尝试刷新并持久化新令牌。
-/// 刷新也失败时返回错误，提示用户重新登录。
-pub async fn ensure_token(state: &AppState, account_uuid: &str) -> Result<String, String> {
-    let account = load_accounts(state)
-        .into_iter()
-        .find(|a| a.uuid() == account_uuid)
-        .ok_or("账号不存在")?;
-    ensure_token_for(state, &account).await
-}
-
-/// 同上，但直接按账号对象续期：启动流程本来就拿着完整账号，
-/// 用 uuid 反查会在「两个站点恰好同角色 UUID」时拿错令牌。
+/// 启动前校验令牌，失效时尝试刷新并持久化。按完整账号匹配皮肤站和角色。
 pub async fn ensure_token_for(state: &AppState, account: &Account) -> Result<String, String> {
-    let (root, access_token, client_token) = match account {
+    let initial = crate::accounts::snapshot_for_refresh(state, account)?;
+    let lock = crate::accounts::refresh_lock(state, account.uuid());
+    let _guard = lock.lock().await;
+    let (mut current, version) = crate::accounts::current_for_refresh(state, account.uuid(), &initial)?;
+    let (root, access_token, client_token) = match &mut current {
         Account::Yggdrasil {
             server,
             access_token,
             client_token,
             ..
-        } => (server.clone(), access_token.clone(), client_token.clone()),
+        } => (server, access_token, client_token),
         _ => return Err("该账号不是皮肤站账号".into()),
     };
-    match validate(state, &root, &access_token, &client_token).await {
-        TokenState::Valid => return Ok(access_token),
+    match validate(state, root, access_token, client_token).await {
+        TokenState::Valid => {
+            crate::accounts::current_for_refresh(state, account.uuid(), &version)?;
+            return Ok(access_token.clone());
+        }
         TokenState::Invalid => {}
         TokenState::Unknown(reason) => {
             // 校验接口本身不可用（站点 5xx、网络抖动）时不要贸然刷新：
             // refresh 会让旧令牌 rotate 失效，反而把本来能用的令牌弄坏。
             // 直接放行，游戏内 authlib-injector 还会再校验一次。
             eprintln!("[yggdrasil] 无法确认令牌状态（{reason}），沿用现有令牌启动");
-            return Ok(access_token);
+            crate::accounts::current_for_refresh(state, account.uuid(), &version)?;
+            return Ok(access_token.clone());
         }
     }
-    let refreshed = refresh(state, &root, &access_token, &client_token).await?;
-    let mut list = load_accounts(state);
-    let mut changed = false;
-    for acc in list.iter_mut() {
-        if let Account::Yggdrasil {
-            uuid,
-            server,
-            access_token: saved,
-            client_token: saved_client,
-            ..
-        } = acc
-        {
-            if uuid == account.uuid() && server.as_str() == root.as_str() && *saved == access_token {
-                *saved = refreshed.access_token.clone();
-                if let Some(new_client) = &refreshed.client_token {
-                    *saved_client = new_client.clone();
-                }
-                changed = true;
-            }
-        }
+    let refreshed = refresh(state, root, access_token, client_token).await?;
+    access_token.clone_from(&refreshed.access_token);
+    if let Some(new_client) = refreshed.client_token {
+        *client_token = new_client;
     }
-    if changed {
-        save_accounts(state, &list)?;
-    }
+    crate::db::update_account(&state.db(), &current, &version)?;
     Ok(refreshed.access_token)
 }
 
-/// 命令包装：供前端在启动前手动触发令牌保活。
-#[tauri::command]
-pub async fn yggdrasil_ensure_token(
-    state: tauri::State<'_, AppState>,
-    account_uuid: String,
-) -> Result<String, String> {
-    ensure_token(state.inner(), &account_uuid).await
-}
+// Update both values from the upstream release's published asset digest.
+const INJECTOR_VERSION: &str = "1.2.8";
+const INJECTOR_SHA256: &str = "9c7f4343e6c82034958ffb48c14a2cb0c85928be7283103ce17da00c6d5a7b10";
+const MAX_INJECTOR_BYTES: usize = 4 * 1024 * 1024;
 
-/// 从 GitHub Releases 拿最新版 authlib-injector jar 的下载地址（兜底源）。
-///
-/// `api.github.com` 在国内基本不可直连，所以和 `terracotta` 一样逐个套加速前缀。
-async fn github_latest_jar(probe: &reqwest::Client) -> Result<String, String> {
-    const API: &str = "https://api.github.com/repos/yushijinhun/authlib-injector/releases/latest";
-    let mut last_err = String::new();
-    // 只试前 3 个（直连 + 两个最常用的加速前缀）：这一步是启动前的阻塞探测，
-    // 把 6 个全试一遍在最坏情况下要多等一分多钟，得不偿失。
-    for proxy in crate::terracotta::GITHUB_PROXIES.iter().take(3) {
-        let url = crate::terracotta::proxied(API, proxy);
-        let resp = match probe
-            .get(&url)
-            .header("User-Agent", "QookiX-Launcher")
-            .header("Accept", "application/vnd.github+json")
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                last_err = format!("{e}");
-                continue;
-            }
-        };
-        let resp = match resp.error_for_status() {
-            Ok(r) => r,
-            Err(e) => {
-                last_err = format!("{e}");
-                continue;
-            }
-        };
-        let rel: Value = match resp.json().await {
-            Ok(v) => v,
-            Err(e) => {
-                last_err = format!("响应解析失败: {e}");
-                continue;
-            }
-        };
-        for asset in rel.get("assets").and_then(|v| v.as_array()).into_iter().flatten() {
-            let name = asset.get("name").and_then(|v| v.as_str()).unwrap_or("");
-            if name.starts_with("authlib-injector") && name.ends_with(".jar") {
-                if let Some(u) = asset.get("browser_download_url").and_then(|v| v.as_str()) {
-                    return Ok(u.to_string());
-                }
-            }
-        }
-        last_err = "release 中未找到 jar 资源".to_string();
+fn verify_injector(bytes: &[u8], expected: &str) -> Result<(), String> {
+    use sha2::{Digest, Sha256};
+    if bytes.len() > MAX_INJECTOR_BYTES || format!("{:x}", Sha256::digest(bytes)) != expected {
+        return Err("authlib-injector SHA-256 校验失败".into());
     }
-    Err(format!("GitHub 请求失败: {last_err}"))
+    Ok(())
 }
 
-/// 从 `.../releases/download/v1.2.8/authlib-injector-1.2.8.jar` 里取出 `1.2.8`
-fn version_from_jar_url(u: &str) -> Option<String> {
-    let name = u.rsplit('/').next()?;
-    let rest = name
-        .strip_prefix("authlib-injector-")?
-        .strip_suffix(".jar")?;
-    if rest.is_empty() {
-        None
-    } else {
-        Some(rest.to_string())
+async fn verified_local_injector(path: &std::path::Path) -> bool {
+    use tokio::io::AsyncReadExt;
+    let Ok(metadata) = tokio::fs::symlink_metadata(path).await else { return false };
+    if !metadata.is_file() || metadata.len() > MAX_INJECTOR_BYTES as u64 {
+        return false;
     }
+    let Ok(file) = tokio::fs::File::open(path).await else { return false };
+    let mut bytes = Vec::new();
+    file.take(MAX_INJECTOR_BYTES as u64 + 1).read_to_end(&mut bytes).await.is_ok()
+        && verify_injector(&bytes, INJECTOR_SHA256).is_ok()
 }
 
-/// 确保本地存在 authlib-injector.jar，返回其路径。
-///
-/// jar 不在皮肤站 meta 里，从官方 artifact 接口（latest.json）获取：
-/// 官方源在前，LittleSkin 镜像兜底（国内直连官方源常超时）。
-/// 本地已有时按 sha256 决定复用还是重新下载；latest.json 拉不到
-/// （如离线）但本地有旧 jar 时宽容复用。
-pub async fn ensure_authlib_injector(
-    state: &AppState,
-    _api_root: &str,
-) -> Result<PathBuf, String> {
-    const OFFICIAL: &str = "https://authlib-injector.moe.yushi.moe";
-    /// 官方站点（authlib-injector 的真实 artifact 域名，moe 版是它的镜像）
-    const OFFICIAL_ALT: &str = "https://authlib-injector.yushi.moe";
-    const MIRROR: &str = "https://download.littleskin.cn/moe/yushi/authlibinjector";
-    /// 元数据全部拿不到时的兜底版本。GitHub 的 release 永久保留，
-    /// 所以直接按这个版本号拼地址仍然能下到 jar（此时没有 sha256 可校验）。
-    const FALLBACK_VERSION: &str = "1.2.8";
-
+/// Every launch verifies the installed agent against the upstream release digest.
+pub async fn ensure_authlib_injector(state: &AppState, _api_root: &str) -> Result<PathBuf, String> {
     let dest_dir = state.root.join("authlib-injector");
     let dest = dest_dir.join("authlib-injector.jar");
-
-    // 本地已有 jar：零网络等待直接复用（更新检查只在 jar 缺失时才联网做）
-    if dest.exists() && std::fs::metadata(&dest).map(|m| m.len() > 0).unwrap_or(false) {
+    let lock = state.jobs.download_lock(dest.clone());
+    let _install = lock.lock().await;
+    if verified_local_injector(&dest).await {
         return Ok(dest);
     }
 
-    // 探测用 client：超时比业务 client 短（坏源尽快失败、别拖住启动），
-    // 但必须沿用用户配置的代理——否则配了代理也照样直连，元数据全挂。
-    let probe = {
-        let s = state.settings();
-        crate::settings::http_client_timed(
-            &s.proxy_mode,
-            s.proxy.as_deref(),
-            std::time::Duration::from_secs(8),
-            std::time::Duration::from_secs(20),
-        )
-    };
+    let file_name = format!("authlib-injector-{INJECTOR_VERSION}.jar");
+    let upstream = format!(
+        "https://github.com/yushijinhun/authlib-injector/releases/download/v{INJECTOR_VERSION}/{file_name}"
+    );
+    let official_artifact = format!("artifact/{INJECTOR_VERSION}/{file_name}");
+    let candidates = [
+        format!("https://download.littleskin.cn/moe/yushi/authlibinjector/{official_artifact}"),
+        format!("https://authlib-injector.yushi.moe/{official_artifact}"),
+        upstream.clone(),
+    ];
+    let candidates = candidates.into_iter().chain(
+        crate::terracotta::GITHUB_PROXIES.iter().filter(|proxy| !proxy.is_empty())
+            .map(|proxy| crate::terracotta::proxied(&upstream, proxy)),
+    );
 
-    let mut latest: Option<Value> = None;
-    let mut last_err = String::new();
-    for base in [OFFICIAL, OFFICIAL_ALT, MIRROR] {
-        match crate::download::get_json(&probe, &format!("{base}/artifact/latest.json")).await {
-            Ok(v) => {
-                latest = Some(v);
-                break;
-            }
-            Err(e) => last_err = e,
-        }
-    }
-    let expected = latest
-        .as_ref()
-        .and_then(|v| v.pointer("/checksums/sha256"))
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_ascii_lowercase());
-
-    // 候选下载地址（国内优先）。authlib-injector 官方 latest.json 的 `url` 指向
-    // github.com，而旧的镜像兜底只会改写「官方域名」前缀的地址，对 github 地址
-    // 完全不生效——结果国内直连不通时必然失败。这里改为按版本号自己拼 artifact
-    // 路径：先 LittleSkin 镜像，再官方 artifact，再 GitHub Release，最后才用
-    // latest.json 给的原始 url（并补上偶尔缺失的 `.jar` 点号）。
-    let version = latest
-        .as_ref()
-        .and_then(|v| v.get("version"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-
-    let mut candidates: Vec<String> = Vec::new();
-    // ① LittleSkin 镜像的 artifact 路径（国内最快；若镜像不托管 jar 会很快 404）
-    if let Some(v) = &version {
-        candidates.push(format!("{MIRROR}/artifact/{v}/authlib-injector-{v}.jar"));
-    }
-    // ② GitHub Release：直连 + 项目既有的加速前缀（大陆直连 github 常被重置）
-    if let Some(v) = &version {
-        let gh = format!(
-            "https://github.com/yushijinhun/authlib-injector/releases/download/v{v}/authlib-injector-{v}.jar"
-        );
-        for proxy in crate::terracotta::GITHUB_PROXIES {
-            push_unique(&mut candidates, crate::terracotta::proxied(&gh, proxy));
-        }
-    }
-    // ③ 官方 artifact 路径
-    if let Some(v) = &version {
-        push_unique(
-            &mut candidates,
-            format!("{OFFICIAL}/artifact/{v}/authlib-injector-{v}.jar"),
-        );
-    }
-    // ④ latest.json 给的原始地址（补上偶尔缺失的 `.jar` 点号）
-    if let Some(u) = latest
-        .as_ref()
-        .and_then(|l| l.get("url"))
-        .and_then(|v| v.as_str())
-    {
-        push_unique(&mut candidates, normalize_jar_url(u));
-    }
-    if candidates.is_empty() {
-        // 元数据三个源全挂：先问 GitHub API（走加速前缀），再退到内置兜底版本。
-        match github_latest_jar(&probe).await {
-            Ok(u) => {
-                for proxy in crate::terracotta::GITHUB_PROXIES {
-                    push_unique(&mut candidates, crate::terracotta::proxied(&u, proxy));
-                }
-                if let Some(v) = version_from_jar_url(&u) {
-                    push_unique(
-                        &mut candidates,
-                        format!("{MIRROR}/artifact/{v}/authlib-injector-{v}.jar"),
-                    );
-                    push_unique(
-                        &mut candidates,
-                        format!("{OFFICIAL}/artifact/{v}/authlib-injector-{v}.jar"),
-                    );
-                }
-            }
-            Err(gh_err) => {
-                // 连 API 都问不到：直接用内置版本号拼地址，仍比"直接失败"有用。
-                eprintln!(
-                    "[authlib] 版本信息获取失败({last_err} / {gh_err})，改用内置版本 {FALLBACK_VERSION}"
-                );
-                let v = FALLBACK_VERSION;
-                push_unique(
-                    &mut candidates,
-                    format!("{MIRROR}/artifact/{v}/authlib-injector-{v}.jar"),
-                );
-                let gh = format!(
-                    "https://github.com/yushijinhun/authlib-injector/releases/download/v{v}/authlib-injector-{v}.jar"
-                );
-                for proxy in crate::terracotta::GITHUB_PROXIES {
-                    push_unique(&mut candidates, crate::terracotta::proxied(&gh, proxy));
-                }
-                push_unique(
-                    &mut candidates,
-                    format!("{OFFICIAL}/artifact/{v}/authlib-injector-{v}.jar"),
-                );
-            }
-        }
+    let mut errors = Vec::new();
+    for url in candidates {
+        let result = tokio::time::timeout(std::time::Duration::from_secs(12), async {
+            let response = state.client.get(url).send().await
+                .and_then(reqwest::Response::error_for_status)
+                .map_err(|err| err.to_string())?;
+            let bytes = crate::util::read_response_limited(response, MAX_INJECTOR_BYTES).await?;
+            verify_injector(&bytes, INJECTOR_SHA256)?;
+            Ok::<_, String>(bytes)
+        }).await;
+        let bytes = match result {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(err)) => { errors.push(err); continue; }
+            Err(_) => { errors.push("下载超时".into()); continue; }
+        };
+        std::fs::create_dir_all(&dest_dir).map_err(|err| format!("创建 authlib-injector 目录失败: {err}"))?;
+        crate::fsutil::atomic_write(&dest, &bytes).map_err(|err| format!("写入 authlib-injector 失败: {err}"))?;
+        return Ok(dest);
     }
 
-    async fn fetch(state: &AppState, url: &str) -> Result<Vec<u8>, String> {
-        state
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| e.to_string())?
-            .error_for_status()
-            .map_err(|e| e.to_string())?
-            .bytes()
-            .await
-            .map(|b| b.to_vec())
-            .map_err(|e| e.to_string())
-    }
-    // 逐个候选地址尝试：连不上 / 404 / 校验不过都换下一个，全部失败才报错。
-    // 每个源单独限时，避免某个坏源（如被墙的 github）把启动卡上几分钟。
-    let per_try = std::time::Duration::from_secs(12);
-    let mut errs: Vec<String> = Vec::new();
-    let mut downloaded: Option<Vec<u8>> = None;
-    for url in &candidates {
-        match tokio::time::timeout(per_try, fetch(state, url)).await {
-            Ok(Ok(bytes)) => {
-                if let Some(want) = &expected {
-                    use sha2::Digest;
-                    let actual = sha2::Sha256::digest(&bytes);
-                    let hex: String = actual.iter().map(|b| format!("{b:02x}")).collect();
-                    if !hex.eq_ignore_ascii_case(want) {
-                        errs.push(format!("{url}: sha256 不匹配"));
-                        continue;
-                    }
-                } else if bytes.len() < 4 || &bytes[0..2] != b"PK" {
-                    // 没有 sha256 可校验时，至少确认拿到的是 zip（jar）而不是错误页
-                    errs.push(format!("{url}: 返回内容不是 jar"));
-                    continue;
-                }
-                downloaded = Some(bytes);
-                break;
-            }
-            Ok(Err(e)) => errs.push(format!("{url}: {e}")),
-            Err(_) => errs.push(format!("{url}: 超时")),
-        }
-    }
-
-    let bytes = downloaded.ok_or_else(|| {
-        format!(
-            "下载 authlib-injector 失败（已尝试 {} 个地址）: {}。\
-             可手动下载 authlib-injector.jar 放到 {} 后重试（该文件存在时会直接复用）。",
-            candidates.len(),
-            errs.join("；"),
-            dest.display()
-        )
-    })?;
-
-    std::fs::create_dir_all(&dest_dir).map_err(|e| format!("创建目录失败: {e}"))?;
-    std::fs::write(&dest, &bytes).map_err(|e| format!("写入 authlib-injector 失败: {e}"))?;
-    Ok(dest)
-}
-
-/// latest.json 里的下载地址偶尔缺 `.jar` 前的点（`...-1.2.8jar`），补回来。
-fn normalize_jar_url(u: &str) -> String {
-    if u.ends_with(".jar") {
-        return u.to_string();
-    }
-    match u.strip_suffix("jar") {
-        Some(stem) => format!("{stem}.jar"),
-        None => u.to_string(),
-    }
-}
-
-/// 去重后追加一个候选地址。
-fn push_unique(list: &mut Vec<String>, url: String) {
-    if !list.iter().any(|existing| existing == &url) {
-        list.push(url);
-    }
-}
-
-fn load_accounts(state: &AppState) -> Vec<Account> {
-    crate::accounts::load_accounts(state)
-}
-
-fn save_accounts(state: &AppState, list: &[Account]) -> Result<(), String> {
-    crate::accounts::save_accounts(state, list)
+    Err(format!(
+        "下载并校验 authlib-injector 失败（{}）。可从 {} 获取版本 {}，确认 SHA-256 为 {} 后放入 {}。",
+        errors.join("；"), upstream, INJECTOR_VERSION, INJECTOR_SHA256, dest.display(),
+    ))
 }
 
 #[cfg(test)]
@@ -780,40 +539,14 @@ mod tests {
         );
     }
 
-    /// latest.json 偶尔给出缺点的地址（`...-1.2.8jar`），必须补回来
     #[test]
-    fn normalize_jar_url_inserts_missing_dot() {
-        let bad = "https://github.com/x/y/releases/download/v1.2.8/authlib-injector-1.2.8jar";
-        assert_eq!(
-            normalize_jar_url(bad),
-            "https://github.com/x/y/releases/download/v1.2.8/authlib-injector-1.2.8.jar"
-        );
-        // 正常地址原样返回
-        let good = "https://github.com/x/y/releases/download/v1.2.8/authlib-injector-1.2.8.jar";
-        assert_eq!(normalize_jar_url(good), good);
-        // 非 jar 结尾不动
-        assert_eq!(normalize_jar_url("https://a/b/c.json"), "https://a/b/c.json");
-    }
-
-    #[test]
-    fn version_from_jar_url_extracts_version() {
-        assert_eq!(
-            version_from_jar_url(
-                "https://github.com/yushijinhun/authlib-injector/releases/download/v1.2.8/authlib-injector-1.2.8.jar"
-            )
-            .as_deref(),
-            Some("1.2.8")
-        );
-        assert_eq!(version_from_jar_url("https://a/b/other.jar"), None);
-        assert_eq!(version_from_jar_url("https://a/b/authlib-injector-.jar"), None);
-    }
-
-    #[test]
-    fn push_unique_dedupes() {
-        let mut v: Vec<String> = vec!["a".into()];
-        push_unique(&mut v, "a".into());
-        push_unique(&mut v, "b".into());
-        assert_eq!(v, vec!["a".to_string(), "b".to_string()]);
+    fn injector_requires_exact_bytes_even_for_a_jar_header() {
+        use sha2::{Digest, Sha256};
+        let bytes = b"PK\x03\x04 sample jar";
+        let expected = format!("{:x}", Sha256::digest(bytes));
+        assert!(verify_injector(bytes, &expected).is_ok());
+        assert!(verify_injector(b"PK\x03\x04 corrupted", &expected).is_err());
+        assert!(verify_injector(bytes, "").is_err());
     }
 
     /// clientToken 为空时不能发空字符串：部分站点会当成「与令牌不匹配」直接 403

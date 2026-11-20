@@ -21,15 +21,18 @@ pub use rooms::*;
 pub use sync::*;
 
 use crate::state::AppState;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use uuid::Uuid;
 
 /// 未登录：前端据此弹登录框，而不是当成错误提示
 pub const CODE_NOT_LOGGED_IN: &str = "not_logged_in";
 
 /// 正在分享到目录的房间（内存态，不落盘）
+#[derive(Clone)]
 pub struct RoomShare {
     pub room_id: String,
     pub code: String,
@@ -42,8 +45,11 @@ pub struct RoomShare {
 }
 
 /// QookiX 登录态 + 运行时游标
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct QookixSession {
+    pub generation: Uuid,
+    pub auth_attempt: Uuid,
+    pub challenge: Option<String>,
     pub access_token: String,
     pub refresh_token: String,
     /// access token 过期时间（Unix 秒），0 表示未知
@@ -58,6 +64,10 @@ pub struct QookixSession {
 impl QookixSession {
     pub fn logged_in(&self) -> bool {
         !self.access_token.is_empty()
+    }
+
+    pub fn check_generation(&self, expected: Uuid) -> Result<(), api::ApiError> {
+        (self.generation == expected).then_some(()).ok_or_else(api::ApiError::session_changed)
     }
 }
 
@@ -85,74 +95,138 @@ pub fn load_saved(root: &Path) -> QookixSession {
         return QookixSession::default();
     }
     QookixSession {
+        generation: Uuid::new_v4(),
         access_token,
         refresh_token: read("refresh_token"),
         expires_at: v.get("expires_at").and_then(|e| e.as_u64()).unwrap_or(0),
         user: v.get("user").cloned().filter(|u| !u.is_null()),
-        cursor: 0,
-        share: None,
+        ..Default::default()
     }
 }
 
 /// 落盘登录态（两个令牌分别加密）。未登录时删除文件。
-pub fn save_session(state: &AppState) -> Result<(), String> {
-    let (access, refresh, expires_at, user) = {
-        let s = state.qookix();
-        (
-            s.access_token.clone(),
-            s.refresh_token.clone(),
-            s.expires_at,
-            s.user.clone().unwrap_or(Value::Null),
-        )
-    };
-    if access.is_empty() {
-        let _ = std::fs::remove_file(auth_path(state));
-        return Ok(());
+fn write_session(state: &AppState, session: &QookixSession) -> Result<(), String> {
+    if !session.logged_in() {
+        return match std::fs::remove_file(auth_path(state)) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(format!("清除 QookiX 登录状态失败: {err}")),
+        };
     }
     let payload = json!({
-        "access_token": crate::secret::protect(&access)?,
-        "refresh_token": crate::secret::protect(&refresh)?,
-        "expires_at": expires_at,
-        "user": user,
+        "access_token": crate::secret::protect(&session.access_token)?,
+        "refresh_token": crate::secret::protect(&session.refresh_token)?,
+        "expires_at": session.expires_at,
+        "user": session.user,
     });
-    let text = serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?;
-    std::fs::write(auth_path(state), text).map_err(|e| format!("保存 QookiX 登录状态失败: {e}"))
+    let text = serde_json::to_vec_pretty(&payload).map_err(|e| e.to_string())?;
+    crate::fsutil::atomic_write(&auth_path(state), &text).map_err(|e| format!("保存 QookiX 登录状态失败: {e}"))
 }
 
-/// 清除登录态：内存 + 磁盘 + 正在分享的房间
-pub fn clear_session(state: &AppState) {
-    {
-        let mut s = state.qookix();
-        if let Some(share) = s.share.take() {
+/// 所有登录态变更在同一临界区校验、落盘和提交。
+fn edit_session<T>(state: &AppState, edit: impl FnOnce(&mut QookixSession) -> Result<T, api::ApiError>) -> Result<T, api::ApiError> {
+    let mut current = state.qookix();
+    let mut next = current.clone();
+    let result = edit(&mut next)?;
+    write_session(state, &next).map_err(api::ApiError::internal)?;
+    if current.generation != next.generation {
+        if let Some(share) = &current.share {
             share.cancel.store(true, std::sync::atomic::Ordering::SeqCst);
         }
-        *s = QookixSession::default();
     }
-    let _ = std::fs::remove_file(auth_path(state));
+    *current = next;
+    Ok(result)
 }
 
-/// 前端可直接消费的登录态
-pub fn status(state: &AppState) -> Value {
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct AccountView {
+    id: u64,
+    username: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    nickname: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nickname_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    nickname_review_reason: Option<String>,
+    role: String,
+    status: String,
+    created_at: u64,
+    email_verified: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mc_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mc_uuid: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mc_verified: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mc_bound_at: Option<u64>,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShareView {
+    room_id: String,
+    code: String,
+    title: String,
+    visibility: String,
+    has_pack: bool,
+    mods_count: u32,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionStatus {
+    logged_in: bool,
+    expires_at: u64,
+    user: Option<AccountView>,
+    pub(super) share: Option<ShareView>,
+}
+
+/// 只序列化前端所需的登录态字段。
+pub fn status(state: &AppState) -> SessionStatus {
     let s = state.qookix();
-    json!({
-        "loggedIn": s.logged_in(),
-        "expiresAt": s.expires_at,
-        "user": s.user.clone().unwrap_or(Value::Null),
-        "share": s.share.as_ref().map(|r| json!({
-            "roomId": r.room_id,
-            "code": r.code,
-            "title": r.title,
-            "visibility": r.visibility,
-            // 有没有附带环境清单（前端据此显示「已附带 N 个 mod」）
-            "hasPack": !r.pack.is_empty(),
-            "modsCount": r.mods_count,
-        })),
-    })
+    SessionStatus {
+        logged_in: s.logged_in(),
+        expires_at: s.expires_at,
+        user: s.user.as_ref().and_then(|user| AccountView::deserialize(user).ok()),
+        share: s.share.as_ref().map(|r| ShareView {
+            room_id: r.room_id.clone(),
+            code: r.code.clone(),
+            title: r.title.clone(),
+            visibility: r.visibility.clone(),
+            has_pack: !r.pack.is_empty(),
+            mods_count: r.mods_count,
+        }),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_wire_example_exposes_only_account_view_fields() {
+        let raw_user = json!({
+            "id": 3,
+            "username": "example",
+            "nickname": "Example",
+            "role": "user",
+            "status": "active",
+            "created_at": 100,
+            "email_verified": true,
+            "access_token": "example-only",
+        });
+        let session = SessionStatus {
+            logged_in: true,
+            expires_at: 200,
+            user: Some(AccountView::deserialize(&raw_user).unwrap()),
+            share: None,
+        };
+        let fixtures: Value = serde_json::from_str(include_str!("../../../src/api/wire-contracts.json")).unwrap();
+        assert_eq!(serde_json::to_value(session).unwrap(), fixtures["session"]);
+    }
 
     #[test]
     fn session_defaults_to_logged_out() {

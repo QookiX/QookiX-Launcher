@@ -1,14 +1,15 @@
 <script setup lang="ts">
+import UiStatus from "../components/UiStatus.vue";
 /**
  * 材质包预览：打开 .zip / 文件夹，浏览包内全部贴图。
  * 贴图清单由后端一次解析到位，图片本体按可视区域懒加载（并发 6），
  * 避免一次性拉几千张图把 IPC 和内存压垮。
  */
-import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
+import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
-import { NPopover, NModal, NSelect, useMessage } from "naive-ui";
+import { NButton, NPopover, NModal, NSelect, useMessage } from "naive-ui";
 import {
   IconArchive,
   IconClock,
@@ -18,6 +19,7 @@ import {
 } from "../components/icons";
 import { fmtSize } from "../utils/format";
 import { useInstancesStore } from "../stores/instances";
+import { createPreviewLifetime, type PreviewSession } from "../composables/previewLifetime";
 
 const { t, te } = useI18n();
 const message = useMessage();
@@ -61,7 +63,7 @@ interface InstancePack {
 }
 
 const manifest = ref<PackManifest | null>(null);
-const sessionId = ref<string | null>(null);
+const preview = createPreviewLifetime((sessionId) => invoke("resourcepack_close", { sessionId }));
 const loading = ref(false);
 const error = ref<string | null>(null);
 
@@ -120,53 +122,93 @@ function onGridScroll() {
 
 // —— 贴图按需加载 ——
 const urls = reactive<Record<string, string>>({});
-const queued = new Set<string>();
-const queue: string[] = [];
+let textures: { session: PreviewSession; queued: Set<string>; waiting: string[] } | undefined;
 let activeLoads = 0;
 const LOAD_CONCURRENCY = 6;
-let loadSeq = 0;
+const MAX_CACHED_TEXTURES = 512;
+const MAX_CACHED_URL_CHARS = 96 * 1024 * 1024;
+const cachedLengths = new Map<string, number>();
+const visiblePaths = new Set<string>();
+let cachedChars = 0;
 
 function requestTexture(path: string) {
-  if (!sessionId.value || !path || urls[path] || queued.has(path)) return;
-  queued.add(path);
-  queue.push(path);
+  if (!textures || textures.session.signal.aborted || !path) return;
+  const cached = cachedLengths.get(path);
+  if (cached !== undefined) {
+    cachedLengths.delete(path);
+    cachedLengths.set(path, cached);
+    return;
+  }
+  if (textures.queued.has(path)) return;
+  textures.queued.add(path);
+  textures.waiting.push(path);
   pumpLoads();
 }
 
+function cacheTexture(path: string, url: string) {
+  const selectedPath = selected.value?.path;
+  while (cachedLengths.size >= MAX_CACHED_TEXTURES || cachedChars + url.length > MAX_CACHED_URL_CHARS) {
+    const candidates = [...cachedLengths.keys()].filter((key) => key !== selectedPath);
+    const oldest = candidates.find((key) => !visiblePaths.has(key)) ?? candidates[0];
+    if (oldest === undefined) return;
+    cachedChars -= cachedLengths.get(oldest)!;
+    cachedLengths.delete(oldest);
+    delete urls[oldest];
+  }
+  cachedChars += url.length;
+  cachedLengths.set(path, url.length);
+  urls[path] = url;
+}
+
 function pumpLoads() {
-  const sid = sessionId.value;
-  if (!sid) return;
-  while (activeLoads < LOAD_CONCURRENCY && queue.length) {
-    const path = queue.shift()!;
-    const seq = loadSeq;
+  const current = textures;
+  if (!current || current.session.signal.aborted) return;
+  while (activeLoads < LOAD_CONCURRENCY && current.waiting.length) {
+    const path = current.waiting.shift()!;
+    if (!visiblePaths.has(path) && path !== selected.value?.path) {
+      current.queued.delete(path);
+      continue;
+    }
     activeLoads++;
-    invoke<string>("resourcepack_texture", { sessionId: sid, path })
+    invoke<string>("resourcepack_texture", { sessionId: current.session.id, path })
       .then((url) => {
-        // 换包之后回来的旧结果直接丢弃
-        if (seq === loadSeq) urls[path] = url;
+        if (!current.session.signal.aborted && (visiblePaths.has(path) || selected.value?.path === path)) {
+          cacheTexture(path, url);
+        }
       })
       .catch(() => {
         /* 单张贴图损坏不影响整体浏览 */
       })
       .finally(() => {
-        activeLoads = Math.max(0, activeLoads - 1);
-        queued.delete(path);
-        if (seq === loadSeq) pumpLoads();
+        activeLoads--;
+        current.queued.delete(path);
+        pumpLoads();
       });
   }
 }
 
-function resetTextureCache() {
-  loadSeq++;
+function resetTextureCache(session?: PreviewSession) {
   for (const key of Object.keys(urls)) delete urls[key];
-  queue.length = 0;
-  queued.clear();
+  cachedLengths.clear();
+  cachedChars = 0;
+  textures?.queued.clear();
+  if (textures) textures.waiting.length = 0;
+  textures = session ? { session, queued: new Set(), waiting: [] } : undefined;
 }
 
 // 缩略图进入视口才开始拉取
 let observer: IntersectionObserver | null = null;
+const thumbElements = new Map<string, HTMLElement>();
 function observeThumb(el: unknown, path: string) {
-  if (!(el instanceof HTMLElement)) return;
+  const prior = thumbElements.get(path);
+  if (prior === el) return;
+  if (prior) observer?.unobserve(prior);
+  if (!(el instanceof HTMLElement)) {
+    thumbElements.delete(path);
+    visiblePaths.delete(path);
+    return;
+  }
+  thumbElements.set(path, el);
   el.dataset.path = path;
   observer?.observe(el);
 }
@@ -265,14 +307,16 @@ async function pickFolder() {
 
 async function openPack(path: string) {
   if (loading.value) return;
+  const opening = preview.beginOpen();
+  if (opening.aborted) return;
   loading.value = true;
   error.value = null;
   try {
-    const m = await invoke<PackManifest>("resourcepack_open", { path });
-    const prev = sessionId.value;
-    sessionId.value = m.sessionId;
+    const opened = await preview.open(opening, () => invoke<PackManifest>("resourcepack_open", { path }));
+    if (!opened || opening.aborted) return;
+    const { manifest: m, session } = opened;
     manifest.value = m;
-    resetTextureCache();
+    resetTextureCache(session);
     search.value = "";
     category.value = "all";
     onlyAnimated.value = false;
@@ -281,14 +325,14 @@ async function openPack(path: string) {
     playing.value = true;
     selected.value = m.textures[0] ?? null;
     if (gridRef.value) gridRef.value.scrollTop = 0;
+    await nextTick();
+    if (opening.aborted) return;
+    for (const path of visiblePaths) requestTexture(path);
     pushRecent(m);
-    if (prev && prev !== m.sessionId) {
-      invoke("resourcepack_close", { sessionId: prev }).catch(() => {});
-    }
   } catch (e) {
-    error.value = String(e);
+    if (!opening.aborted) error.value = String(e);
   } finally {
-    loading.value = false;
+    if (!opening.aborted) loading.value = false;
   }
 }
 
@@ -339,10 +383,15 @@ onMounted(() => {
   observer = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
         const el = entry.target as HTMLElement;
-        observer?.unobserve(el);
-        if (el.dataset.path) requestTexture(el.dataset.path);
+        const path = el.dataset.path;
+        if (!path || thumbElements.get(path) !== el) continue;
+        if (entry.isIntersecting) {
+          visiblePaths.add(path);
+          requestTexture(path);
+        } else {
+          visiblePaths.delete(path);
+        }
       }
     },
     { rootMargin: "480px 0px" }
@@ -352,9 +401,10 @@ onMounted(() => {
 onBeforeUnmount(() => {
   observer?.disconnect();
   observer = null;
-  if (sessionId.value) {
-    invoke("resourcepack_close", { sessionId: sessionId.value }).catch(() => {});
-  }
+  thumbElements.clear();
+  visiblePaths.clear();
+  preview.dispose();
+  resetTextureCache();
 });
 
 function resolutionLabel(widths: number[]): string {
@@ -368,19 +418,19 @@ function resolutionLabel(widths: number[]): string {
   <div class="rp-view">
     <div class="rp-main">
       <!-- 参数栏 -->
-      <div class="glass param-bar">
-        <button class="mini-btn primary" :disabled="loading" @click="pickFile">
-          <IconFolder />
+      <div class="glass qx-toolbar param-bar">
+        <NButton type="primary" :loading="loading" :disabled="loading" @click="pickFile">
+          <template #icon><IconFolder /></template>
           {{ loading ? t("resourcePack.loading") : t("resourcePack.open") }}
-        </button>
-        <button class="mini-btn" :disabled="loading" @click="pickFolder">
-          <IconArchive />{{ t("resourcePack.openFolder") }}
-        </button>
+        </NButton>
+        <NButton :disabled="loading" @click="pickFolder">
+          <template #icon><IconArchive /></template> {{ t("resourcePack.openFolder") }}
+        </NButton>
         <NPopover trigger="click" placement="bottom-start" :width="320">
           <template #trigger>
-            <button class="mini-btn" :disabled="!recent.length">
-              <IconClock />{{ t("resourcePack.recent") }}({{ recent.length }})
-            </button>
+            <NButton :disabled="!recent.length">
+              <template #icon><IconClock /></template> {{ t("resourcePack.recent") }}({{ recent.length }})
+            </NButton>
           </template>
           <div class="recent-panel">
             <div class="recent-head">
@@ -400,16 +450,16 @@ function resolutionLabel(widths: number[]): string {
           </div>
         </NPopover>
         <span class="param-sep" />
-        <button class="mini-btn" :disabled="loading" @click="openInstancePicker">
-          <IconImage />{{ t("resourcePack.fromInstance") }}
-        </button>
+        <NButton :disabled="loading" @click="openInstancePicker">
+          <template #icon><IconImage /></template> {{ t("resourcePack.fromInstance") }}
+        </NButton>
       </div>
 
-      <div v-if="error" class="error glass">{{ error }}</div>
+      <UiStatus v-if="error" kind="error" :text="error" compact />
 
       <template v-if="manifest">
         <!-- 材质包信息 -->
-        <div class="glass pack-head">
+        <div class="glass pack-head qx-enter">
           <div class="pack-icon">
             <img v-if="manifest.icon" :src="manifest.icon" alt="" />
             <IconImage v-else class="pack-icon-ph" />
@@ -525,10 +575,9 @@ function resolutionLabel(widths: number[]): string {
         </div>
       </div>
 
-      <div v-if="loading && !manifest" class="glass loading-state">
-        <div class="spinner" />
-        <span>{{ t("resourcePack.loading") }}</span>
-      </div>
+      <UiStatus v-if="loading && !manifest" class="loading-state" kind="loading" :text="t('resourcePack.loading')">
+        <template #spinner><span class="rp-spinner" /></template>
+      </UiStatus>
     </div>
 
     <!-- 右侧：选中贴图详情 -->
@@ -646,7 +695,7 @@ function resolutionLabel(widths: number[]): string {
 }
 
 /* —— 通用按钮 / 玻璃条 —— */
-.param-bar { padding: 10px 14px; display: flex; gap: 8px; align-items: center; flex: none; }
+.param-bar { flex: none; }
 .param-sep { width: 1px; align-self: stretch; background: var(--border); }
 .link-btn { padding: 0; border: none; background: none; color: var(--text-3); font-size: var(--fs-xs); cursor: pointer; }
 .link-btn:hover { color: var(--accent); }
@@ -897,8 +946,9 @@ function resolutionLabel(widths: number[]): string {
 .recent-card:hover { border-color: var(--accent-45); background: var(--accent-soft); }
 .rc-name { font-size: var(--fs-sm); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rc-meta { font-size: var(--fs-2xs); color: var(--text-3); }
-.loading-state { flex: 1; display: flex; align-items: center; justify-content: center; gap: 10px; border-radius: var(--r-md); font-size: var(--fs-sm); color: var(--text-2); }
-.spinner {
+.loading-state { flex: 1; }
+.rp-spinner {
+  display: block;
   width: 16px;
   height: 16px;
   border-radius: 50%;
@@ -907,7 +957,6 @@ function resolutionLabel(widths: number[]): string {
   animation: rp-spin 0.8s linear infinite;
 }
 @keyframes rp-spin { to { transform: rotate(360deg); } }
-.error { padding: 12px 16px; border-radius: var(--r-md); color: var(--danger); font-size: var(--fs-sm); }
 .muted { color: var(--text-3); font-size: var(--fs-xs); }
 
 /* —— 实例材质包列表 —— */

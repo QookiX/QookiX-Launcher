@@ -18,10 +18,11 @@ import ForceUpdateOverlay from "./components/ForceUpdateOverlay.vue";
 import SplashScreen from "./components/SplashScreen.vue";
 import ModpackDropOverlay from "./components/ModpackDropOverlay.vue";
 import { transitionName } from "./composables/usePageTransition";
+import { prefersReducedMotion } from "./composables/useMotionPreference";
 import { useSettingsStore } from "./stores/settings";
 import { initDeepLink } from "./composables/deepLink";
 import { MessageBridge, notifyError } from "./composables/notify";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "./composables/tauriListeners";
 import { useOnboarding } from "./composables/useOnboarding";
 import i18n from "./i18n";
 import { useI18n } from "vue-i18n";
@@ -37,12 +38,13 @@ import {
   buildDarkOverrides,
   buildLightOverrides,
   DEFAULT_ACCENT,
-  darken,
-  lighten,
+  buildActionPalette,
   rgba,
-  accentContrast,
   ACCENT_ALPHAS,
 } from "./theme";
+
+const subscriptions = useTauriListenerScope();
+const { listen } = subscriptions;
 
 const settings = useSettingsStore();
 const accounts = useAccountsStore();
@@ -84,18 +86,20 @@ const themeOverrides = computed(() =>
 let themeReady = false;
 let themeTransitionTimer: ReturnType<typeof setTimeout> | null = null;
 
-watch(isDark, () => {
+watch([isDark, prefersReducedMotion], ([dark, reduced], previous) => {
   const root = document.documentElement;
-  if (themeReady) {
+  if (themeTransitionTimer) clearTimeout(themeTransitionTimer);
+  if (themeReady && !reduced && previous[0] !== dark) {
     // 切换瞬间临时开启全局颜色过渡，结束后移除，避免影响性能与 hover 动画
     root.classList.add("theme-transition");
-    if (themeTransitionTimer) clearTimeout(themeTransitionTimer);
     themeTransitionTimer = setTimeout(() => {
       root.classList.remove("theme-transition");
       themeTransitionTimer = null;
     }, 320);
+  } else {
+    root.classList.remove("theme-transition");
   }
-  root.classList.toggle("light", !isDark.value);
+  root.classList.toggle("light", !dark);
   themeReady = true;
 }, { immediate: true });
 
@@ -103,17 +107,34 @@ onBeforeUnmount(() => {
   if (themeTransitionTimer) clearTimeout(themeTransitionTimer);
 });
 
-// 页面转场 out-in：旧页面离开后、新页面进入前（此时容器瞬时空白）归零滚动容器。
-// 不能在 router.afterEach 里归零——那会在旧页面仍可见时就跳到顶，造成"先跳顶再转场"的突兀感。
+let visiblePath = route.path;
+let browseScrollTop = 0;
+let browseReturnFocus: HTMLElement | undefined;
+
+function onPageBeforeLeave() {
+  if (visiblePath !== "/browse") return;
+  const container = document.getElementById("app-content");
+  if (!container) return;
+  browseScrollTop = container.scrollTop;
+  const focused = document.activeElement;
+  browseReturnFocus = focused instanceof HTMLElement && container.contains(focused) ? focused : undefined;
+}
+
 function onPageBeforeEnter() {
-  const el = document.getElementById("app-content");
-  if (el) el.scrollTop = 0;
+  visiblePath = route.path;
+  const container = document.getElementById("app-content");
+  if (container) container.scrollTop = 0;
 }
 
 // 过渡结束后：WebView2 在 out-in 转场时，旧页面 transform 合成层可能残留，
 // 新页面 .glass 的 backdrop-filter 采样到 stale 暗色合成层 → 内容发暗。
 // 强制 reflow + 瞬间摘/加 backdrop-filter 让渲染器重新采样背景。
 function onPageAfterEnter() {
+  if (visiblePath === "/browse") {
+    const container = document.getElementById("app-content");
+    if (container) container.scrollTop = browseScrollTop;
+    if (browseReturnFocus?.isConnected) browseReturnFocus.focus({ preventScroll: true });
+  }
   const root = document.documentElement;
   root.classList.add("bf-reset");
   void document.getElementById("app-content")?.offsetHeight; // 强制 reflow
@@ -123,11 +144,12 @@ function onPageAfterEnter() {
 // 将主题色应用到 CSS 变量上（accent / accent-deep / accent-soft / 各级 alpha）
 watch(accentColor, (hex) => {
   const root = document.documentElement;
-  root.style.setProperty("--accent", hex);
-  root.style.setProperty("--accent-deep", darken(hex));
-  root.style.setProperty("--accent-hover", lighten(hex));
+  const { fill, ink, deep, hover } = buildActionPalette(hex);
+  root.style.setProperty("--accent", fill);
+  root.style.setProperty("--accent-deep", deep);
+  root.style.setProperty("--accent-hover", hover);
   root.style.setProperty("--accent-soft", rgba(hex, 0.14));
-  root.style.setProperty("--accent-contrast", accentContrast(hex));
+  root.style.setProperty("--accent-contrast", ink);
   for (const a of ACCENT_ALPHAS) {
     root.style.setProperty(`--accent-${String(Math.round(a * 100)).padStart(2, "0")}`, rgba(hex, a));
   }
@@ -220,9 +242,8 @@ async function boot() {
   bootProgress.value = 72;
 
   bootStatus.value = t("boot.initTasks");
-  tasks.init();
-  await pins.init().catch(() => {});
-  void initDeepLink();
+  await pins.init().catch((error) => notifyError(String(error)));
+  void initDeepLink(subscriptions);
   bootProgress.value = 92;
 
   bootStatus.value = t("boot.almostReady");
@@ -237,18 +258,16 @@ async function boot() {
   }, 340);
 }
 
-// 全局监听：分享包导入后游戏本体自动安装失败（后端无法直接弹 toast）
-let unlistenShareErr: (() => void) | null = null;
-// 全局监听：从系统托盘「最近游玩」直接启动实例失败（没有前端点击上下文）
-let unlistenTrayErr: (() => void) | null = null;
+onBeforeUnmount(() => tasks.disposeListeners());
 onMounted(async () => {
+  void tasks.init().catch((error) => console.error("Failed to subscribe to task events:", error));
   void boot();
   // QookiX 可选账号：读登录态 + 注册后台推送事件（未登录时是空操作）
   void qookix.init();
   // 对照探针：验证「前端 → log_debug → 落盘」这条日志通道本身可用
   api.logDebug("[fe] App 启动，日志通道自检");
   try {
-    unlistenShareErr = await listen<{ instanceId: string; error: string }>(
+    await listen<{ instanceId: string; error: string }>(
       "share-import://game-install-failed",
       (ev) => {
         notifyError(`游戏本体自动安装失败：${ev.payload.error}`);
@@ -258,7 +277,7 @@ onMounted(async () => {
     /* 监听不可用不影响主流程 */
   }
   try {
-    unlistenTrayErr = await listen<{ instanceId: string; message: string }>(
+    await listen<{ instanceId: string; message: string }>(
       "tray://launch-failed",
       (ev) => {
         notifyError(`启动失败：${ev.payload.message}`);
@@ -267,12 +286,6 @@ onMounted(async () => {
   } catch {
     /* 监听不可用不影响主流程 */
   }
-});
-onBeforeUnmount(() => {
-  unlistenShareErr?.();
-  unlistenShareErr = null;
-  unlistenTrayErr?.();
-  unlistenTrayErr = null;
 });
 </script>
 
@@ -314,7 +327,8 @@ onBeforeUnmount(() => {
                       <Transition
                         :name="transitionName"
                         mode="out-in"
-                        :duration="{ enter: 260, leave: 200 }"
+                        :duration="prefersReducedMotion ? 0 : { enter: 260, leave: 200 }"
+                        @before-leave="onPageBeforeLeave"
                         @before-enter="onPageBeforeEnter"
                         @after-enter="onPageAfterEnter"
                       >
@@ -352,6 +366,8 @@ onBeforeUnmount(() => {
   height: 100vh;
   display: flex;
   flex-direction: column;
+  /* 外层永不滚动，所有页面滚动只发生在 .content 里，避免标题栏被顶出视口 */
+  overflow: hidden;
 }
 .body {
   flex: 1;

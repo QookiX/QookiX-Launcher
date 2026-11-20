@@ -2,12 +2,13 @@
 
 use crate::options;
 use crate::state::AppState;
-use crate::util;
+use crate::fsutil;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use tauri::{Emitter, State};
 
 fn instance_dir(state: &AppState, instance_id: &str) -> Result<std::path::PathBuf, String> {
-    if !util::is_safe_filename(instance_id) {
+    if !fsutil::is_safe_filename(instance_id) {
         return Err("非法的实例 id".into());
     }
     let dir = state.instances_dir().join(instance_id);
@@ -21,7 +22,7 @@ fn instance_dir(state: &AppState, instance_id: &str) -> Result<std::path::PathBu
 #[tauri::command]
 pub fn options_list_keybinds(state: State<AppState>, instance_id: String) -> Result<Value, String> {
     let dir = instance_dir(&state, &instance_id)?;
-    let (exists, binds) = options::read_keybinds(&dir);
+    let (exists, binds) = options::read_keybinds(&dir)?;
     Ok(json!({ "exists": exists, "binds": binds }))
 }
 
@@ -30,11 +31,11 @@ pub fn options_list_keybinds(state: State<AppState>, instance_id: String) -> Res
 pub fn options_set_keybinds(
     state: State<AppState>,
     instance_id: String,
-    changes: Value,
+    changes: BTreeMap<String, Option<String>>,
 ) -> Result<Value, String> {
     let dir = instance_dir(&state, &instance_id)?;
-    let map = changes.as_object().ok_or("changes 必须是对象")?;
-    let updated = options::apply_keybinds(&dir, map)?;
+    let _lease = state.jobs.reserve_game_files(&instance_id)?;
+    let updated = options::apply_keybinds(&dir, &changes)?;
     Ok(json!({ "updated": updated }))
 }
 

@@ -8,12 +8,14 @@
  * 不再询问。
  */
 import { onBeforeUnmount, onMounted, ref } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { NButton, NCheckbox, NModal } from "naive-ui";
 import { api } from "../api";
 import { notifyError } from "../composables/notify";
 import { IconMinus, IconPower } from "./icons";
 import { useI18n } from "vue-i18n";
+
+const { listen } = useTauriListenerScope();
 
 const show = ref(false);
 const remember = ref(false);

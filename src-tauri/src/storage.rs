@@ -42,6 +42,8 @@ pub struct StorageStats {
 pub struct CacheClearResult {
     /// 释放的空间（字节）
     pub freed: u64,
+    pub java_download_in_use: bool,
+    pub errors: Vec<String>,
 }
 
 /// 统计结果缓存文件名（位于数据根目录）
@@ -69,6 +71,9 @@ fn dir_size(path: &Path, files: &mut u64, exclude: &[PathBuf]) -> u64 {
         let Ok(meta) = entry.metadata() else {
             continue;
         };
+        if crate::fsutil::is_link_or_reparse_point(&meta) {
+            continue;
+        }
         if meta.is_dir() {
             total += dir_size(&p, files, exclude);
         } else if meta.is_file() {
@@ -79,11 +84,67 @@ fn dir_size(path: &Path, files: &mut u64, exclude: &[PathBuf]) -> u64 {
     total
 }
 
+fn scan_instances(
+    path: &Path,
+    metadata_name: &str,
+    key: &str,
+    label: &str,
+) -> (StorageCategory, Vec<InstanceStorage>) {
+    let mut category = StorageCategory {
+        key: key.into(),
+        label: label.into(),
+        size: 0,
+        files: 0,
+    };
+    let mut instances = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(path) {
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.metadata() else { continue };
+            if crate::fsutil::is_link_or_reparse_point(&meta) {
+                continue;
+            }
+            if meta.is_file() {
+                category.size += meta.len();
+                category.files += 1;
+            } else if meta.is_dir() {
+                let path = entry.path();
+                let id = entry.file_name().to_string_lossy().into_owned();
+                let name = std::fs::read_to_string(path.join(metadata_name))
+                    .ok()
+                    .and_then(|text| serde_json::from_str::<serde_json::Value>(&text).ok())
+                    .and_then(|value| value.get("name")?.as_str().map(str::to_owned))
+                    .filter(|name| !name.trim().is_empty())
+                    .unwrap_or_else(|| id.clone());
+                let mut files = 0;
+                let size = dir_size(&path, &mut files, &[]);
+                category.size += size;
+                category.files += files;
+                instances.push(InstanceStorage {
+                    id,
+                    name,
+                    size,
+                    files,
+                });
+            }
+        }
+    }
+    instances.sort_by(|a, b| b.size.cmp(&a.size).then_with(|| a.id.cmp(&b.id)));
+    (category, instances)
+}
+
 /// 扫描数据目录，得到各分类的大小统计
 pub fn scan(state: &AppState) -> StorageStats {
     let root = &state.root;
-    let mut categories: Vec<StorageCategory> = Vec::new();
-    let mut total = 0u64;
+    let (instance_category, instances) = scan_instances(
+        &state.instances_dir(),
+        "qookix.json",
+        "instances",
+        "游戏实例",
+    );
+    let (server_category, servers) =
+        scan_instances(&state.servers_dir(), "server.json", "servers", "服务器实例");
+    let mut total = instance_category.size + server_category.size;
+    let mut categories = vec![instance_category, server_category];
 
     let mut add_dir = |key: &str, label: &str, dir: PathBuf, exclude: &[PathBuf]| {
         let mut files = 0u64;
@@ -97,77 +158,18 @@ pub fn scan(state: &AppState) -> StorageStats {
         total += size;
     };
 
-    // 游戏实例（含每个实例的单独大小）
-    let inst_dir = state.instances_dir();
-    let instance_count = std::fs::read_dir(&inst_dir)
-        .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).count() as u64)
-        .unwrap_or(0);
-    add_dir("instances", "游戏实例", inst_dir.clone(), &[]);
-
-    let mut instances: Vec<InstanceStorage> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&inst_dir) {
-        for entry in rd.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let id = entry
-                .file_name()
-                .into_string()
-                .unwrap_or_default();
-            // 优先从实例元数据读取名称，读不到时回退到目录名
-            let name = std::fs::read_to_string(path.join("qookix.json"))
-                .ok()
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
-                .filter(|n| !n.trim().is_empty())
-                .unwrap_or_else(|| id.clone());
-            let mut files = 0u64;
-            let size = dir_size(&path, &mut files, &[]);
-            instances.push(InstanceStorage { id, name, size, files });
-        }
-    }
-    instances.sort_by(|a, b| b.size.cmp(&a.size));
-
-    // 托管服务器实例（含每个服务器的单独大小）
-    let srv_dir = state.servers_dir();
-    let server_count = std::fs::read_dir(&srv_dir)
-        .map(|rd| rd.flatten().filter(|e| e.path().is_dir()).count() as u64)
-        .unwrap_or(0);
-    add_dir("servers", "服务器实例", srv_dir.clone(), &[]);
-
-    let mut servers: Vec<InstanceStorage> = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(&srv_dir) {
-        for entry in rd.flatten() {
-            let path = entry.path();
-            if !path.is_dir() {
-                continue;
-            }
-            let id = entry
-                .file_name()
-                .into_string()
-                .unwrap_or_default();
-            // 优先从 server.json 读取名称，读不到时回退到目录名
-            let name = std::fs::read_to_string(path.join("server.json"))
-                .ok()
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
-                .filter(|n| !n.trim().is_empty())
-                .unwrap_or_else(|| id.clone());
-            let mut files = 0u64;
-            let size = dir_size(&path, &mut files, &[]);
-            servers.push(InstanceStorage { id, name, size, files });
-        }
-    }
-    servers.sort_by(|a, b| b.size.cmp(&a.size));
-
     // 启动器共享数据
     add_dir("libraries", "库文件", state.libraries_dir(), &[]);
     add_dir("assets", "资源文件", state.assets_dir(), &[]);
     add_dir("versions", "版本文件", state.versions_dir(), &[]);
     // Java 运行时：排除其中的下载临时目录（downloads 归入"缓存"分类）
-    let runtime_dl = root.join("runtimes").join("downloads");
-    add_dir("runtime", "Java 运行时", root.join("runtimes"), &[runtime_dl.clone()]);
+    let runtime_dl = crate::java::download_cache_dir(root);
+    add_dir(
+        "runtime",
+        "Java 运行时",
+        root.join("runtimes"),
+        &[runtime_dl.clone()],
+    );
     add_dir("logs", "日志", state.logs_dir(), &[]);
 
     // 缓存：可安全清理的内容（Java 下载临时目录 + Java 检测缓存 + 本统计缓存）
@@ -196,25 +198,27 @@ pub fn scan(state: &AppState) -> StorageStats {
     let mut other_files = 0u64;
     let mut other_size = 0u64;
     if let Ok(rd) = std::fs::read_dir(root) {
+        let covered_dirs = [
+            state.instances_dir(),
+            state.libraries_dir(),
+            state.assets_dir(),
+            state.versions_dir(),
+            root.join("runtimes"),
+            state.logs_dir(),
+            state.servers_dir(),
+        ];
         for entry in rd.flatten() {
             let p = entry.path();
-            let covered = [
-                state.instances_dir(),
-                state.libraries_dir(),
-                state.assets_dir(),
-                state.versions_dir(),
-                root.join("runtimes"),
-                state.logs_dir(),
-                state.servers_dir(),
-            ]
-            .iter()
-            .any(|d| p.starts_with(d));
+            let covered = covered_dirs.iter().any(|dir| p.starts_with(dir));
             let fname = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
             // 排除统计缓存与 Java 检测缓存（均计入"缓存"分类）
             if covered || fname == CACHE_FILE || fname == "java-cache.json" {
                 continue;
             }
             if let Ok(meta) = entry.metadata() {
+                if crate::fsutil::is_link_or_reparse_point(&meta) {
+                    continue;
+                }
                 if meta.is_dir() {
                     other_size += dir_size(&p, &mut other_files, &[]);
                 } else if meta.is_file() {
@@ -257,11 +261,11 @@ pub fn scan(state: &AppState) -> StorageStats {
 
     StorageStats {
         categories,
+        instance_count: instances.len() as u64,
+        server_count: servers.len() as u64,
         instances,
         servers,
         total,
-        instance_count,
-        server_count,
         updated_at: now_secs(),
         cached: false,
     }
@@ -284,12 +288,18 @@ fn load_cache(root: &Path) -> Option<StorageStats> {
 fn save_cache(root: &Path, stats: &StorageStats) {
     if let Ok(json) = serde_json::to_string(stats) {
         let p = cache_path(root);
-        crate::util::fs_best_effort("write", &p, std::fs::write(&p, json));
+        crate::fsutil::fs_best_effort(
+            "write",
+            &p,
+            crate::fsutil::atomic_write(&p, json.as_bytes()),
+        );
     }
 }
 
 /// 获取存储统计：优先返回上次扫描的缓存，无缓存时执行实时扫描
 pub fn get_storage_stats(state: &AppState) -> StorageStats {
+    let cache_lock = state.jobs.download_lock(cache_path(&state.root));
+    let _guard = cache_lock.blocking_lock();
     if let Some(cached) = load_cache(&state.root) {
         return cached;
     }
@@ -300,6 +310,8 @@ pub fn get_storage_stats(state: &AppState) -> StorageStats {
 
 /// 强制重新扫描并保存缓存
 pub fn refresh_storage_stats(state: &AppState) -> StorageStats {
+    let cache_lock = state.jobs.download_lock(cache_path(&state.root));
+    let _guard = cache_lock.blocking_lock();
     let stats = scan(state);
     save_cache(&state.root, &stats);
     stats
@@ -307,38 +319,142 @@ pub fn refresh_storage_stats(state: &AppState) -> StorageStats {
 
 /// 清除可安全清理的缓存（Java 下载临时文件、Java 检测缓存、本统计缓存、
 /// 内容描述翻译缓存）。不触碰任何实例、库、资源、版本等游戏数据。
-pub fn clear_cache(state: &AppState) -> Result<CacheClearResult, String> {
-    let mut freed = 0u64;
-
-    // 1. Java 运行时下载临时目录
-    let dl_dir = state.root.join("runtimes").join("downloads");
-    if dl_dir.exists() {
-        let mut files = 0u64;
-        freed += dir_size(&dl_dir, &mut files, &[]);
-        std::fs::remove_dir_all(&dl_dir)
-            .map_err(|e| format!("清理 Java 下载缓存失败: {e}"))?;
-    }
-
-    // 2. Java 检测缓存
-    let java_cache = state.root.join("java-cache.json");
-    if java_cache.exists() {
-        freed += java_cache.metadata().map(|m| m.len()).unwrap_or(0);
-        crate::util::fs_best_effort("remove_file", &java_cache, std::fs::remove_file(&java_cache));
-    }
-
-    // 3. 本统计缓存（删除后下次访问会重新扫描）
+pub fn clear_cache(state: &AppState) -> CacheClearResult {
+    let mut result = CacheClearResult {
+        freed: 0,
+        java_download_in_use: false,
+        errors: Vec::new(),
+    };
     let stat_cache = cache_path(&state.root);
-    if stat_cache.exists() {
-        freed += stat_cache.metadata().map(|m| m.len()).unwrap_or(0);
-        crate::util::fs_best_effort("remove_file", &stat_cache, std::fs::remove_file(&stat_cache));
+    let cache_lock = state.jobs.download_lock(stat_cache.clone());
+    let _guard = cache_lock.blocking_lock();
+    clear_java_download_cache(&state.jobs, &state.root, &mut result);
+
+    for path in [state.root.join("java-cache.json"), stat_cache] {
+        match remove_cache_file(&path) {
+            Ok(freed) => result.freed += freed,
+            Err(err) => result.errors.push(format!("{}: {err}", path.display())),
+        }
+    }
+    match crate::translate::clear_cache(state, None) {
+        Ok(freed) => result.freed += freed,
+        Err(err) => result.errors.push(err),
+    }
+    result
+}
+
+fn clear_java_download_cache(
+    jobs: &crate::runtime_jobs::RuntimeJobs,
+    root: &Path,
+    result: &mut CacheClearResult,
+) {
+    let path = crate::java::download_cache_dir(root);
+    let cache_lock = jobs.download_lock(path.clone());
+    let Ok(_guard) = cache_lock.try_lock() else {
+        result.java_download_in_use = true;
+        return;
+    };
+    if let Err(err) = remove_download_directory(&path, &mut result.freed) {
+        result.errors.push(format!("{}: {err}", path.display()));
+    }
+}
+
+fn remove_download_directory(path: &Path, freed: &mut u64) -> std::io::Result<()> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => return Err(err),
+    };
+    if !meta.is_dir() || crate::fsutil::is_link_or_reparse_point(&meta) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "invalid cache directory",
+        ));
+    }
+    let mut first_error = None;
+    for entry in std::fs::read_dir(path)? {
+        let removal = entry.and_then(|entry| {
+            let info = entry.metadata()?;
+            let child = entry.path();
+            if info.is_dir() && !crate::fsutil::is_link_or_reparse_point(&info) {
+                remove_download_directory(&child, freed)
+            } else {
+                *freed += remove_cache_file(&child)?;
+                Ok(())
+            }
+        });
+        if let Err(err) = removal {
+            first_error.get_or_insert(err);
+        }
+    }
+    match first_error {
+        Some(err) => Err(err),
+        None => match std::fs::remove_dir(path) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            result => result,
+        },
+    }
+}
+
+fn remove_cache_file(path: &Path) -> std::io::Result<u64> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(err),
+    };
+    let size = if meta.is_file() && !crate::fsutil::is_link_or_reparse_point(&meta) {
+        meta.len()
+    } else {
+        0
+    };
+    std::fs::remove_file(path)?;
+    Ok(size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn category_uses_instance_totals_and_keeps_top_level_files() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir(root.path().join("instance")).unwrap();
+        let metadata = br#"{"name":"Launch test"}"#;
+        std::fs::write(root.path().join("instance/qookix.json"), metadata).unwrap();
+        std::fs::write(root.path().join("instance/options.txt"), b"abc").unwrap();
+        std::fs::write(root.path().join("root.txt"), b"abcd").unwrap();
+        let (category, instances) =
+            scan_instances(root.path(), "qookix.json", "instances", "Instances");
+        assert_eq!(instances.len(), 1);
+        assert_eq!(instances[0].name, "Launch test");
+        assert_eq!(instances[0].size, metadata.len() as u64 + 3);
+        assert_eq!(category.size, instances[0].size + 4);
+        assert_eq!(category.files, 3);
     }
 
-    // 4. 内容描述翻译缓存（清空后翻译会重新请求服务端）
-    let tr_cache = state.root.join("cache").join("translations.json");
-    if tr_cache.exists() {
-        freed += tr_cache.metadata().map(|m| m.len()).unwrap_or(0);
-        crate::util::fs_best_effort("remove_file", &tr_cache, std::fs::remove_file(&tr_cache));
+    #[test]
+    fn downloads_in_use_are_skipped_and_only_successful_removals_count() {
+        let root = tempfile::tempdir().unwrap();
+        let path = crate::java::download_cache_dir(root.path());
+        std::fs::create_dir_all(&path).unwrap();
+        std::fs::write(path.join("java.zip"), b"archive").unwrap();
+        let jobs = crate::runtime_jobs::RuntimeJobs::default();
+        let lock = jobs.download_lock(path.clone());
+        let guard = lock.try_lock().unwrap();
+        let mut result = CacheClearResult {
+            freed: 0,
+            java_download_in_use: false,
+            errors: Vec::new(),
+        };
+        clear_java_download_cache(&jobs, root.path(), &mut result);
+        assert!(result.java_download_in_use);
+        assert_eq!(result.freed, 0);
+        assert!(path.join("java.zip").is_file());
+        drop(guard);
+        assert!(remove_cache_file(&path).is_err());
+        clear_java_download_cache(&jobs, root.path(), &mut result);
+        assert_eq!(result.freed, 7);
+        assert!(result.errors.is_empty());
+        assert!(!path.exists());
     }
-
-    Ok(CacheClearResult { freed })
 }

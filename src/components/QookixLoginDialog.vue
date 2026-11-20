@@ -8,10 +8,17 @@
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { NInput, NModal, useMessage } from "naive-ui";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { api } from "../api";
 import { qookixErrorMessage, useQookixStore } from "../stores/qookix";
-import type { QookixApiError } from "../types";
+import type { QookixApiError, QookixRegisterPolicy } from "../types";
 
-type Mode = "login" | "register" | "forgot" | "verifySent" | "forgotSent";
+/** 用户协议（文档站托管，注册前必须勾选） */
+const AGREEMENT_URL = "https://docs.qookix.cn/agreement.html";
+/** 需要人机验证时的网页注册入口（Turnstile 在 Tauri WebView 里不可用） */
+const REGISTER_WEB_URL = "https://service.qookix.cn/register.html";
+
+type Mode = "login" | "register" | "twofa" | "forgot" | "verifySent" | "forgotSent";
 
 const { t } = useI18n();
 const store = useQookixStore();
@@ -31,14 +38,23 @@ const rUsername = ref("");
 const rEmail = ref("");
 const rPassword = ref("");
 const rNickname = ref("");
+const agreeTerms = ref(false);
+const inviteCode = ref("");
+const termsUrl = ref(AGREEMENT_URL);
+const regPolicy = ref<QookixRegisterPolicy | null>(null);
 const forgotLogin = ref("");
+// 登录第二步
+const twofaChallenge = ref("");
+const twofaCode = ref("");
 
 const title = computed(() =>
   mode.value === "register"
     ? t("qookix.registerTitle")
-    : mode.value === "forgot"
-      ? t("qookix.forgotTitle")
-      : t("qookix.title"),
+    : mode.value === "twofa"
+      ? t("qookix.twofa.title")
+      : mode.value === "forgot"
+        ? t("qookix.forgotTitle")
+        : t("qookix.title"),
 );
 
 function open() {
@@ -55,6 +71,31 @@ function switchMode(next: Mode) {
   mode.value = next;
   error.value = "";
   errorCode.value = "";
+  // 每次进入注册页都从"未同意"开始，避免上一次勾选被误当成这一次的同意
+  if (next === "register") {
+    agreeTerms.value = false;
+    inviteCode.value = "";
+    void loadRegisterPolicy();
+  }
+}
+
+/** 注册策略决定要不要显示邀请码、以及协议链接的最终地址 */
+async function loadRegisterPolicy() {
+  try {
+    const p = await api.qookixRegisterPolicy();
+    regPolicy.value = p;
+    if (p.terms_url) termsUrl.value = p.terms_url;
+  } catch {
+    // 拿不到策略就按默认表单走，服务端仍会拦
+  }
+}
+
+function openAgreement() {
+  openUrl(termsUrl.value || AGREEMENT_URL).catch(() => {});
+}
+
+function openWebRegister() {
+  openUrl(REGISTER_WEB_URL).catch(() => {});
 }
 
 function fail(e: unknown) {
@@ -79,8 +120,39 @@ async function submitLogin() {
   errorCode.value = "";
   busy.value = true;
   try {
-    await store.login(login, password.value);
+    const challenge = await store.login(login, password.value);
+    if (challenge) {
+      // 账号开了两步验证：留在弹窗里输入动态码
+      twofaChallenge.value = challenge.challenge_token;
+      twofaCode.value = "";
+      mode.value = "twofa";
+      return;
+    }
     message.success(t("qookix.loginSuccess"));
+    password.value = "";
+    show.value = false;
+  } catch (e) {
+    fail(e);
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function submitTwoFA() {
+  if (busy.value) return;
+  const code = twofaCode.value.trim();
+  error.value = "";
+  errorCode.value = "";
+  if (!code) {
+    error.value = t("qookix.err.twoFactorCodeRequired");
+    return;
+  }
+  busy.value = true;
+  try {
+    await store.login2fa(twofaChallenge.value, code);
+    message.success(t("qookix.loginSuccess"));
+    twofaCode.value = "";
+    twofaChallenge.value = "";
     password.value = "";
     show.value = false;
   } catch (e) {
@@ -109,6 +181,15 @@ async function submitRegister() {
     error.value = t("qookix.err.invalidPassword");
     return;
   }
+  if (!agreeTerms.value) {
+    error.value = t("qookix.err.termsRequired");
+    return;
+  }
+  const invite = inviteCode.value.trim();
+  if (regPolicy.value?.invite_required && !invite) {
+    error.value = t("qookix.err.inviteRequired");
+    return;
+  }
   busy.value = true;
   try {
     const data = await store.register(
@@ -116,6 +197,8 @@ async function submitRegister() {
       email,
       rPassword.value,
       rNickname.value.trim() || undefined,
+      invite || undefined,
+      agreeTerms.value,
     );
     if (data.email_verification_required) {
       sentTo.value = email;
@@ -223,6 +306,34 @@ function goForgot() {
         </div>
       </template>
 
+      <!-- 登录第二步：两步验证 -->
+      <template v-else-if="mode === 'twofa'">
+        <p class="qx-intro">{{ t("qookix.twofa.intro") }}</p>
+
+        <label class="qx-field">
+          <span class="qx-label">{{ t("qookix.twofa.codeLabel") }}</span>
+          <n-input
+            v-model:value="twofaCode"
+            :placeholder="t('qookix.twofa.codePlaceholder')"
+            :disabled="busy"
+            maxlength="16"
+            @keyup.enter="submitTwoFA"
+          />
+        </label>
+
+        <p v-if="error" class="qx-error">{{ error }}</p>
+
+        <button class="qx-submit" :disabled="busy" @click="submitTwoFA">
+          {{ busy ? t("qookix.loggingIn") : t("qookix.twofa.submit") }}
+        </button>
+
+        <div class="qx-links">
+          <button class="qx-link" @click="switchMode('login')">{{ t("qookix.backToLogin") }}</button>
+          <span class="qx-dot">·</span>
+          <button class="qx-link" @click="show = false">{{ t("qookix.later") }}</button>
+        </div>
+      </template>
+
       <!-- 注册 -->
       <template v-else-if="mode === 'register'">
         <p class="qx-intro">{{ t("qookix.registerIntro") }}</p>
@@ -271,10 +382,43 @@ function goForgot() {
           />
         </label>
 
+        <label v-if="regPolicy?.invite_required" class="qx-field">
+          <span class="qx-label">{{ t("qookix.inviteCodeLabel") }}</span>
+          <n-input
+            v-model:value="inviteCode"
+            :placeholder="t('qookix.inviteCodePlaceholder')"
+            :disabled="busy"
+            maxlength="16"
+            @keyup.enter="submitRegister"
+          />
+        </label>
+
+        <p v-if="regPolicy?.turnstile_enabled" class="qx-intro">
+          {{ t("qookix.turnstileWebHint") }}
+        </p>
+
+        <label class="qx-terms">
+          <input v-model="agreeTerms" type="checkbox" :disabled="busy" />
+          <span>
+            {{ t("qookix.termsPrefix") }}
+            <button type="button" class="qx-terms-link" @click="openAgreement">
+              {{ t("qookix.termsLink") }}
+            </button>
+          </span>
+        </label>
+
         <p v-if="error" class="qx-error">{{ error }}</p>
 
-        <button class="qx-submit" :disabled="busy" @click="submitRegister">
+        <button
+          v-if="!regPolicy?.turnstile_enabled"
+          class="qx-submit"
+          :disabled="busy"
+          @click="submitRegister"
+        >
           {{ busy ? t("qookix.registering") : t("qookix.registerSubmit") }}
+        </button>
+        <button v-else class="qx-submit" @click="openWebRegister">
+          {{ t("qookix.openWebRegister") }}
         </button>
 
         <div class="qx-links">
@@ -383,6 +527,31 @@ function goForgot() {
 .qx-submit:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+.qx-terms {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  font-size: var(--fs-xs);
+  line-height: 1.6;
+  color: var(--text-3);
+  cursor: pointer;
+}
+.qx-terms input {
+  margin-top: 2px;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+.qx-terms-link {
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+.qx-terms-link:hover {
+  text-decoration: underline;
 }
 .qx-error {
   margin: 0;

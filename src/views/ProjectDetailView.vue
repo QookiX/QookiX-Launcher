@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch, nextTick } from "vue";
+import { createLatestRequest } from "../composables/latestRequest";
+import { vSegmented } from "../composables/vSegmented";
+import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { NSelect, useMessage } from "naive-ui";
+import { NButton, NSelect, useMessage } from "naive-ui";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -154,8 +156,12 @@ const installInstanceId = ref<string | null>(null);
 const isFav = computed(() => (project.value ? favorites.has(favoriteKey(project.value)) : false));
 function toggleFavorite() {
   if (!project.value) return;
-  const on = favorites.toggle(project.value);
-  message.success(on ? t("projectCard.addedToFavorites") : t("projectCard.removedFromFavorites"));
+  try {
+    const on = favorites.toggle(project.value);
+    message.success(on ? t("projectCard.addedToFavorites") : t("projectCard.removedFromFavorites"));
+  } catch (error) {
+    message.error(String(error));
+  }
 }
 
 /** 顶部「安装」按钮：不预选版本/实例，交给弹窗自己决定 */
@@ -233,34 +239,59 @@ function renderTranslated(text: string): string {
 const bodyDisplayHtml = computed(() => (showZh.value && bodyHtml.value ? bodyHtml.value : originalHtml.value));
 const bodyIsZh = computed(() => showZh.value && !!bodyHtml.value);
 
+const mcQueryValue = computed(() => route.query.mc);
+const projectRequest = createLatestRequest();
+const bodyRequest = createLatestRequest();
+const versionsRequest = createLatestRequest();
+
+function routeScope() {
+  const source = provider.value;
+  const id = projectId.value;
+  return { source, id, isCurrent: () => provider.value === source && projectId.value === id };
+}
+
 async function loadProject() {
+  const ownsRequest = projectRequest.start();
+  const route = routeScope();
+  const isCurrent = () => ownsRequest() && route.isCurrent();
+  bodyRequest.invalidate();
+  versionsRequest.invalidate();
   loading.value = true;
   failed.value = false;
   project.value = null;
-  // 版本筛选默认值：优先用发现页带过来的实例 MC 版本（?mc=），
-  // 没有实例版本时回退到最新正式版。
-  await ensureManifest();
-  const mcQuery = typeof route.query.mc === "string" ? route.query.mc : "";
-  const targetFilter = mcQuery || latestMc.value || "";
+  bodyLoading.value = false;
+  bodyTranslating.value = false;
+  versionsLoading.value = false;
+  allLoading.value = false;
+  versions.value = [];
+  verHasMore.value = false;
   try {
-    project.value = await api.projectInfo(provider.value, projectId.value);
-    loadBody();
-    if (targetFilter && verGameFilter.value !== targetFilter) {
-      // 变更筛选值会触发 watch(verGameFilter) → loadVersions()
+    await ensureManifest();
+    if (!isCurrent()) return;
+    const mcQuery = typeof mcQueryValue.value === "string" ? mcQueryValue.value : "";
+    const targetFilter = mcQuery || latestMc.value || "";
+    const result = await api.projectInfo(route.source, route.id);
+    if (!isCurrent()) return;
+    project.value = result;
+    void loadBody();
+    if (verGameFilter.value !== targetFilter) {
       verGameFilter.value = targetFilter;
     } else {
-      loadVersions();
+      void loadVersions();
     }
   } catch {
-    failed.value = true;
+    if (isCurrent()) failed.value = true;
   } finally {
-    loading.value = false;
+    if (isCurrent()) loading.value = false;
   }
 }
 
 async function loadBody() {
   const p = project.value;
   if (!p) return;
+  const ownsRequest = bodyRequest.start();
+  const scope = routeScope();
+  const isCurrent = () => ownsRequest() && scope.isCurrent() && project.value === p;
   bodyLoading.value = true;
   bodyNote.value = "";
   bodyHtml.value = "";
@@ -273,6 +304,7 @@ async function loadBody() {
   bodyTranslating.value = wantTranslate;
   try {
     const r = await api.translateBody(p.provider, bodyModId(p), wantTranslate);
+    if (!isCurrent()) return;
     originalHtml.value = r.original ? renderOriginal(r.original, p.provider) : "";
     if (r.body && r.supported) {
       bodyHtml.value = renderTranslated(r.body);
@@ -280,10 +312,12 @@ async function loadBody() {
     }
     if (r.error) bodyNote.value = t("projectDetail.translateFailed", { error: r.error });
   } catch {
-    bodyNote.value = t("projectDetail.loadFailed");
+    if (isCurrent()) bodyNote.value = t("projectDetail.loadFailed");
   } finally {
-    bodyLoading.value = false;
-    bodyTranslating.value = false;
+    if (isCurrent()) {
+      bodyLoading.value = false;
+      bodyTranslating.value = false;
+    }
   }
 }
 
@@ -303,10 +337,14 @@ function onTranslateBtn() {
     message.info(t("projectDetail.noBody"));
     return;
   }
+  const ownsRequest = bodyRequest.start();
+  const scope = routeScope();
+  const isCurrent = () => ownsRequest() && scope.isCurrent() && project.value === p;
   bodyTranslating.value = true;
   api
     .translateBody(p.provider, bodyModId(p), true)
     .then((r) => {
+      if (!isCurrent()) return;
       if (r.body) {
         bodyHtml.value = renderTranslated(r.body);
         showZh.value = true;
@@ -315,54 +353,70 @@ function onTranslateBtn() {
         bodyNote.value = r.error ?? t("projectDetail.translateFailedShort");
       }
     })
-    .catch((e) => message.error(t("projectDetail.translateFailed", { error: String(e) })))
+    .catch((e) => {
+      if (isCurrent()) message.error(t("projectDetail.translateFailed", { error: String(e) }));
+    })
     .finally(() => {
-      bodyTranslating.value = false;
+      if (isCurrent()) bodyTranslating.value = false;
     });
 }
 
 const verApiIndex = ref(0); // 已加载到第几页（后端每页 100 条）
 
+function versionRequestScope(p: ProjectHit) {
+  const ownsRequest = versionsRequest.start();
+  const route = routeScope();
+  const game = verGameFilter.value;
+  return {
+    game,
+    isCurrent: () => ownsRequest() && route.isCurrent() && project.value === p && game === verGameFilter.value,
+  };
+}
+
 async function loadVersions() {
   const p = project.value;
   if (!p) return;
+  const request = versionRequestScope(p);
   versionsLoading.value = true;
+  allLoading.value = false;
   versions.value = [];
+  verHasMore.value = false;
   verApiIndex.value = 0;
   try {
-    const r = await api.projectVersions(p.provider, p.id, verGameFilter.value, "", 0, false);
+    const r = await api.projectVersions(p.provider, p.id, request.game, "", 0, false);
+    if (!request.isCurrent()) return;
     versions.value = r.versions;
     verHasMore.value = r.hasMore;
   } catch {
-    versions.value = [];
-    verHasMore.value = false;
+    if (request.isCurrent()) versions.value = [];
   } finally {
-    versionsLoading.value = false;
+    if (request.isCurrent()) versionsLoading.value = false;
   }
 }
 
 // 只有用户手动点「加载更多」时才继续往后翻页
 async function loadMore() {
   const p = project.value;
-  if (!p || allLoading.value || !verHasMore.value) return;
+  if (!p || versionsLoading.value || allLoading.value || !verHasMore.value) return;
+  const request = versionRequestScope(p);
   allLoading.value = true;
+  const next = verApiIndex.value + 1;
   try {
-    const next = verApiIndex.value + 1;
-    const r = await api.projectVersions(p.provider, p.id, verGameFilter.value, "", next, false);
-    // 追加新一页，按 id 去重
+    const result = await api.projectVersions(p.provider, p.id, request.game, "", next, false);
+    if (!request.isCurrent()) return;
     const seen = new Set(versions.value.map((v) => v.id));
-    for (const v of r.versions) {
+    for (const v of result.versions) {
       if (!seen.has(v.id)) {
         seen.add(v.id);
         versions.value.push(v);
       }
     }
     verApiIndex.value = next;
-    verHasMore.value = r.hasMore;
+    verHasMore.value = result.hasMore;
   } catch {
     /* 保留已加载的数据，下次点击可重试 */
   } finally {
-    allLoading.value = false;
+    if (request.isCurrent()) allLoading.value = false;
   }
 }
 
@@ -391,19 +445,24 @@ function openSite() {
 }
 
 onMounted(loadProject);
-watch([provider, projectId], loadProject);
+watch([provider, projectId, mcQueryValue], loadProject);
+onBeforeUnmount(() => {
+  projectRequest.invalidate();
+  bodyRequest.invalidate();
+  versionsRequest.invalidate();
+});
 </script>
 
 <template>
   <div class="pd" data-tauri-drag-region>
     <div class="toolbar glass">
       <div class="toolbar-row">
-        <button class="qx-btn" @click="router.back()">
-          <IconChevronLeft /> {{ t("projectDetail.back") }}
-        </button>
-        <button v-if="project" class="qx-btn" style="margin-left: auto;" @click="openSite">
-          <IconExternal /> {{ t("projectDetail.viewOnSite") }}
-        </button>
+        <NButton @click="router.back()">
+          <template #icon><IconChevronLeft /></template> {{ t("projectDetail.back") }}
+        </NButton>
+        <NButton v-if="project" style="margin-left: auto;" @click="openSite">
+          <template #icon><IconExternal /></template> {{ t("projectDetail.viewOnSite") }}
+        </NButton>
       </div>
     </div>
 
@@ -418,7 +477,7 @@ watch([provider, projectId], loadProject);
           :alt="project.title"
           @error="($event.target as HTMLImageElement).style.display = 'none'"
         />
-        <div class="pd-info">
+        <div class="pd-info qx-card-open">
           <h1 class="pd-title">{{ project.title }}</h1>
           <div class="pd-meta">
             <span>{{ t("projectDetail.author") }}: {{ project.author }}</span>
@@ -437,13 +496,13 @@ watch([provider, projectId], loadProject);
             <IconStarFilled v-if="isFav" /><IconStar v-else />
             {{ isFav ? t("projectDetail.favorited") : t("projectDetail.favorite") }}
           </button>
-          <button class="qx-btn qx-btn--primary" @click="openInstall">
-            <IconDownload /> {{ t("projectDetail.install") }}
-          </button>
+          <NButton type="primary" @click="openInstall">
+            <template #icon><IconDownload /></template> {{ t("projectDetail.install") }}
+          </NButton>
         </div>
       </div>
 
-      <div ref="tabBox" class="type-card qx-seg">
+      <div ref="tabBox" v-segmented="{ label: t('page.projectDetail'), panel: 'project-tab-panel' }" class="type-card qx-seg">
         <div class="qx-seg__indicator" :style="tabIndicatorStyle"></div>
         <button
           v-for="k in tabKeys"
@@ -455,7 +514,7 @@ watch([provider, projectId], loadProject);
         </button>
       </div>
 
-      <div class="pd-body glass">
+      <div id="project-tab-panel" class="pd-body glass" role="tabpanel">
         <div v-show="tab === 'desc'">
           <div v-if="canTranslateBody && locale.startsWith('zh') && (originalHtml || bodyHtml) && !bodyLoading" class="pd-body-head">
             <button

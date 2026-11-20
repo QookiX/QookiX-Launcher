@@ -26,11 +26,13 @@ const bodyText = computed(() => {
 });
 
 async function startUpdate() {
+  const update = forceUpdateInfo.value;
+  if (!update) return;
   phase.value = "downloading";
   fraction.value = 0;
   errorMsg.value = "";
   try {
-    const ok = await downloadUpdate((p) => {
+    const ok = await downloadUpdate(update, (p) => {
       if (p.fraction != null) fraction.value = p.fraction;
     });
     if (!ok) {

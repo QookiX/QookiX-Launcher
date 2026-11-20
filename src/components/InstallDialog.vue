@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vSegmented } from "../composables/vSegmented";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useSettingsStore } from "../stores/settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
@@ -553,7 +554,7 @@ async function install() {
         <div class="id-field">
           <div class="id-ver-head">
             <span>{{ t('installDialog.form.selectVersion') }}</span>
-            <div ref="typeTabBox" class="id-type-tabs qx-seg qx-seg--sm">
+            <div ref="typeTabBox" v-segmented="{ label: t('common.versionType') }" class="id-type-tabs qx-seg qx-seg--sm">
               <div class="qx-seg__indicator" :style="typeTabIndicatorStyle"></div>
               <button :class="{ active: typeFilter === 'all' }" @click="typeFilter = 'all'">{{ t('installDialog.form.typeAll') }}</button>
               <button :class="{ active: typeFilter === 'release' }" @click="typeFilter = 'release'">{{ t('installDialog.versionType.release') }}</button>

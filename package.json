@@ -1,15 +1,17 @@
 {
   "name": "qookix-launcher",
   "private": true,
-  "version": "0.22.0",
+  "version": "0.22.1",
   "license": "GPL-3.0-only",
   "type": "module",
+  "engines": { "node": ">=22" },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/weimosheng/QookiX-Launcher.git"
   },
   "scripts": {
     "dev": "vite",
+    "test": "node --test scripts/shared/*.test.mjs",
     "build": "vue-tsc --noEmit && vite build",
     "preview": "vite preview",
     "tauri": "node scripts/run-tauri.mjs",

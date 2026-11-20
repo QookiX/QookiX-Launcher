@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { useRouter, onBeforeRouteLeave } from "vue-router";
+import { onBeforeRouteLeave, useRouter } from "vue-router";
 import { useI18n } from "vue-i18n";
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { prefersReducedMotion } from "../composables/useMotionPreference";
 import { useInstancesStore } from "../stores/instances";
 import { useAccountsStore } from "../stores/accounts";
 import { usePinsStore, type PinItem } from "../stores/pins";
@@ -184,7 +185,7 @@ async function launchPin(p: PinItem) {
 }
 
 function unpin(p: PinItem) {
-  pinsStore.remove(p.id);
+  void pinsStore.remove(p.id).catch((error) => message.error(String(error)));
 }
 
 function openInstance(p: PinItem) {
@@ -205,32 +206,17 @@ onMounted(() => {
   settingsStore.load();
   void ensureCustomLayout();
   pinsStore.items.filter((p) => p.type === "server").forEach((p) => pingPin(p));
-  // pin-card 逐个进入：每个延迟递增 60ms；section 在最后一个 pin-card 之后
-  requestAnimationFrame(() => {
-    const cards = document.querySelectorAll<HTMLElement>(".pin-card");
-    cards.forEach((card, i) => {
-      card.style.animationDelay = `${0.32 + i * 0.06}s`;
-    });
-    if (sectionEl.value) {
-      const sectionGlass = sectionEl.value.querySelector<HTMLElement>(".glass");
-      if (sectionGlass) {
-        sectionGlass.style.animationDelay = `${0.32 + cards.length * 0.06 + 0.1}s`;
-      }
-    }
-  });
 });
 
-// 离开首页时让 .section 往下滑出：先取消进场 animation 让 transform 回到默认值，
-// reflow 后下一帧加 leaving class 触发 transition（translateY 抵消整页上移后净往下）
-const sectionEl = ref<HTMLElement>();
+const emptySection = ref<HTMLElement | null>(null);
+
 onBeforeRouteLeave(() => {
-  const glass = sectionEl.value?.querySelector<HTMLElement>(".glass");
-  if (!glass) return;
-  glass.style.animation = "none";
-  void glass.offsetHeight;
-  requestAnimationFrame(() => {
-    glass.classList.add("leaving");
-  });
+  if (prefersReducedMotion.value) return;
+  const card = emptySection.value;
+  if (!card) return;
+  card.style.animation = "none";
+  void card.offsetHeight;
+  requestAnimationFrame(() => card.classList.add("leaving"));
 });
 </script>
 
@@ -278,7 +264,13 @@ onBeforeRouteLeave(() => {
         <h2 class="qx-section-title">{{ t("home.default.pinTitle") }}</h2>
       </div>
       <div class="pin-grid">
-        <div v-for="p in validPins" :key="p.id" class="pin-card glass clickable" @click="openInstance(p)">
+        <div
+          v-for="(p, index) in validPins"
+          :key="p.id"
+          class="pin-card glass clickable qx-card-enter"
+          :style="{ animationDelay: `${0.32 + index * 0.06}s` }"
+          @click="openInstance(p)"
+        >
           <div class="pin-icon">
             <template v-if="p.type === 'server'">
               <img v-if="pinIconSrc(p)" :src="pinIconSrc(p)" class="pin-icon-img" alt="" />
@@ -293,7 +285,7 @@ onBeforeRouteLeave(() => {
             </template>
           </div>
           <div class="pin-info">
-            <div class="pin-title text-ellipsis">{{ p.name }}</div>
+            <button type="button" class="pin-title text-ellipsis qx-title-action" @click.stop="openInstance(p)">{{ p.name }}</button>
             <div class="pin-meta">
               <span class="pin-type" :class="p.type">{{ pinTypeLabel(p.type) }}</span>
               <span v-if="p.type === 'instance'" class="pin-inst text-ellipsis">{{ p.mcVersion }} · {{ p.loader }}</span>
@@ -325,8 +317,8 @@ onBeforeRouteLeave(() => {
       </div>
     </section>
 
-    <section v-if="showRecentInstances && !instances.instances.length" ref="sectionEl" class="section">
-      <div class="qx-empty glass">
+    <section v-if="showRecentInstances && !instances.instances.length" class="section">
+      <div ref="emptySection" class="qx-empty glass qx-card-enter" :style="{ animationDelay: `${0.42 + validPins.length * 0.06}s` }">
         <div class="empty-icon"><IconGrid /></div>
         <p>{{ t("home.empty.noInstance") }}</p>
         <div class="home-empty-actions">
@@ -362,21 +354,6 @@ onBeforeRouteLeave(() => {
   padding-top: 8px;
   z-index: 1;
 }
-/* 进场动画在 .section > .glass 上而非 .section 上：
-   父元素 transform 会隔离子元素 backdrop-filter，自身 transform 则不会 */
-.section > .glass {
-  animation: home-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) 0.40s backwards;
-}
-@keyframes home-card-enter {
-  from {
-    transform: translateY(28px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
-}
 .section::before {
   content: "";
   position: absolute;
@@ -387,12 +364,11 @@ onBeforeRouteLeave(() => {
   z-index: -1;
   pointer-events: none;
 }
-/* 离开首页时 .section 往右滑出。
-   取消整页 overflow:hidden 让位移可见；
-   translateX(64px) 抵消整页 translateX(-32px) 后净 +32px 往右 */
+
 .slide-forward-leave-active {
   overflow: visible;
 }
+
 .section > .glass.leaving {
   transition: transform 0.22s ease-in, opacity 0.22s ease-in;
   transform: translateX(64px);
@@ -465,7 +441,6 @@ onBeforeRouteLeave(() => {
   cursor: pointer;
   box-shadow: var(--card-shadow);
   transition: transform 0.18s ease, box-shadow 0.18s ease, background 0.12s ease, border-color 0.12s ease;
-  animation: home-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
 }
 /* 悬停：阴影加深，不位移；:not(:active) 排除按下态让 .clickable:active 的 scale(0.97) 接管按压 */
 .pin-card:hover:not(:active) {

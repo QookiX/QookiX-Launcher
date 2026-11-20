@@ -331,18 +331,25 @@ async fn xbox_login(
 
 /// Refresh a Microsoft account's access token (called before launching).
 pub async fn refresh_microsoft(state: &AppState, account: &Account) -> Result<Account, String> {
+    if !account.is_microsoft() {
+        return Ok(account.clone());
+    }
+    let initial = snapshot_for_refresh(state, account)?;
+    let lock = refresh_lock(state, account.uuid());
+    let _guard = lock.lock().await;
+    let (current, version) = current_for_refresh(state, account.uuid(), &initial)?;
     let Account::Microsoft {
         msa_refresh_token,
         msa_access_token: _,
         msa_expires_at,
         ..
-    } = account
+    } = &current
     else {
-        return Ok(account.clone());
+        return Err("账号类型已变更，请重新选择".into());
     };
     // allow 5 min slack
     if crate::util::now_secs() + 300 < *msa_expires_at {
-        return Ok(account.clone());
+        return Ok(current);
     }
     let client_id = effective_ms_client_id(state)?;
     let resp = state
@@ -376,8 +383,14 @@ pub async fn refresh_microsoft(state: &AppState, account: &Account) -> Result<Ac
         .unwrap_or(msa_refresh_token)
         .to_string();
     let expires_in = body.get("expires_in").and_then(|v| v.as_u64()).unwrap_or(3600);
-    let new = xbox_login(state, &access_token, &refresh_token, expires_in).await?;
-    save_account(state, &new)?;
+    let mut new = xbox_login(state, &access_token, &refresh_token, expires_in).await?;
+    if new.uuid() != current.uuid() {
+        return Err("刷新得到的角色与已保存账号不匹配，请重新登录".into());
+    }
+    if let (Account::Microsoft { created, .. }, Account::Microsoft { created: previous, .. }) = (&mut new, current) {
+        *created = previous;
+    }
+    crate::db::update_account(&state.db(), &new, &version)?;
     Ok(new)
 }
 
@@ -386,31 +399,37 @@ pub async fn refresh_microsoft(state: &AppState, account: &Account) -> Result<Ac
 // ---------------------------------------------------------------------------
 
 pub fn load_accounts(state: &AppState) -> Vec<Account> {
-    let conn = state.db();
-    crate::db::load_rows_encrypted(&conn, "accounts")
-        .into_iter()
-        .filter_map(|v| serde_json::from_value(v).ok())
-        .collect()
+    crate::db::list_accounts(&state.db())
 }
 
-pub fn save_accounts(state: &AppState, accounts: &[Account]) -> Result<(), String> {
+pub fn save_account(state: &AppState, account: &Account) -> Result<(), String> {
     let conn = state.db();
-    let vals: Vec<serde_json::Value> = accounts
-        .iter()
-        .map(|a| serde_json::to_value(a).unwrap_or_default())
-        .collect();
-    crate::db::save_rows_encrypted(&conn, "accounts", &vals)
-}
-
-fn save_account(state: &AppState, account: &Account) -> Result<(), String> {
-    let mut accounts = load_accounts(state);
-    accounts.retain(|a| a.uuid() != account.uuid());
-    accounts.push(account.clone());
-    save_accounts(state, &accounts)
+    crate::db::require_persistent(&conn)?;
+    crate::db::upsert_account(&conn, account)
 }
 
 pub fn remove_account(state: &AppState, uuid: &str) -> Result<(), String> {
-    let mut accounts = load_accounts(state);
-    accounts.retain(|a| a.uuid() != uuid);
-    save_accounts(state, &accounts)
+    let conn = state.db();
+    crate::db::require_persistent(&conn)?;
+    crate::db::delete_account(&conn, uuid)
+}
+
+pub fn refresh_lock(state: &AppState, uuid: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    state.jobs.download_lock(state.root.join("account-refresh").join(uuid))
+}
+
+pub fn snapshot_for_refresh(state: &AppState, expected: &Account) -> Result<crate::db::AccountVersion, String> {
+    let (current, version) = crate::db::account_snapshot(&state.db(), expected.uuid())?;
+    if &current != expected {
+        return Err("账号会话已更新，请重新选择".into());
+    }
+    Ok(version)
+}
+
+pub fn current_for_refresh(state: &AppState, uuid: &str, expected: &crate::db::AccountVersion) -> Result<(Account, crate::db::AccountVersion), String> {
+    let (current, version) = crate::db::account_snapshot(&state.db(), uuid)?;
+    if version.session != expected.session {
+        return Err("账号会话已更新，请重新选择".into());
+    }
+    Ok((current, version))
 }

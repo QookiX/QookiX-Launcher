@@ -46,3 +46,5 @@ dist-verify
 
 # 仓库统一用 npm（package-lock.json），pnpm 仅本地试用
 pnpm-lock.yaml
+
+/docs/

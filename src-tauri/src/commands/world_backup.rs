@@ -12,7 +12,7 @@ pub fn list_world_backups(
     world: String,
 ) -> Result<Vec<BackupInfo>, String> {
     crate::instances::validate_instance_id(&instance_id)?;
-    if !crate::util::is_safe_filename(&world) {
+    if !crate::fsutil::is_safe_filename(&world) {
         return Err("非法的世界目录名".into());
     }
     Ok(crate::world_backup::list_backups(state.inner(), &instance_id, &world))
@@ -26,7 +26,7 @@ pub fn create_world_backup(
     world: String,
 ) -> Result<BackupInfo, String> {
     crate::instances::validate_instance_id(&instance_id)?;
-    if !crate::util::is_safe_filename(&world) {
+    if !crate::fsutil::is_safe_filename(&world) {
         return Err("非法的世界目录名".into());
     }
     crate::world_backup::create_backup(state.inner(), &instance_id, &world)
@@ -41,7 +41,7 @@ pub fn restore_world_backup(
     filename: String,
 ) -> Result<(), String> {
     crate::instances::validate_instance_id(&instance_id)?;
-    if !crate::util::is_safe_filename(&world) || !crate::util::is_safe_filename(&filename) {
+    if !crate::fsutil::is_safe_filename(&world) || !crate::fsutil::is_safe_filename(&filename) {
         return Err("非法的世界目录名或备份文件名".into());
     }
     crate::world_backup::restore_backup(state.inner(), &instance_id, &world, &filename)
@@ -56,7 +56,7 @@ pub fn delete_world_backup(
     filename: String,
 ) -> Result<(), String> {
     crate::instances::validate_instance_id(&instance_id)?;
-    if !crate::util::is_safe_filename(&world) || !crate::util::is_safe_filename(&filename) {
+    if !crate::fsutil::is_safe_filename(&world) || !crate::fsutil::is_safe_filename(&filename) {
         return Err("非法的世界目录名或备份文件名".into());
     }
     crate::world_backup::delete_backup(state.inner(), &instance_id, &world, &filename)

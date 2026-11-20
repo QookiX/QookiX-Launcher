@@ -21,6 +21,8 @@ export default {
   oauthLogin: "Log in with OAuth2",
   oauthHint: "Authorize in the browser — no password entered into the launcher, supports 2FA.",
   oauthWaiting: "Browser opened. Please complete LittleSkin authorization in the browser…",
+  oauthUserCode: "Authorization code {code}",
+  oauthExpired: "The LittleSkin authorization expired. Start again.",
   oauthCancel: "Cancel waiting",
   oauthErrNoCode: "Callback URL is missing the authorization code",
   oauthDenied: "LittleSkin authorization cancelled",

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { createLatestRequest } from "../composables/latestRequest";
+import { staggeredCardDelay } from "../composables/staggeredCardDelay";
+import UiStatus from "../components/UiStatus.vue";
 /**
  * 拾木空间投影库（独立页面，不再是模态框）。
  *
@@ -11,7 +14,7 @@
  * 「投影相关」= 这几个板块一起查（后端分板块取一页再合并），
  * 也可以点具体板块只看一个。
  */
-import { computed, onMounted, reactive, ref, watch } from "vue";
+import { computed, onBeforeUnmount, onMounted, reactive, ref, watch } from "vue";
 import { useRouter } from "vue-router";
 import { NButton, NInput, NSelect, NModal, useMessage } from "naive-ui";
 import DOMPurify from "dompurify";
@@ -72,6 +75,15 @@ const page = ref(1);
 const rows = ref<ShimuPost[]>([]);
 const total = ref(0);
 const loading = ref(false);
+const listError = ref("");
+const detailError = ref("");
+const searchRequest = createLatestRequest();
+const detailRequest = createLatestRequest();
+
+onBeforeUnmount(() => {
+  searchRequest.invalidate();
+  detailRequest.invalidate();
+});
 
 // 发现页工具栏变化 → 同步到本组件并重新查询
 watch(
@@ -127,11 +139,6 @@ watch(detail, (d) => {
 });
 
 /** 卡片逐个进场（与发现页内容卡片同一节奏） */
-function cardDelay(i: number): string {
-  const step = Math.min(0.045, 0.6 / Math.max(1, rows.value.length));
-  return `${(0.06 + i * step).toFixed(3)}s`;
-}
-
 /** 投影下载完成后弹出的实例选择器：把投影复制到所选实例的 schematics 目录 */
 const instancePicker = ref<{ sourcePath: string; filename: string } | null>(null);
 const pickerInstanceId = ref<string | null>(null);
@@ -367,6 +374,8 @@ function handleError(e: unknown) {
 }
 
 async function search() {
+  const isCurrent = searchRequest.start();
+  listError.value = "";
   loading.value = true;
   try {
     // 来源：目前接进来的只有拾木空间，`all`（全部来源）与 `shimu` 取数完全相同；
@@ -382,14 +391,15 @@ async function search() {
     // 固定按「投影」范围查询：投影 + 建筑 + 红石 + 生电 合并取一页
     query.categoryIds = relatedIds.value;
     const res = await api.shimuListPosts(query);
+    if (!isCurrent()) return;
     rows.value = res.rows ?? [];
     total.value = res.total ?? 0;
   } catch (e) {
-    rows.value = [];
-    total.value = 0;
-    handleError(e);
+    if (!isCurrent()) return;
+    listError.value = shimuErrorMessage(e);
+    if (String(e).includes("__shimu_expired__")) void store.refreshStatus();
   } finally {
-    loading.value = false;
+    if (isCurrent()) loading.value = false;
   }
 }
 
@@ -409,17 +419,21 @@ function submitSearch() {
 
 /** 条件变化后重新查询：先回到第一页（页码的 watch 会顺带触发搜索） */
 function requery() {
+  searchRequest.invalidate();
   if (page.value !== 1) page.value = 1;
   else void search();
 }
 
 function openPost(post: ShimuPost) {
+  const isCurrent = detailRequest.start();
   detail.value = post;
   attachments.value = [];
+  detailError.value = "";
   detailLoading.value = true;
   void (async () => {
     try {
       const raw = await api.shimuPostDetail(post.postId);
+      if (!isCurrent()) return;
       const data = ((raw.data ?? raw) as ShimuPost) ?? post;
       detail.value = { ...post, ...data };
       attachments.value = extractAttachments(
@@ -427,15 +441,20 @@ function openPost(post: ShimuPost) {
         store.config?.host ?? "https://www.mcimg.com"
       );
     } catch (e) {
-      handleError(e);
+      if (!isCurrent()) return;
+      detailError.value = shimuErrorMessage(e);
+      if (String(e).includes("__shimu_expired__")) void store.refreshStatus();
     } finally {
-      detailLoading.value = false;
+      if (isCurrent()) detailLoading.value = false;
     }
   })();
 }
 
 function closeDetail() {
+  detailRequest.invalidate();
   detail.value = null;
+  detailLoading.value = false;
+  detailError.value = "";
   attachments.value = [];
 }
 
@@ -847,8 +866,8 @@ function paidDetailLabel(p: ShimuPost): string {
     </div>
 
     <!-- 详情 -->
-    <div v-if="detail" class="glass detail">
-      <div class="detail-head">
+    <div v-if="detail" class="glass detail qx-enter">
+      <div class="detail-head qx-card-open">
         <button class="link-btn" @click="closeDetail">← {{ t("shimu.back") }}</button>
         <button class="mini-btn primary" @click="openOnSite">{{ t("shimu.openPost") }}</button>
       </div>
@@ -875,7 +894,10 @@ function paidDetailLabel(p: ShimuPost): string {
           />
         </div>
 
-        <div v-if="detailLoading" class="muted">{{ t("common.loading") }}</div>
+        <UiStatus v-if="detailLoading" kind="loading" :text="t('common.loading')" compact />
+        <UiStatus v-else-if="detailError" kind="error" :text="detailError" compact>
+          <button class="qx-btn qx-btn--sm" @click="detail && openPost(detail)">{{ t("common.retry") }}</button>
+        </UiStatus>
         <div v-else-if="bodyHtml" class="detail-body" v-html="bodyHtml" @click="onBodyClick"></div>
         <p v-else-if="!contentLocked && !needComment" class="muted">{{ t("shimu.emptyContent") }}</p>
 
@@ -932,8 +954,12 @@ function paidDetailLabel(p: ShimuPost): string {
         </button>
       </div>
 
-      <!-- 加载态用骨架卡，和发现页其它分类同一套 shimmer（形状跟着投影卡片走） -->
-      <div v-if="loading && !rows.length" class="grid" :class="`view-${cardView}`">
+      <UiStatus v-if="listError" kind="error" :text="listError" compact>
+        <button class="qx-btn qx-btn--sm" @click="search">{{ t("common.retry") }}</button>
+      </UiStatus>
+      <UiStatus v-if="loading && rows.length" kind="loading" :text="t('common.loading')" compact />
+      <!-- 首次加载用骨架卡，刷新保留已有内容。 -->
+      <div v-if="loading && !rows.length" class="grid" :class="`view-${cardView}`" role="status" :aria-label="t('common.loading')">
         <div v-for="i in 8" :key="i" class="skel-card glass" :class="`view-${cardView}`">
           <div class="skel-cover"></div>
           <div class="skel-body">
@@ -946,18 +972,19 @@ function paidDetailLabel(p: ShimuPost): string {
           </div>
         </div>
       </div>
-      <div v-else-if="!rows.length" class="glass empty">{{ t("shimu.emptyList") }}</div>
-      <div v-else class="grid" :class="`view-${cardView}`">
+      <UiStatus v-else-if="!rows.length && !listError" kind="empty" :text="t('shimu.emptyList')" />
+      <div v-else-if="rows.length" class="grid" :class="`view-${cardView}`">
         <ShimuPostCard
           v-for="(p, i) in rows"
           :key="p.postId"
+          class="qx-card-enter"
+          :style="{ animationDelay: staggeredCardDelay(i, rows.length) }"
           :post="p"
           :view="cardView"
           :installing="installingPost === p.postId"
           :previewing="previewingPost === p.postId"
           :installed="installedPosts.has(p.postId)"
           :instance-name="targetInstanceName"
-          :style="{ animationDelay: cardDelay(i) }"
           @open="openPost"
           @install="installToInstance"
           @preview="previewFromCard"
@@ -1069,24 +1096,8 @@ function paidDetailLabel(p: ShimuPost): string {
 .grid.view-compact {
   gap: 8px;
 }
-/* 卡片逐个进场（与发现页内容卡片同一节奏） */
-.grid :deep(.p-card) {
-  animation: shimu-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
-}
-@keyframes shimu-card-enter {
-  from { transform: translateY(28px); opacity: 0; }
-  to { transform: none; opacity: 1; }
-}
 @media (prefers-reduced-motion: reduce) {
   .grid :deep(.p-card) { animation: none; }
-}
-.empty {
-  min-height: 260px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--fs-sm);
-  color: var(--text-3);
 }
 /* —— 骨架屏布局：颜色变量 / shimmer / 条块尺寸来自 styles.css 公共原子 —— */
 .skel-card {

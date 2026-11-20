@@ -5,22 +5,10 @@
 //! 正版验证（Minecraft 使用准则禁止规避正版验证）。启动游戏仍走启动器
 //! 既有的微软 / 离线 / 皮肤站账号体系。
 //!
-//! 流程（与官方《第三方应用接入文档》一致）：
-//! 1. `shimu_oauth_start` 生成带 `state` 的授权页地址，前端用系统浏览器打开；
-//! 2. 用户在浏览器里点「允许」，站点 302 回 `qookix://oauth/callback?code=..&state=..`；
-//! 3. deep-link 插件把回调交给 JS，JS 调 `shimu_oauth_complete(code, state)`；
-//! 4. 后端（**只有后端能拿 client_secret**）用授权码换 `access_token`，
-//!    再拉 `getInfo` 补齐资料，落盘（Windows 走 DPAPI 加密）。
-//!
-//! 注意：`access_token` 有效期 3 天且**不提供 refresh_token**，过期后必须让
-//! 用户重新走一遍授权流程（前端据 `shimu_status` 的 `expired` 提示）。
-//!
-//! ⚠️ 桌面启动器没有「我方服务端」，`client_secret` 只能编译期注入或让用户
-//! 自行填写；它**不能**被认为真的保密。拾木空间接口本身以用户 token 为准，
-//! secret 泄露的最坏后果是他人可代换 token，故优先用环境变量注入。
+//! 正式构建通过 QookiX 服务中转授权码，桌面端只持有一次性交接码及验证值。
+//! 已保存的用户令牌仍按原方式访问拾木空间 API，过期后重新授权。
 
 use crate::state::AppState;
-use base64::Engine as _;
 use percent_encoding::{utf8_percent_encode, NON_ALPHANUMERIC};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -46,25 +34,15 @@ pub const ERR_NOT_LOGGED_IN: &str = "__shimu_not_logged_in__";
 /// token 过期 / 被服务端拒绝（前端据此引导重新授权）
 pub const ERR_EXPIRED: &str = "__shimu_expired__";
 
-/// 编译期注入的 client_id / client_secret（`SHIMU_CLIENT_ID` / `SHIMU_CLIENT_SECRET`）
-pub const BUILTIN_CLIENT_ID: &str = match option_env!("SHIMU_CLIENT_ID") {
-    Some(v) => v,
-    None => "",
-};
-pub const BUILTIN_CLIENT_SECRET: &str = match option_env!("SHIMU_CLIENT_SECRET") {
-    Some(v) => v,
-    None => "",
-};
-
-
-
 // ---------------------------------------------------------------------------
 // 登录态
 // ---------------------------------------------------------------------------
 
 /// 拾木空间登录态：一次性授权码流程的 `state` + 当前 token + 用户资料。
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct ShimuAuth {
+    generation: uuid::Uuid,
+    broker_verifier: Option<String>,
     /// 待回调校验的 (state, 过期时间戳)
     pub pending_state: Option<(String, u64)>,
     pub access_token: Option<String>,
@@ -72,6 +50,47 @@ pub struct ShimuAuth {
     pub expires_at: u64,
     /// `getInfo` 返回的用户对象（原样保存，字段随服务端升级自动跟上）
     pub user: Option<Value>,
+}
+
+struct RequestAuth {
+    generation: uuid::Uuid,
+    token: String,
+}
+
+impl ShimuAuth {
+    fn check_callback(&self, state: &str) -> Result<(), String> {
+        matches!(&self.pending_state, Some((id, expires)) if id == state && crate::util::now_secs() <= *expires)
+            .then_some(()).ok_or_else(|| "拾木空间授权已变化或过期，请重新发起授权".into())
+    }
+
+    fn check_request(&self, request: &RequestAuth) -> Result<(), String> {
+        (self.generation == request.generation && self.access_token.as_deref() == Some(&request.token))
+            .then_some(()).ok_or_else(|| "拾木空间会话已变化，请重试".into())
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn old_profiles_and_callbacks_cannot_change_current_auth() {
+        let now = crate::util::now_secs();
+        let current = ShimuAuth {
+            generation: uuid::Uuid::new_v4(),
+            pending_state: Some(("new-state".into(), now + 60)),
+            access_token: Some("token".into()),
+            ..Default::default()
+        };
+        let request = RequestAuth { generation: current.generation, token: "token".into() };
+        let older = RequestAuth { generation: uuid::Uuid::new_v4(), token: "token".into() };
+        assert!(current.check_request(&request).is_ok());
+        assert!(current.check_request(&older).is_err());
+        assert!(ShimuAuth::default().check_request(&request).is_err());
+        assert!(current.check_callback("old-state").is_err());
+        assert!(current.check_callback("new-state").is_ok());
+        assert!(ShimuAuth::default().check_callback("new-state").is_err());
+    }
 }
 
 fn auth_path(state: &AppState) -> PathBuf {
@@ -93,6 +112,9 @@ pub fn load_saved(root: &std::path::Path) -> ShimuAuth {
         .and_then(|t| crate::secret::unprotect(t).ok())
         .unwrap_or_default();
     ShimuAuth {
+        generation: uuid::Uuid::new_v4(),
+        broker_verifier: v.get("broker_verifier").and_then(Value::as_str)
+            .and_then(|encoded| crate::secret::unprotect(encoded).ok()),
         pending_state: v
             .get("pending_state")
             .and_then(|s| s.as_str())
@@ -112,59 +134,54 @@ pub fn load_saved(root: &std::path::Path) -> ShimuAuth {
 fn save_auth(state: &AppState, auth: &ShimuAuth) -> Result<(), String> {
     let token = auth.access_token.as_deref().filter(|t| !t.is_empty());
     if token.is_none() && auth.pending_state.is_none() {
-        let _ = std::fs::remove_file(auth_path(state));
-        return Ok(());
+        return match std::fs::remove_file(auth_path(state)) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(format!("清除拾木空间登录状态失败: {err}")),
+        };
     }
     let payload = json!({
         "access_token": match token {
             Some(t) => crate::secret::protect(t)?,
             None => String::new(),
         },
+        "broker_verifier": auth.broker_verifier.as_deref().map(crate::secret::protect).transpose()?,
         "expires_at": auth.expires_at,
         "pending_state": auth.pending_state.as_ref().map(|(s, _)| s.clone()),
         "pending_expires": auth.pending_state.as_ref().map(|(_, e)| *e),
         "user": auth.user.clone().unwrap_or(Value::Null),
     });
-    std::fs::write(
-        auth_path(state),
-        serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?,
+    crate::fsutil::atomic_write(
+        &auth_path(state),
+        &serde_json::to_vec_pretty(&payload).map_err(|e| e.to_string())?,
     )
     .map_err(|e| format!("保存拾木空间登录状态失败: {e}"))
 }
 
-fn clear_session(state: &AppState) {
+fn clear_session(state: &AppState, request: Option<&RequestAuth>) -> Result<(), String> {
     let mut auth = state.shimu.lock().unwrap();
-    auth.access_token = None;
-    auth.expires_at = 0;
-    auth.pending_state = None;
-    auth.user = None;
-    let _ = std::fs::remove_file(auth_path(state));
+    let pending_state = if let Some(request) = request {
+        auth.check_request(request)?;
+        auth.pending_state.clone()
+    } else {
+        None
+    };
+    let broker_verifier = pending_state.as_ref().and(auth.broker_verifier.clone());
+    let next = ShimuAuth { generation: uuid::Uuid::new_v4(), pending_state, broker_verifier, ..Default::default() };
+    save_auth(state, &next)?;
+    *auth = next;
+    Ok(())
 }
 
-pub fn effective_client_id(state: &AppState) -> String {
-    let user = state.settings().shimu_client_id.trim().to_string();
-    if !user.is_empty() {
-        return user;
-    }
-    BUILTIN_CLIENT_ID.trim().to_string()
+fn development_credentials(state: &AppState) -> Option<(String, String)> {
+    if !cfg!(debug_assertions) { return None; }
+    let settings = state.settings();
+    let id = settings.shimu_client_id.trim();
+    let secret = settings.shimu_client_secret.as_deref()?.trim();
+    (!id.is_empty() && !secret.is_empty()).then(|| (id.to_owned(), secret.to_owned()))
 }
 
-pub fn effective_client_secret(state: &AppState) -> String {
-    let user = state
-        .settings
-        .read()
-        .unwrap()
-        .shimu_client_secret
-        .clone()
-        .unwrap_or_default();
-    let user = user.trim().to_string();
-    if !user.is_empty() {
-        return user;
-    }
-    BUILTIN_CLIENT_SECRET.trim().to_string()
-}
-
-fn current_token(state: &AppState) -> Result<String, String> {
+fn current_token(state: &AppState) -> Result<RequestAuth, String> {
     let auth = state.shimu.lock().unwrap();
     let token = auth
         .access_token
@@ -174,21 +191,12 @@ fn current_token(state: &AppState) -> Result<String, String> {
     if auth.expires_at > 0 && crate::util::now_secs() >= auth.expires_at {
         return Err(ERR_EXPIRED.to_string());
     }
-    Ok(token.to_string())
+    Ok(RequestAuth { generation: auth.generation, token: token.to_owned() })
 }
 
 /// 可选登录：帖子列表/详情等接口**匿名就能看**，登录后才会多返回
 /// `liked` / `collected` / `purchased` / `commented` 这些标记，
 /// 所以有 token 就带上，没有就当匿名请求（token 过期也不报错，直接降级为匿名）。
-fn optional_token(state: &AppState) -> Option<String> {
-    let auth = state.shimu.lock().unwrap();
-    let token = auth.access_token.as_deref().filter(|t| !t.is_empty())?;
-    if auth.expires_at > 0 && crate::util::now_secs() >= auth.expires_at {
-        return None;
-    }
-    Some(token.to_string())
-}
-
 // ---------------------------------------------------------------------------
 // HTTP
 // ---------------------------------------------------------------------------
@@ -207,13 +215,16 @@ fn api_url(path: &str, query: &[(String, String)]) -> Result<reqwest::Url, Strin
 }
 
 /// 解析统一返回结构：`code != 200` 视为失败（`msg` 为原因）；HTTP 401 = 未登录/过期。
-async fn read_json(state: &AppState, resp: reqwest::Response) -> Result<Value, String> {
+async fn read_json(state: &AppState, resp: reqwest::Response, request: Option<&RequestAuth>) -> Result<Value, String> {
     let status = resp.status();
     let code_status = status.as_u16();
     let text = resp.text().await.map_err(|e| format!("读取拾木空间响应失败: {e}"))?;
     if code_status == 401 {
-        clear_session(state);
+        if let Some(request) = request { clear_session(state, Some(request))?; }
         return Err(ERR_EXPIRED.to_string());
+    }
+    if let Some(request) = request {
+        state.shimu.lock().unwrap().check_request(request)?;
     }
     let v: Value = serde_json::from_str(&text).map_err(|_| {
         format!(
@@ -234,40 +245,51 @@ async fn read_json(state: &AppState, resp: reqwest::Response) -> Result<Value, S
 }
 
 async fn get_authed(state: &AppState, path: &str, query: Vec<(String, String)>) -> Result<Value, String> {
-    let token = current_token(state)?;
+    let request = current_token(state)?;
+    get_with_token(state, path, query, &request.token, Some(&request)).await
+}
+
+async fn get_with_token(state: &AppState, path: &str, query: Vec<(String, String)>, token: &str, request: Option<&RequestAuth>) -> Result<Value, String> {
+    if let Some(request) = request { state.shimu.lock().unwrap().check_request(request)?; }
     let url = api_url(path, &query)?;
     let resp = state
         .client
         .get(url)
-        .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+        .bearer_auth(token)
         .send()
         .await
         .map_err(|e| format!("请求拾木空间失败: {e}"))?;
-    read_json(state, resp).await
+    read_json(state, resp, request).await
 }
 
 /// 匿名可访问的接口：有登录态就带上（多拿个性化标记），没有就裸请求。
 async fn get_public(state: &AppState, path: &str, query: Vec<(String, String)>) -> Result<Value, String> {
     let url = api_url(path, &query)?;
     let mut req = state.client.get(url);
-    if let Some(token) = optional_token(state) {
-        req = req.header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"));
+    let request = current_token(state).ok();
+    if let Some(auth) = request.as_ref() {
+        req = req.bearer_auth(&auth.token);
     }
     let resp = req.send().await.map_err(|e| format!("请求拾木空间失败: {e}"))?;
-    read_json(state, resp).await
+    read_json(state, resp, request.as_ref()).await
 }
 
 async fn post_authed(state: &AppState, path: &str) -> Result<Value, String> {
-    let token = current_token(state)?;
+    let request = current_token(state)?;
+    post_for_request(state, path, &request).await
+}
+
+async fn post_for_request(state: &AppState, path: &str, request: &RequestAuth) -> Result<Value, String> {
+    state.shimu.lock().unwrap().check_request(request)?;
     let url = api_url(path, &[])?;
     let resp = state
         .client
         .post(url)
-        .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+        .bearer_auth(&request.token)
         .send()
         .await
         .map_err(|e| format!("请求拾木空间失败: {e}"))?;
-    read_json(state, resp).await
+    read_json(state, resp, Some(request)).await
 }
 
 // ---------------------------------------------------------------------------
@@ -277,11 +299,12 @@ async fn post_authed(state: &AppState, path: &str) -> Result<Value, String> {
 /// 当前接入配置（设置页与登录窗口展示用）
 ///
 /// `devMode` 为 true 时才允许在界面上填写 client_id / client_secret：
-/// 那是**开发/联调用**的入口，正式打包必须靠 SHIMU_CLIENT_ID /
-/// SHIMU_CLIENT_SECRET 编译期注入，不能把凭证交给终端用户去填。
+/// 仅开发构建允许测试接入。
 #[tauri::command]
 pub fn shimu_config(app_state: tauri::State<'_, AppState>) -> Value {
-    let client_id = effective_client_id(&app_state);
+    let dev = development_credentials(&app_state);
+    let broker = crate::oauth_broker::shimu_broker().is_some();
+    let client_id = if cfg!(debug_assertions) { app_state.settings().shimu_client_id.clone() } else { String::new() };
     json!({
         "host": HOST,
         "base": BASE,
@@ -289,8 +312,8 @@ pub fn shimu_config(app_state: tauri::State<'_, AppState>) -> Value {
         "redirectUri": REDIRECT_URI,
         "scope": SCOPE,
         "clientId": client_id,
-        "configured": !client_id.is_empty(),
-        "secretConfigured": !effective_client_secret(&app_state).is_empty(),
+        "configured": broker || dev.is_some(),
+        "secretConfigured": dev.is_some(),
         "devMode": cfg!(debug_assertions),
         "downloadDir": app_state.root.join("shimu").to_string_lossy(),
     })
@@ -306,54 +329,47 @@ pub fn shimu_set_credentials(
     client_secret: Option<String>,
 ) -> Result<Value, String> {
     if !cfg!(debug_assertions) {
-        return Err(
-            "正式构建不允许在客户端设置接入凭证，请在打包时注入 \
-             SHIMU_CLIENT_ID / SHIMU_CLIENT_SECRET"
-                .into(),
-        );
+        return Err("正式构建通过 QookiX 服务授权".into());
     }
-    {
-        let mut s = app_state.settings_mut();
-        s.shimu_client_id = client_id.trim().to_string();
-        if let Some(sec) = client_secret {
-            let sec = sec.trim().to_string();
-            if !sec.is_empty() {
-                s.shimu_client_secret = Some(sec);
-            }
-        }
+    let mut patch = serde_json::json!({ "shimu_client_id": client_id });
+    if let Some(secret) = client_secret.filter(|value| !value.trim().is_empty()) {
+        patch["shimu_client_secret"] = serde_json::Value::String(secret);
     }
-    crate::settings::persist(&app_state)?;
+    crate::settings::update_settings(&app_state, patch)?;
     Ok(shimu_config(app_state))
 }
 
 /// 第一步：生成授权页地址（前端用系统浏览器打开）
 #[tauri::command]
-pub fn shimu_oauth_start(app_state: tauri::State<'_, AppState>) -> Result<Value, String> {
-    let client_id = effective_client_id(&app_state);
-    if client_id.is_empty() {
-        return Err(if cfg!(debug_assertions) {
-            "尚未配置拾木空间 client_id：请在登录窗口的「接入设置」里填写，\
-             或用 SHIMU_CLIENT_ID 重新构建"
-                .to_string()
-        } else {
-            "当前版本未内置拾木空间接入凭证，无法完成登录".to_string()
-        });
+pub async fn shimu_oauth_start(app_state: tauri::State<'_, AppState>) -> Result<Value, String> {
+    let broker = crate::oauth_broker::shimu_broker();
+    let dev = development_credentials(&app_state);
+    if broker.is_none() && dev.is_none() {
+        return Err("拾木空间授权服务尚未配置".into());
     }
-    let st = uuid::Uuid::new_v4().simple().to_string();
+    let state = uuid::Uuid::new_v4().simple().to_string();
+    let verifier = broker.as_ref().map(|_| crate::oauth_broker::verifier());
     {
         let mut auth = app_state.shimu.lock().unwrap();
-        auth.pending_state = Some((st.clone(), crate::util::now_secs() + STATE_TTL));
-        // 也落盘：用户在浏览器里登录期间重启启动器，回调仍能通过校验
-        save_auth(&app_state, &auth)?;
+        let mut next = auth.clone();
+        next.pending_state = Some((state.clone(), crate::util::now_secs() + STATE_TTL));
+        next.broker_verifier = verifier.clone();
+        next.generation = uuid::Uuid::new_v4();
+        save_auth(&app_state, &next)?;
+        *auth = next;
     }
-    let url = format!(
-        "{HOST}/oauth/authorize?client_id={}&redirect_uri={}&scope={}&state={}",
-        utf8_percent_encode(&client_id, NON_ALPHANUMERIC),
-        utf8_percent_encode(REDIRECT_URI, NON_ALPHANUMERIC),
-        utf8_percent_encode(SCOPE, NON_ALPHANUMERIC),
-        st
-    );
-    Ok(json!({ "url": url, "state": st, "redirectUri": REDIRECT_URI }))
+    let url = match (broker, verifier, dev) {
+        (Some(base), Some(verifier), _) => crate::oauth_broker::start(&app_state, &base, &state, &verifier).await?,
+        (_, _, Some((client_id, _))) => format!(
+            "{HOST}/oauth/authorize?client_id={}&redirect_uri={}&scope={}&state={state}",
+            utf8_percent_encode(&client_id, NON_ALPHANUMERIC),
+            utf8_percent_encode(REDIRECT_URI, NON_ALPHANUMERIC),
+            utf8_percent_encode(SCOPE, NON_ALPHANUMERIC),
+        ),
+        _ => return Err("拾木空间授权服务尚未配置".into()),
+    };
+    app_state.shimu.lock().unwrap().check_callback(&state)?;
+    Ok(json!({ "url": url, "state": state, "redirectUri": REDIRECT_URI }))
 }
 
 /// 第三步：用授权码换 `access_token`，并拉取用户资料
@@ -368,46 +384,30 @@ pub async fn shimu_oauth_complete(
         return Err("授权码为空".into());
     }
     // state 必须与发起时一致（防 CSRF / 回调来源校验）
-    {
+    let verifier = {
         let auth = app_state.shimu.lock().unwrap();
-        let ok = matches!(&auth.pending_state, Some((s, exp)) if s == &state && crate::util::now_secs() <= *exp);
-        if !ok {
-            return Err("授权校验失败（state 不匹配或已过期），请重新发起授权".into());
+        auth.check_callback(&state)?;
+        auth.broker_verifier.clone()
+    };
+    let v = if let Some(verifier) = verifier {
+        let broker = crate::oauth_broker::shimu_broker().ok_or("拾木空间授权服务尚未配置")?;
+        crate::oauth_broker::complete(&app_state, &broker, &state, &code, &verifier).await?
+    } else {
+        let (client_id, client_secret) = development_credentials(&app_state)
+            .ok_or("此授权需要重新发起，请通过浏览器授权")?;
+        let response = crate::settings::oauth_http_client(&app_state).post(format!("{BASE}/api/oauth/token"))
+            .form(&[
+                ("code", code.as_str()), ("client_id", client_id.as_str()),
+                ("client_secret", client_secret.as_str()), ("redirect_uri", REDIRECT_URI),
+            ]).send().await.map_err(|err| format!("换取访问令牌失败: {err}"))?;
+        let status = response.status();
+        let bytes = crate::util::read_response_limited(response, 128 * 1024).await?;
+        let data: Value = serde_json::from_slice(&bytes).map_err(|_| "访问令牌响应格式无效")?;
+        if !status.is_success() || data.get("code").and_then(Value::as_i64).unwrap_or(200) != 200 {
+            return Err(data.get("msg").and_then(Value::as_str).unwrap_or("换取访问令牌失败").to_owned());
         }
-    }
-    let client_id = effective_client_id(&app_state);
-    let client_secret = effective_client_secret(&app_state);
-    if client_id.is_empty() {
-        return Err("尚未配置拾木空间 client_id".into());
-    }
-    if client_secret.is_empty() {
-        return Err("尚未配置拾木空间 client_secret（换 token 必需，只在后端使用）".into());
-    }
-
-    let resp = app_state
-        .client
-        .post(format!("{BASE}/api/oauth/token"))
-        .form(&[
-            ("code", code.as_str()),
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
-            ("redirect_uri", REDIRECT_URI),
-        ])
-        .send()
-        .await
-        .map_err(|e| format!("换取 access_token 失败: {e}"))?;
-    let status = resp.status().as_u16();
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(&text)
-        .map_err(|_| format!("token 接口返回非 JSON（HTTP {status}）：{}", text.chars().take(120).collect::<String>()))?;
-    let code_field = v.get("code").and_then(|c| c.as_i64()).unwrap_or(200);
-    if code_field != 200 {
-        return Err(v
-            .get("msg")
-            .and_then(|m| m.as_str())
-            .unwrap_or("换取 access_token 失败")
-            .to_string());
-    }
+        data
+    };
     let token = v
         .get("access_token")
         .and_then(|t| t.as_str())
@@ -415,27 +415,27 @@ pub async fn shimu_oauth_complete(
         .ok_or("响应缺少 access_token")?
         .to_string();
     let expires_in = v.get("expires_in").and_then(|e| e.as_u64()).unwrap_or(DEFAULT_EXPIRES_IN);
-
-    {
-        let mut auth = app_state.shimu.lock().unwrap();
-        auth.pending_state = None;
-        auth.access_token = Some(token);
-        auth.expires_at = crate::util::now_secs() + expires_in;
-        auth.user = v.get("user").cloned().filter(|u| !u.is_null());
-        save_auth(&app_state, &auth)?;
-    }
-    // 用 getInfo 补齐余额/积分/会员/mcUuid/皮肤披风（token 里只有精简资料）
-    Ok(match fetch_user_info(&app_state).await {
-        Ok(user) => json!({ "user": user, "expiresAt": crate::util::now_secs() + expires_in, "expiresIn": expires_in }),
-        Err(_) => {
-            let auth = app_state.shimu.lock().unwrap();
-            json!({
-                "user": auth.user.clone().unwrap_or(Value::Null),
-                "expiresAt": auth.expires_at,
-                "expiresIn": expires_in,
-            })
-        }
-    })
+    let expires_at = crate::util::now_secs().saturating_add(expires_in);
+    app_state.shimu.lock().unwrap().check_callback(&state)?;
+    // 使用刚兑换的令牌查询资料，保留服务端返回的精简资料作为网络失败时的回退。
+    let user = match fetch_user_info(&app_state, &token, None).await {
+        Ok(user) => Some(user),
+        Err(err) if err == ERR_EXPIRED => return Err(err),
+        Err(_) => v.get("user").cloned().filter(|u| !u.is_null()),
+    };
+    let mut auth = app_state.shimu.lock().unwrap();
+    auth.check_callback(&state)?;
+    let next = ShimuAuth {
+        generation: uuid::Uuid::new_v4(),
+        pending_state: None,
+        broker_verifier: None,
+        access_token: Some(token),
+        expires_at,
+        user: user.clone(),
+    };
+    save_auth(&app_state, &next)?;
+    *auth = next;
+    Ok(json!({ "user": user, "expiresAt": expires_at, "expiresIn": expires_in }))
 }
 
 /// 当前登录状态（`user` 为 null 表示未登录/已过期）
@@ -452,51 +452,35 @@ pub fn shimu_status(app_state: tauri::State<'_, AppState>) -> Value {
     })
 }
 
-async fn fetch_user_info(state: &AppState) -> Result<Value, String> {
-    let v = get_authed(state, "/getInfo", Vec::new()).await?;
+async fn fetch_user_info(state: &AppState, token: &str, request: Option<&RequestAuth>) -> Result<Value, String> {
+    let v = get_with_token(state, "/getInfo", Vec::new(), token, request).await?;
     Ok(v.get("user").cloned().filter(|u| !u.is_null()).unwrap_or(v))
 }
 
 /// 刷新用户资料（余额/积分/会员会变）
 #[tauri::command]
 pub async fn shimu_user_info(app_state: tauri::State<'_, AppState>) -> Result<Value, String> {
-    let user = fetch_user_info(&app_state).await?;
+    let request = current_token(&app_state)?;
+    let user = fetch_user_info(&app_state, &request.token, Some(&request)).await?;
     {
         let mut auth = app_state.shimu.lock().unwrap();
-        auth.user = Some(user.clone());
-        let _ = save_auth(&app_state, &auth);
+        auth.check_request(&request)?;
+        let mut next = auth.clone();
+        next.user = Some(user.clone());
+        save_auth(&app_state, &next)?;
+        *auth = next;
     }
     Ok(user)
 }
 
 #[tauri::command]
 pub fn shimu_logout(app_state: tauri::State<'_, AppState>) -> Result<(), String> {
-    clear_session(&app_state);
-    Ok(())
+    clear_session(&app_state, None)
 }
 
 // ---------------------------------------------------------------------------
 // 命令：皮肤 / 披风上传（站点接口 `/api/user/skin`）
 // ---------------------------------------------------------------------------
-
-/// 解析前端传来的 PNG：`data:image/png;base64,...` 或裸 base64，并校验文件头。
-fn decode_png(input: &str) -> Result<Vec<u8>, String> {
-    let raw = input.trim();
-    let b64 = match raw.strip_prefix("data:") {
-        Some(rest) => rest.split_once(',').map(|(_, d)| d).unwrap_or(""),
-        None => raw,
-    };
-    if b64.is_empty() {
-        return Err("皮肤数据为空".into());
-    }
-    let bytes = base64::engine::general_purpose::STANDARD
-        .decode(b64.trim())
-        .map_err(|e| format!("皮肤数据解码失败: {e}"))?;
-    if !bytes.starts_with(&[0x89, b'P', b'N', b'G']) {
-        return Err("皮肤必须是 PNG 文件".into());
-    }
-    Ok(bytes)
-}
 
 /// 上传一张 PNG 皮肤到拾木空间，替换当前登录用户正在穿戴的皮肤。
 ///
@@ -510,8 +494,8 @@ pub async fn shimu_upload_skin(
     app_state: tauri::State<'_, AppState>,
     skin: String,
 ) -> Result<Value, String> {
-    let bytes = decode_png(&skin)?;
-    let token = current_token(&app_state)?;
+    let bytes = crate::image_files::decode_png(&skin)?;
+    let request = current_token(&app_state)?;
     let url = api_url("/api/user/skin", &[])?;
     let part = reqwest::multipart::Part::bytes(bytes)
         .file_name("skin.png")
@@ -522,12 +506,12 @@ pub async fn shimu_upload_skin(
     let resp = app_state
         .client
         .post(url)
-        .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+        .bearer_auth(&request.token)
         .multipart(form)
         .send()
         .await
         .map_err(|e| format!("上传皮肤失败: {e}"))?;
-    let v = read_json(&app_state, resp).await?;
+    let v = read_json(&app_state, resp, Some(&request)).await?;
     // 站点把新皮肤地址放在 `data.skin`（顶层 `skin` 也兼容一下）
     let path = v
         .pointer("/data/skin")
@@ -895,21 +879,23 @@ pub async fn shimu_download_file(
     file_id: Option<i64>,
 ) -> Result<Value, String> {
     let url = allowed_download_url(&url)?;
-    let token = current_token(&app_state)?;
+    let request = current_token(&app_state)?;
 
     // 付费资源：先查权益，没买就下单（免费/已购时接口会返回对应提示，可忽略）
     if let Some(fid) = file_id.filter(|f| *f > 0) {
-        let entitled = get_authed(
+        let entitled = get_with_token(
             &app_state,
             "/api/order/check",
             vec![("bizType".into(), "DOWNLOAD".into()), ("bizId".into(), fid.to_string())],
+            &request.token,
+            Some(&request),
         )
         .await
         .ok()
         .and_then(|v| v.get("entitled").and_then(|e| e.as_bool()))
         .unwrap_or(false);
         if !entitled {
-            if let Err(e) = post_authed(&app_state, &format!("/api/order/download/{fid}")).await {
+            if let Err(e) = post_for_request(&app_state, &format!("/api/order/download/{fid}"), &request).await {
                 // 「免费资源 / 已购买」不算失败，其余（余额不足等）必须报给用户
                 let ignorable = e.contains("免费") || e.contains("已购买");
                 if !ignorable {
@@ -919,17 +905,18 @@ pub async fn shimu_download_file(
         }
     }
 
+    app_state.shimu.lock().unwrap().check_request(&request)?;
     let resp = app_state
         .client
         .get(url.clone())
-        .header(reqwest::header::AUTHORIZATION, format!("Bearer {token}"))
+        .bearer_auth(&request.token)
         .send()
         .await
         .map_err(|e| format!("下载失败: {e}"))?;
     let status = resp.status();
     if !status.is_success() {
         if status.as_u16() == 401 {
-            clear_session(&app_state);
+            clear_session(&app_state, Some(&request))?;
             return Err(ERR_EXPIRED.to_string());
         }
         return Err(format!("下载失败（HTTP {}）", status.as_u16()));
@@ -943,6 +930,7 @@ pub async fn shimu_download_file(
         .and_then(|v| v.to_str().ok())
         .and_then(filename_from_disposition);
     let bytes = resp.bytes().await.map_err(|e| format!("读取附件失败: {e}"))?;
+    app_state.shimu.lock().unwrap().check_request(&request)?;
     if bytes.len() as u64 > MAX_DOWNLOAD {
         return Err("附件超过 512 MiB，未保存".into());
     }
@@ -959,7 +947,7 @@ pub async fn shimu_download_file(
         .map(|n| n.trim().to_string())
         .filter(|n| !n.is_empty())
         .unwrap_or_else(|| "shimu-download".to_string());
-    let name = if crate::util::is_safe_filename(&name) {
+    let name = if crate::fsutil::is_safe_filename(&name) {
         name
     } else {
         // 名字不合法（带路径分隔符等）时退化成按扩展名生成的安全名字

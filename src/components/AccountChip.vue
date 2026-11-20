@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { closeDownloadsDrawer } from "../composables/useDownloadsDrawer";
 import { computed, ref } from "vue";
 import { useI18n } from "vue-i18n";
 import { NPopover, useMessage } from "naive-ui";
@@ -20,6 +21,7 @@ const current = computed(() => accounts.current);
 /** 点击芯片：打开账号管理抽屉（完整增删），并收起悬停 Popover。 */
 function openDrawer() {
   popoverShow.value = false;
+  closeDownloadsDrawer();
   accounts.showManager = true;
 }
 

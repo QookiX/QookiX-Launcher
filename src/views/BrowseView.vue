@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { staggeredCardDelay } from "../composables/staggeredCardDelay";
+import UiStatus from "../components/UiStatus.vue";
+import { vSegmented } from "../composables/vSegmented";
 import {
   computed,
   defineAsyncComponent,
@@ -13,7 +16,7 @@ import {
 } from "vue";
 import { useRoute } from "vue-router";
 import { useI18n } from "vue-i18n";
-import { NButton, NDrawer, NDrawerContent, NSelect, useMessage, type SelectOption } from "naive-ui";
+import { NInput, NButton, NDrawer, NDrawerContent, NSelect, useMessage, type SelectOption } from "naive-ui";
 import { api } from "../api";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { useSettingsStore } from "../stores/settings";
@@ -63,23 +66,11 @@ const favoritesStore = useFavoritesStore();
 
 // —— 新闻（已并入「发现」页：作为「数据包」右侧的第 6 个 tab，选中后替换下方内容） ——
 const showNewsEntry = computed(() => settingsStore.settings?.show_news ?? true);
-async function refreshNews() {
-  try {
-    await newsStore.load(true);
-  } catch (e) {
-    message.error(String(e));
-  }
-}
-function newsDelay(i: number): string {
-  const step = Math.min(0.045, 0.6 / Math.max(1, newsStore.news.length));
-  return `${(0.06 + i * step).toFixed(3)}s`;
-}
 const provider = ref<"all" | "modrinth" | "curseforge">("all");
 const query = ref(typeof route.query.q === "string" ? route.query.q : "");
 const type = ref("mod");
-// 同步「新闻标签激活」状态给标题栏（决定是否显示刷新按钮），并响应标题栏发来的刷新信号
-watch(type, (v) => { newsStore.active = v === "news"; }, { immediate: true });
-watch(() => newsStore.refreshSignal, () => { void refreshNews(); });
+watch(type, (value) => newsStore.setActive(value === "news"), { immediate: true });
+onBeforeUnmount(() => newsStore.setActive(false));
 const category = ref("");
 const page = ref(0);
 const results = ref<ProjectHit[]>([]);
@@ -168,11 +159,6 @@ const schematicSourceOptions = computed(() => [
 /** 投影库进详情时收起工具栏，避免上下两套控件打架 */
 const shimuDetailOpen = ref(false);
 
-/** 搜索框去掉了描边，靠 `.search-box` 自身当点击热区，所以点空白处要手动聚焦输入框 */
-const searchInputEl = ref<HTMLInputElement | null>(null);
-function focusSearch() {
-  searchInputEl.value?.focus();
-}
 
 /** 搜索框：投影走站点关键词搜索，其余走内容搜索 */
 const searchText = computed({
@@ -253,6 +239,7 @@ const displayVersionOptions = computed(() => {
 });
 
 let searchSeq = 0;
+const searchError = ref("");
 
 /** 发现页缓存载荷（cf_error 一并缓存的历史包袱见 search()） */
 interface BrowseCachePayload {
@@ -266,6 +253,7 @@ async function search() {
   // 新闻 / 投影 / 收藏夹 tab 不走内容搜索
   if (type.value === "news" || type.value === "shimu" || type.value === "fav") return;
   const seq = ++searchSeq;
+  searchError.value = "";
   // 缓存：内存（5 分钟，会话内）+ localStorage 持久化（6 小时，跨会话）。
   // 应用重启后内存清空，但 localStorage 仍在，打开发现页命中持久化缓存不调 API。
   const cacheKey = `browse:${provider.value}|${query.value}|${type.value}|${category.value}|${page.value}|${gameVersion.value}|${loader.value}|${sort.value}|${pageSize.value}`;
@@ -313,8 +301,7 @@ async function search() {
     }
   } catch (e) {
     if (seq !== searchSeq) return;
-    message.error(String(e));
-    results.value = [];
+    searchError.value = String(e);
     cfError.value = "";
   } finally {
     if (seq === searchSeq) loading.value = false;
@@ -393,20 +380,16 @@ const emptyText = computed(() => {
 });
 
 function toggleFavorite(p: ProjectHit) {
-  const on = favoritesStore.toggle(p);
-  message.success(on ? t("projectCard.addedToFavorites") : t("projectCard.removedFromFavorites"));
+  try {
+    const on = favoritesStore.toggle(p);
+    message.success(on ? t("projectCard.addedToFavorites") : t("projectCard.removedFromFavorites"));
+  } catch (error) {
+    message.error(String(error));
+  }
 }
 function onPage(p: number) {
   page.value = p - 1;
   search();
-}
-
-// 结果卡片逐个进场（学习首页 pin-card 的做法）：延迟由内联 style 下发给每张卡片。
-// 数量多时自动收紧步长，保证整批级联在 ~0.7s 内跑完；loading 隐藏/显示、
-// 换页/换筛选导致 key 更换时都会重新触发一次级联。
-function cardDelay(i: number): string {
-  const step = Math.min(0.045, 0.6 / Math.max(1, visibleResults.value.length));
-  return `${(0.06 + i * step).toFixed(3)}s`;
 }
 
 const hasFilter = computed(() => !!category.value || !!gameVersion.value || !!loader.value);
@@ -851,7 +834,7 @@ onActivated(() => {
 onMounted(async () => {
   bindScrollHost();
   try {
-    instances.value = await api.listInstances();
+    instances.value = (await api.listInstances()).items;
   } catch {
     instances.value = [];
   }
@@ -879,7 +862,7 @@ onMounted(async () => {
     <!-- 吸附底衬：单独一个元素而不是 ::before，这样它能正常吃到 backdrop-filter
          （负 z-index 的伪元素在 WebView2 上磨砂不一定生效），颜色和卡片走同一档半透。 -->
     <div class="head-glass" aria-hidden="true"></div>
-    <div ref="typeBox" class="type-card qx-seg">
+    <div ref="typeBox" v-segmented="{ label: t('nav.browse') }" class="type-card qx-seg">
       <div class="qx-seg__indicator" :style="typeIndicatorStyle"></div>
       <button
         v-for="tp in types"
@@ -917,10 +900,9 @@ onMounted(async () => {
 
     <div v-if="type !== 'news' && !shimuDetailOpen" class="toolbar glass">
       <div class="toolbar-row">
-        <div id="browse-search" class="search-box" @click="focusSearch">
-          <IconSearch />
-          <input ref="searchInputEl" v-model="searchText" :placeholder="searchPlaceholder" />
-        </div>
+        <NInput id="browse-search" v-model:value="searchText" class="search-box" :placeholder="searchPlaceholder" clearable>
+          <template #prefix><IconSearch /></template>
+        </NInput>
         <n-select
           v-if="showInstanceSelect"
           v-model:value="selectedInstanceId"
@@ -955,7 +937,7 @@ onMounted(async () => {
           size="small"
           class="tb-select page-size"
         />
-        <div ref="viewBox" class="view-switch qx-seg qx-seg--sm">
+        <div ref="viewBox" v-segmented="{ label: t('common.viewMode') }" class="view-switch qx-seg qx-seg--sm">
           <div class="qx-seg__indicator" :style="viewIndicatorStyle"></div>
           <button :class="{ active: view === 'grid' }" :title="t('browse.view.grid')" @click="view = 'grid'"><IconGrid /></button>
           <button :class="{ active: view === 'list' }" :title="t('browse.view.list')" @click="view = 'list'"><IconList /></button>
@@ -1044,7 +1026,11 @@ onMounted(async () => {
       {{ t("browse.cf.loadFailedPre", { error: cfError }) }} <router-link to="/settings">{{ t("browse.cf.settings") }}</router-link> {{ t("browse.cf.loadFailedPost") }}
     </div>
 
-    <div v-show="loading" class="grid skel-grid">
+    <UiStatus v-if="!isFavTab && searchError" kind="error" :text="searchError" compact>
+      <button class="qx-btn qx-btn--sm" @click="search">{{ t("common.retry") }}</button>
+    </UiStatus>
+    <UiStatus v-if="loading && visibleResults.length" kind="loading" :text="t('common.loading')" compact />
+    <div v-show="loading && !visibleResults.length" class="grid skel-grid" role="status" :aria-label="t('common.loading')">
       <div v-for="i in 8" :key="i" class="skel-card glass">
         <div class="skel-main">
           <div class="skel-icon"></div>
@@ -1065,15 +1051,17 @@ onMounted(async () => {
         </div>
       </div>
     </div>
-    <div v-show="!loading && !visibleResults.length" class="center">
+    <div v-show="!loading && !visibleResults.length && (isFavTab || !searchError)" class="center">
       <div class="center-icon"><IconStar v-if="isFavTab" /><IconSearch v-else /></div>
       <p>{{ emptyText }}</p>
       <p v-if="isFavTab && !favoritesStore.count" class="center-hint">{{ t("browse.fav.emptyHint") }}</p>
     </div>
-    <div v-show="!loading && visibleResults.length" class="grid" :class="`view-${view}`">
+    <div v-show="visibleResults.length" class="grid" :class="`view-${view}`">
       <ProjectCard
         v-for="(p, i) in visibleResults"
         :key="p.provider + p.id"
+        class="qx-card-enter"
+        :style="{ animationDelay: staggeredCardDelay(i, visibleResults.length) }"
         :project="p"
         :view="view"
         :installed="isProjectInstalled(p)"
@@ -1083,7 +1071,6 @@ onMounted(async () => {
         :translate-mode="translateMode && !isFavTab"
         :translating="translatingSlugs.includes(p.id)"
         :translated-desc="translatedDescs[p.id] ?? null"
-        :style="{ animationDelay: cardDelay(i) }"
         @install="openInstall"
         @translate="translateCard"
         @favorite="toggleFavorite"
@@ -1111,8 +1098,8 @@ onMounted(async () => {
         <div
           v-for="(n, i) in newsStore.news"
           :key="n.url"
-          class="news-card glass"
-          :style="{ animationDelay: newsDelay(i) }"
+          class="news-card glass qx-card-enter"
+          :style="{ animationDelay: staggeredCardDelay(i, newsStore.news.length), '--card-enter-offset': '20px' }"
           @click="n.url && openUrl(n.url).catch(() => {})"
         >
           <div v-if="n.image" class="news-image">
@@ -1191,7 +1178,7 @@ onMounted(async () => {
      而 #app-content 有 22px 上内边距。写成 -22px 才能让它一路贴到页面最顶上，
      不留一条会漏出滚动卡片的缝。这个值跟着 App.vue 的 --content-pad-top 走。 */
   top: calc(-1 * var(--content-pad-top, 22px));
-  z-index: 30;
+  z-index: var(--z-header);
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -1287,41 +1274,7 @@ onMounted(async () => {
 .tb-select.provider {
   width: 120px;
 }
-/* 与联机页「好友」搜索条同一观感：保留底色、不画描边 */
-.search-box {
-  flex: 1;
-  min-width: 220px;
-  /* 高度与 .qx-input / .qx-btn--md 对齐（32）：原来靠 input 的 8px 上下内边距撑到 34，
-     和同一行 28 的 n-select 差出一截，整条工具条的基线看起来是斜的 */
-  height: var(--ctl-md);
-  display: flex;
-  align-items: center;
-  gap: var(--sp-3);
-  padding: 0 var(--sp-5);
-  border-radius: var(--r-md);
-  background: var(--w-06);
-  color: var(--text-3);
-  cursor: text;
-  transition: color 0.15s ease, background 0.15s ease;
-}
-.search-box:focus-within {
-  background: var(--w-10);
-  color: var(--accent);
-}
-.search-box input {
-  flex: 1;
-  min-width: 0;
-  background: none;
-  border: none;
-  outline: none;
-  color: var(--text-1);
-  padding: 0;
-  font-size: var(--fs-sm);
-  font-family: inherit;
-}
-.search-box input::placeholder {
-  color: var(--text-3);
-}
+.search-box { flex: 1; min-width: 220px; }
 /* 外观（容器/按钮/滑块/悬停）全部走全局 .qx-seg，这里只留吸顶面板的层级与过渡 */
 .type-card {
   z-index: 1;
@@ -1447,21 +1400,6 @@ onMounted(async () => {
 .skel-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .skel-cats { display: flex; gap: 6px; margin-top: 2px; }
 .skel-foot { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-/* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
-   未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
-.grid :deep(.p-card) {
-  animation: browse-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
-}
-@keyframes browse-card-enter {
-  from {
-    transform: translateY(28px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
-}
 .grid.view-list,
 .grid.view-compact {
   grid-template-columns: 1fr;
@@ -1598,11 +1536,6 @@ onMounted(async () => {
   cursor: pointer;
   box-shadow: var(--card-shadow);
   transition: transform 0.15s ease, box-shadow var(--dur-md) var(--ease-out);
-  animation: news-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
-}
-@keyframes news-card-enter {
-  from { transform: translateY(20px); opacity: 0; }
-  to { transform: none; opacity: 1; }
 }
 /* 原来这里是 `0 4px 20px var(--k-15)` 的黑色投影，深色主题下和卡片其它投影
    是两套语言；统一改用卡片的悬停令牌（深色 accent 细环 / 浅色浅投影 + 细环）。

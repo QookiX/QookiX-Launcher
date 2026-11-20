@@ -16,6 +16,7 @@
  *     主实例（lib.rs 回调里过滤 qookix:// 并重发同一事件），主实例 JS 端收到
  */
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import type { createTauriListenerScope } from "./tauriListeners";
 import { api } from "../api";
 import { useAccountsStore } from "../stores/accounts";
 import { useInstancesStore } from "../stores/instances";
@@ -38,19 +39,25 @@ const PAGE_ROUTES: Record<string, string> = {
   news: "/browse",
 };
 
-async function handleUrl(raw: string) {
-  devLog("[deeplink] handleUrl:", raw);
-  let url: URL;
+function parseLauncherUrl(raw: string) {
   try {
-    url = new URL(raw);
+    const url = new URL(raw);
+    if (url.protocol !== "qookix:" || url.username || url.password) return null;
+    const host = url.hostname.toLowerCase();
+    const path = decodeURIComponent(url.pathname.replace(/^\/+|\/+$/g, ""));
+    return { url, host, path };
   } catch {
-    devWarn("[deeplink] 无法解析:", raw);
+    return null;
+  }
+}
+
+async function handleUrl(raw: string) {
+  const request = parseLauncherUrl(raw);
+  if (!request) {
+    devWarn("[deeplink] invalid_launcher_url");
     return;
   }
-  if (url.protocol !== "qookix:") return;
-  // host 为第一段（qookix://skin），pathname 用于带参数的情况（qookix://launch/xxx）
-  const host = url.hostname.toLowerCase();
-  const path = decodeURIComponent(url.pathname.replace(/^\/+|\/+$/g, ""));
+  const { url, host, path } = request;
 
   if (host === "launch") {
     await launchByAlias(path);
@@ -79,12 +86,11 @@ async function handleUrl(raw: string) {
   // 局域网同步配对（qookix://lan/pair?host=192.168.x.x&port=8765&token=xxx）
   // 桌面端收到说明是另一台 PC 发来的配对请求，跳转到设置页局域网同步面板。
   if (host === "lan") {
-    devLog("[deeplink] 局域网同步配对:", raw);
-    router.push("/settings");
+    await router.push("/settings");
     return;
   }
 
-  const route = PAGE_ROUTES[host];
+  const route = Object.prototype.hasOwnProperty.call(PAGE_ROUTES, host) ? PAGE_ROUTES[host] : undefined;
   if (route) {
     await router.push(route);
     devLog("[deeplink] 已跳转:", route);
@@ -100,6 +106,7 @@ async function handleShimuCallback(url: URL) {
   const store = useShimuStore();
   try {
     const res = await store.handleCallback(url.toString());
+    if (res === "ignored") return;
     if (res === "denied") {
       notifyWarning("拾木空间授权已取消");
       return;
@@ -115,6 +122,7 @@ async function handleYggOauthCallback(url: URL) {
   const accounts = useAccountsStore();
   try {
     const res = await accounts.handleYggOauthCallback(url);
+    if (res === "ignored") return;
     if (res === "denied") {
       notifyWarning(i18n.global.t("yggLogin.oauthDenied"));
       return;
@@ -152,29 +160,28 @@ async function launchByAlias(alias: string) {
 }
 
 /** 在应用入口调用一次；冷启动与运行中的唤起都会触发 */
-export async function initDeepLink() {
+export async function initDeepLink(scope: ReturnType<typeof createTauriListenerScope>) {
   // 去重闸：同一 URL 在短窗口内只处理一次。
   // 事件可能从多条路径到达（冷启动回放 + single-instance 转发 + 钩子转发），
   // 每条都合法但会导致实例被启动多次（实测同一链接连开三个游戏）。
   let lastUrl = "";
   let lastTs = 0;
   try {
-    await onOpenUrl((urls) => {
-      devLog("[deeplink] 收到 URL:", urls);
+    await scope.observe(onOpenUrl, (urls) => {
+      devLog("[deeplink] launcher_urls_received", urls.length);
       const now = Date.now();
       for (const u of urls) {
         if (u === lastUrl && now - lastTs < 2000) {
-          devLog("[deeplink] 2 秒内重复 URL，跳过:", u);
+          devLog("[deeplink] duplicate_launcher_url");
           continue;
         }
         lastUrl = u;
         lastTs = now;
-        void handleUrl(u);
+        void handleUrl(u).catch(() => devWarn("[deeplink] launcher_dispatch_failed"));
       }
     });
     devLog("[deeplink] 监听已注册");
-  } catch (e) {
-    // deep-link 权限缺失等情况不应阻塞应用启动
-    devError("[deeplink] init failed:", e);
+  } catch {
+    devError("[deeplink] listener_registration_failed");
   }
 }

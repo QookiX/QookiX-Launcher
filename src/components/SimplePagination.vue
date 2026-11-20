@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed } from "vue";
+import { NPagination } from "naive-ui";
 import { useI18n } from "vue-i18n";
+import { IconChevronLeft, IconChevronRight } from "./icons";
 
 const { t } = useI18n();
 
@@ -13,123 +14,30 @@ const emit = defineEmits<{
   "update:page": [page: number];
 }>();
 
-const displayPages = computed(() => {
-  const current = props.page;
-  const total = props.pageCount;
-  const pages: (number | "ellipsis")[] = [];
-
-  if (total <= 7) {
-    for (let i = 1; i <= total; i++) pages.push(i);
-    return pages;
+function selectPage(page: number) {
+  if (page >= 1 && page <= props.pageCount && page !== props.page) {
+    emit("update:page", page);
   }
-
-  pages.push(1);
-
-  if (current <= 4) {
-    for (let i = 2; i <= 5; i++) pages.push(i);
-    pages.push("ellipsis");
-    pages.push(total);
-  } else if (current >= total - 3) {
-    pages.push("ellipsis");
-    for (let i = total - 4; i <= total; i++) pages.push(i);
-  } else {
-    pages.push("ellipsis");
-    for (let i = current - 1; i <= current + 1; i++) pages.push(i);
-    pages.push("ellipsis");
-    pages.push(total);
-  }
-
-  return pages;
-});
-
-function go(p: number) {
-  if (p < 1 || p > props.pageCount || p === props.page) return;
-  emit("update:page", p);
 }
 </script>
 
 <template>
-  <div class="simple-pager">
-    <button
-      class="sp-btn sp-nav"
-      :disabled="page <= 1"
-      :title="t('simplePagination.prevPage')"
-      @click="go(page - 1)"
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="15 18 9 12 15 6" />
-      </svg>
-    </button>
-    <template v-for="(p, i) in displayPages" :key="i">
-      <span v-if="p === 'ellipsis'" class="sp-ellipsis">…</span>
-      <button
-        v-else
-        class="sp-btn"
-        :class="{ active: p === page }"
-        @click="go(p)"
-      >
-        {{ p }}
-      </button>
+  <NPagination
+    :page="page"
+    :page-count="pageCount"
+    :page-slot="7"
+    size="small"
+    @update:page="selectPage"
+  >
+    <template #prev>
+      <span :title="t('simplePagination.prevPage')" :aria-label="t('simplePagination.prevPage')">
+        <IconChevronLeft />
+      </span>
     </template>
-    <button
-      class="sp-btn sp-nav"
-      :disabled="page >= pageCount"
-      :title="t('simplePagination.nextPage')"
-      @click="go(page + 1)"
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-        <polyline points="9 18 15 12 9 6" />
-      </svg>
-    </button>
-  </div>
+    <template #next>
+      <span :title="t('simplePagination.nextPage')" :aria-label="t('simplePagination.nextPage')">
+        <IconChevronRight />
+      </span>
+    </template>
+  </NPagination>
 </template>
-
-<style scoped>
-.simple-pager {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  user-select: none;
-}
-.sp-btn {
-  min-width: 30px;
-  height: 30px;
-  padding: 0 6px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  /* --panel / --panel-hover 深浅色都有定义（--w-* 只在深色主题给了值，
-     浅色下按钮会没有底色） */
-  background: var(--panel);
-  color: var(--text-2);
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  font-family: inherit;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  transition: all 0.12s;
-}
-.sp-btn:hover:not(:disabled):not(.active) {
-  background: var(--panel-hover);
-  color: var(--text-1);
-}
-.sp-btn.active {
-  background: var(--accent-soft);
-  border-color: var(--accent);
-  color: var(--accent);
-}
-.sp-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-}
-.sp-nav {
-  padding: 0;
-}
-.sp-ellipsis {
-  min-width: 24px;
-  text-align: center;
-  color: var(--text-3);
-  font-size: var(--fs-sm);
-}
-</style>

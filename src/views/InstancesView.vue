@@ -1,10 +1,11 @@
 <script setup lang="ts">
+import { staggeredCardDelay } from "../composables/staggeredCardDelay";
 import { computed, onMounted, ref, watch, inject } from "vue";
 import { useRouter } from "vue-router";
 import { useInstancesStore } from "../stores/instances";
 import InstanceCard from "../components/InstanceCard.vue";
 import PlaytimeCard from "../components/PlaytimeCard.vue";
-import { useMessage, NModal, NButton, NInput } from "naive-ui";
+import { useMessage, NAlert, NModal, NButton, NInput, NCollapseTransition } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { open as dialogOpen } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
@@ -115,7 +116,7 @@ onMounted(() => {
   loadCollapsed();
   const saved = localStorage.getItem(FILTER_KEY);
   if (saved) filter.value = saved;
-  instances.load();
+  void instances.load().catch(() => {});
 });
 
 watch(filter, (v) => {
@@ -162,9 +163,6 @@ const filtered = computed<Instance[]>(() => {
   return instances.inGroup(filter.value);
 });
 
-// 实例卡片逐个进场（同首页 pin-card / 内容页卡片的做法）：按展示顺序给每张
-// 卡片分配全局序号，分组视图下跨分组连续编号（跳过已折叠分组，避免空洞），
-// 单分组视图按列表顺序。切换筛选/展开分组导致卡片重新挂载时重播级联。
 const enterIndex = computed(() => {
   const map = new Map<string, number>();
   let i = 0;
@@ -179,11 +177,8 @@ const enterIndex = computed(() => {
   return map;
 });
 
-// 数量多时自动收紧步长，保证整批级联在 ~0.7s 内跑完
-function cardDelay(id: string): string {
-  const i = enterIndex.value.get(id) ?? 0;
-  const step = Math.min(0.045, 0.6 / Math.max(1, enterIndex.value.size));
-  return `${(0.06 + i * step).toFixed(3)}s`;
+function cardDelay(id: string) {
+  return staggeredCardDelay(enterIndex.value.get(id) ?? 0, enterIndex.value.size);
 }
 
 const totalCount = computed(() => instances.instances.length);
@@ -265,6 +260,10 @@ async function moveTo(groupId: string | null) {
 
 <template>
   <div id="instances-root" class="instances-view qx-page" data-tauri-drag-region>
+    <NAlert v-if="instances.scanError" type="error">{{ instances.scanError }}</NAlert>
+    <NAlert v-else-if="instances.scanWarnings.length" type="warning">
+      <div v-for="(warning, index) in instances.scanWarnings" :key="index">{{ warning }}</div>
+    </NAlert>
     <div v-if="instances.loading" class="loading">{{ t("instances.loading") }}</div>
 
     <template v-else-if="totalCount">
@@ -306,7 +305,12 @@ async function moveTo(groupId: string | null) {
       <div v-if="filter === 'all'" class="groups">
         <section v-for="s in sections" :key="s.key" class="group-block">
           <header class="group-head">
-            <button class="group-toggle" @click="toggleCollapse(s.key)">
+            <button
+              class="group-toggle"
+              :aria-expanded="!collapsed[s.key]"
+              :aria-controls="`instance-group-${s.key}`"
+              @click="toggleCollapse(s.key)"
+            >
               <IconChevronDown v-if="!collapsed[s.key]" />
               <IconChevronRight v-else />
               <i class="dot" :style="{ background: s.color || 'var(--text-3)' }"></i>
@@ -322,16 +326,18 @@ async function moveTo(groupId: string | null) {
               </button>
             </div>
           </header>
-          <div v-if="!collapsed[s.key]" class="qx-grid qx-grid--card">
-            <InstanceCard
-              v-for="inst in s.items"
-              :key="inst.id"
-              :instance="inst"
-              :animation-delay="cardDelay(inst.id)"
-              @move="movingInstance = $event"
-            />
-            <p v-if="!s.items.length" class="group-empty">{{ t("instances.groupEmpty") }}</p>
-          </div>
+          <NCollapseTransition :id="`instance-group-${s.key}`" :show="!collapsed[s.key]">
+            <div class="qx-grid qx-grid--card">
+              <InstanceCard
+                v-for="inst in s.items"
+                :key="inst.id"
+                :instance="inst"
+                :animation-delay="cardDelay(inst.id)"
+                @move="movingInstance = $event"
+              />
+              <p v-if="!s.items.length" class="group-empty">{{ t("instances.groupEmpty") }}</p>
+            </div>
+          </NCollapseTransition>
         </section>
       </div>
 
@@ -571,21 +577,6 @@ async function moveTo(groupId: string | null) {
 .op.danger:hover {
   color: var(--danger);
   border-color: var(--danger-50);
-}
-/* 卡片逐个进场（同首页 pin-card：translateY 28px 上浮 + 淡入，backwards 让
-   未出场的卡片先保持隐藏）。延迟由模板内联 animationDelay 提供。 */
-.qx-grid :deep(.inst-card) {
-  animation: inst-card-enter 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
-}
-@keyframes inst-card-enter {
-  from {
-    transform: translateY(28px);
-    opacity: 0;
-  }
-  to {
-    transform: none;
-    opacity: 1;
-  }
 }
 .group-empty {
   grid-column: 1 / -1;

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 pub const DEFAULT_REPO: &str = "Qookix-TimeMachine";
 
@@ -136,27 +137,89 @@ fn index_path(state: &AppState, instance_id: &str) -> PathBuf {
     shots_dir(state, instance_id).join("index.json")
 }
 
-/// 某个实例的本地截图账本（含已上传、本地文件可能已删的条目）
-pub fn load_index(state: &AppState, instance_id: &str) -> Vec<LocalShot> {
-    let mut v: Vec<LocalShot> = std::fs::read_to_string(index_path(state, instance_id))
-        .ok()
-        .and_then(|s| serde_json::from_str::<ShotIndex>(&s).ok())
-        .map(|i| i.shots)
-        .unwrap_or_default();
-    v.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-    v
+static SHOT_INDEX_WRITE: Mutex<()> = Mutex::new(());
+
+fn read_index(state: &AppState, instance_id: &str) -> Result<Vec<LocalShot>, String> {
+    read_index_at(&index_path(state, instance_id))
 }
 
-fn save_index(state: &AppState, instance_id: &str, shots: &[LocalShot]) -> Result<(), String> {
-    let path = index_path(state, instance_id);
+fn read_index_at(path: &Path) -> Result<Vec<LocalShot>, String> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(format!("读取截图索引失败: {err}")),
+    };
+    let index: ShotIndex = serde_json::from_str(&text).map_err(|err| format!("截图索引损坏: {err}"))?;
+    let mut shots = index.shots;
+    shots.sort_by_key(|shot| shot.created_at);
+    Ok(shots)
+}
+
+/// 某个实例的本地截图账本（含已上传、本地文件可能已删的条目）
+pub fn load_index(state: &AppState, instance_id: &str) -> Vec<LocalShot> {
+    read_index(state, instance_id).unwrap_or_default()
+}
+
+fn update_index(
+    state: &AppState,
+    instance_id: &str,
+    edit: impl FnOnce(&mut Vec<LocalShot>),
+) -> Result<(), String> {
+    update_index_at(&index_path(state, instance_id), edit)
+}
+
+fn update_index_at(path: &Path, edit: impl FnOnce(&mut Vec<LocalShot>)) -> Result<(), String> {
+    let _writer = SHOT_INDEX_WRITE.lock().map_err(|_| "无法锁定截图索引")?;
+    let mut shots = read_index_at(path)?;
+    edit(&mut shots);
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("创建目录失败: {e}"))?;
     }
-    let text = serde_json::to_string_pretty(&ShotIndex {
-        shots: shots.to_vec(),
-    })
+    let text = serde_json::to_vec_pretty(&ShotIndex { shots })
     .map_err(|e| e.to_string())?;
-    std::fs::write(path, text).map_err(|e| format!("写入失败: {e}"))
+    crate::fsutil::atomic_write(path, &text).map_err(|e| format!("写入截图索引失败: {e}"))
+}
+
+#[cfg(test)]
+mod index_tests {
+    use super::*;
+
+    fn shot(file: &str) -> LocalShot {
+        LocalShot {
+            file: file.into(), trigger: "manual".into(), created_at: 1,
+            log_snippet: String::new(), uploaded: false, release_id: 0, asset_id: 0,
+        }
+    }
+
+    #[test]
+    fn concurrent_capture_and_upload_updates_keep_both_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("index.json");
+        update_index_at(&path, |shots| shots.push(shot("first.png"))).unwrap();
+        std::thread::scope(|scope| {
+            let add = scope.spawn(|| update_index_at(&path, |shots| shots.push(shot("second.png"))));
+            update_index_at(&path, |shots| {
+                let entry = shots.iter_mut().find(|entry| entry.file == "first.png").unwrap();
+                entry.uploaded = true;
+                entry.release_id = 8;
+                entry.asset_id = 23;
+            }).unwrap();
+            add.join().unwrap().unwrap();
+        });
+        let saved = read_index_at(&path).unwrap();
+        assert_eq!(saved.len(), 2);
+        assert!(saved.iter().any(|entry| entry.uploaded && entry.release_id == 8 && entry.asset_id == 23));
+        assert!(saved.iter().any(|entry| entry.file == "second.png" && !entry.uploaded));
+    }
+
+    #[test]
+    fn corrupt_index_is_kept_for_recovery() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("index.json");
+        std::fs::write(&path, b"{broken").unwrap();
+        assert!(update_index_at(&path, |shots| shots.push(shot("new.png"))).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"{broken");
+    }
 }
 
 /// 记一张刚截好的本地截图（上传是后面的事）
@@ -168,19 +231,18 @@ fn record_local(
     created_at: u64,
     log_snippet: &str,
 ) -> Result<(), String> {
-    let mut shots = load_index(state, instance_id);
-    shots.retain(|s| s.file != file);
-    shots.push(LocalShot {
-        file: file.to_string(),
-        trigger: trigger.to_string(),
-        created_at,
-        log_snippet: log_snippet.to_string(),
-        uploaded: false,
-        release_id: 0,
-        asset_id: 0,
-    });
-    shots.sort_by(|a, b| a.created_at.cmp(&b.created_at));
-    save_index(state, instance_id, &shots)
+    update_index(state, instance_id, |shots| {
+        shots.retain(|s| s.file != file);
+        shots.push(LocalShot {
+            file: file.to_string(),
+            trigger: trigger.to_string(),
+            created_at,
+            log_snippet: log_snippet.to_string(),
+            uploaded: false,
+            release_id: 0,
+            asset_id: 0,
+        });
+    })
 }
 
 /// 读文件末尾 n 行非空内容。只读末尾 16 KiB：latest.log 动辄几 MB，
@@ -239,20 +301,15 @@ fn instances_with_pending(state: &AppState) -> Vec<String> {
 // ---- 仓库 ----
 
 async fn ctx(state: &AppState) -> Result<(String, String, String), String> {
-    let token = auth::ensure_token(state).await?;
+    let (token, cs) = auth::ensure_context(state).await?;
     let cfg = load(state);
-    let cs = crate::cloud_sync::store::load(state);
-    if cs.account.is_empty() {
-        return Err("尚未完成 GitHub 授权".into());
-    }
-    Ok((token, cs.account.clone(), cfg.repo_name))
+    Ok((token, cs.account, cfg.repo_name))
 }
 
 /// 本会话里已经确认存在的时光机仓库（免得每次截图都多打一次 API）
-fn repo_known_ok() -> &'static std::sync::Mutex<Option<String>> {
-    static OK: std::sync::OnceLock<std::sync::Mutex<Option<String>>> =
-        std::sync::OnceLock::new();
-    OK.get_or_init(|| std::sync::Mutex::new(None))
+fn repo_known_ok() -> &'static std::sync::Mutex<Option<(String, String)>> {
+    static OK: std::sync::Mutex<Option<(String, String)>> = std::sync::Mutex::new(None);
+    &OK
 }
 
 /// 确保仓库存在（不存在就建私有仓库 + 写标识文件），结果缓存本会话。
@@ -266,7 +323,7 @@ pub async fn ensure_repo_ready(
 ) -> Result<String, String> {
     if repo_known_ok()
         .lock()
-        .map(|g| g.as_deref() == Some(repo))
+        .map(|g| g.as_ref().is_some_and(|(owner, name)| owner == account && name == repo))
         .unwrap_or(false)
     {
         return Ok(repo.to_string());
@@ -285,19 +342,15 @@ pub async fn ensure_repo_ready(
         println!("[timemachine] repo created: {name}");
     }
     if let Ok(mut g) = repo_known_ok().lock() {
-        *g = Some(name.clone());
+        *g = Some((account.to_owned(), name.clone()));
     }
     Ok(name)
 }
 
 /// 初始化时光机仓库（独立仓库，不影响云存档仓库）
 pub async fn init_repo(state: &AppState) -> Result<Value, String> {
-    let token = auth::ensure_token(state).await?;
+    let (token, cs) = auth::ensure_context(state).await?;
     let mut cfg = load(state);
-    let cs = crate::cloud_sync::store::load(state);
-    if cs.account.is_empty() {
-        return Err("账号信息缺失，请重新授权".into());
-    }
     let (name, rid, created) = repo::ensure_repo(
         state,
         &token,
@@ -308,8 +361,9 @@ pub async fn init_repo(state: &AppState) -> Result<Value, String> {
         "chore: 初始化 Qookix 时光机仓库",
     )
     .await?;
+    crate::cloud_sync::store::load(state).check_session(&cs)?;
     if let Ok(mut g) = repo_known_ok().lock() {
-        *g = Some(name.clone());
+        *g = Some((cs.account, name.clone()));
     }
     if cfg.repo_name != name {
         cfg.repo_name = name.clone();
@@ -357,12 +411,6 @@ pub async fn capture_and_upload(
                 uploaded = v["uploaded"].as_u64().unwrap_or(0);
                 release_id = v["releaseId"].as_u64().unwrap_or(0);
                 cleaned = v["cleaned"].as_u64().unwrap_or(0);
-                // 上传过的本地副本：用户不要就删掉（索引条目留着，时间轴回源下载）
-                if uploaded > 0 && !cfg.keep_local_copy {
-                    for s in load_index(state, instance_id).iter().filter(|s| s.uploaded) {
-                        let _ = std::fs::remove_file(shots_dir(state, instance_id).join(&s.file));
-                    }
-                }
             }
             Err(e) => upload_error = json!(e),
         }
@@ -383,11 +431,13 @@ pub async fn capture_and_upload(
 /// `force=false` 时攒够 `batch_size` 才传，`force=true`（手动上传 / 游戏退出
 /// 收尾）有多少传多少；返回 `{ uploaded, releaseId, waiting, cleaned }`。
 pub async fn flush(state: &AppState, instance_id: &str, force: bool) -> Result<Value, String> {
+    let upload_lock = state.jobs.download_lock(index_path(state, instance_id).with_extension("upload"));
+    let _upload = upload_lock.lock().await;
     let cfg = load(state);
     if !cfg.cloud_enabled {
         return Err("未启用 GitHub 云保存".into());
     }
-    let pending = pending_shots(state, instance_id);
+    let pending: Vec<_> = read_index(state, instance_id)?.into_iter().filter(|shot| !shot.uploaded).collect();
     if pending.is_empty() {
         return Ok(json!({ "uploaded": 0, "releaseId": 0, "waiting": 0, "cleaned": 0 }));
     }
@@ -444,11 +494,9 @@ pub async fn flush(state: &AppState, instance_id: &str, force: bool) -> Result<V
         }));
     }
     if parts.is_empty() {
-        let left: Vec<LocalShot> = load_index(state, instance_id)
-            .into_iter()
-            .filter(|x| !chosen.iter().any(|c| c.file == x.file))
-            .collect();
-        save_index(state, instance_id, &left)?;
+        update_index(state, instance_id, |index| index.retain(|shot| {
+            !chosen.iter().any(|candidate| candidate.file == shot.file && candidate.created_at == shot.created_at)
+        }))?;
         return Ok(json!({ "uploaded": 0, "releaseId": 0, "waiting": 0, "cleaned": 0 }));
     }
 
@@ -460,22 +508,17 @@ pub async fn flush(state: &AppState, instance_id: &str, force: bool) -> Result<V
     // 完整元数据（含日志）作为 `shots.json` 附件上传，不塞进 Release 描述：
     // 一批 10 张轻松上万字，而列表用不到日志（点开大图才要）。
     let shots_file = "shots.json";
-    let tmp_json = state
-        .root
-        .join("timemachine")
-        .join("cache")
-        .join(format!("shots-{stamp}-{}.json", std::process::id()));
-    if let Some(parent) = tmp_json.parent() {
-        std::fs::create_dir_all(parent).ok();
-    }
-    let json_text = serde_json::to_string(&full_shots).unwrap_or_else(|_| "[]".into());
-    if std::fs::write(&tmp_json, &json_text).is_ok() {
-        parts.push(saves::PackedPart {
-            path: tmp_json.clone(),
-            asset_name: shots_file.to_string(),
-            size: json_text.len() as u64,
-        });
-    }
+    let temp_dir = state.root.join("timemachine").join("cache");
+    std::fs::create_dir_all(&temp_dir).map_err(|e| e.to_string())?;
+    let mut tmp_json = tempfile::NamedTempFile::new_in(&temp_dir).map_err(|e| e.to_string())?;
+    let json_text = serde_json::to_vec(&full_shots).map_err(|e| e.to_string())?;
+    use std::io::Write;
+    tmp_json.write_all(&json_text).map_err(|e| e.to_string())?;
+    parts.push(saves::PackedPart {
+        path: tmp_json.path().to_path_buf(),
+        asset_name: shots_file.to_string(),
+        size: json_text.len() as u64,
+    });
 
     let meta = json!({
         "type": "timemachine",
@@ -492,7 +535,7 @@ pub async fn flush(state: &AppState, instance_id: &str, force: bool) -> Result<V
         "shots_file": shots_file,
         "shot_count": meta_shots.len(),
     });
-    let release_id = release::create_and_upload(
+    let published = release::create_and_upload(
         state,
         &token,
         &account,
@@ -504,44 +547,37 @@ pub async fn flush(state: &AppState, instance_id: &str, force: bool) -> Result<V
         |_, _| {},
     )
     .await?;
-    // 临时元数据文件用完即删（内容已经在附件里了）
-    let _ = std::fs::remove_file(&tmp_json);
-
-    // 回查这次 Release 的附件，把每张图对上一个 asset id 写进索引
-    // （时间轴点开单张时要按 asset 下载）
+    let release_id = published.id;
+    let commit = update_index(state, instance_id, |index| {
+        index.retain_mut(|shot| {
+            if !chosen.iter().any(|candidate| candidate.file == shot.file && candidate.created_at == shot.created_at) {
+                return true;
+            }
+            if let Some(&asset_id) = published.assets.get(&shot.file) {
+                shot.uploaded = true;
+                shot.release_id = release_id;
+                shot.asset_id = asset_id;
+                true
+            } else {
+                false
+            }
+        });
+    });
+    if let Err(err) = commit {
+        return match release::delete(state, &token, &account, &repo_name, release_id).await {
+            Ok(()) => Err(err),
+            Err(cleanup) => Err(format!("{err}。已上传的批次 {release_id} 无法撤销: {cleanup}")),
+        };
+    }
+    let names: Vec<_> = meta_shots.iter().filter_map(|shot| shot["name"].as_str()).collect();
+    if !cfg.keep_local_copy {
+        for name in &names {
+            let _ = std::fs::remove_file(dir.join(name));
+        }
+    }
     let all = release::list(state, &token, &repo_name, &account)
         .await
         .unwrap_or_default();
-    let mut name_to_asset: HashMap<String, u64> = HashMap::new();
-    if let Some(rel) = all
-        .iter()
-        .find(|r| r.get("releaseId").and_then(|v| v.as_u64()) == Some(release_id))
-    {
-        let names = rel
-            .get("assetNames")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        let ids = rel
-            .get("assetIds")
-            .and_then(|v| v.as_array())
-            .cloned()
-            .unwrap_or_default();
-        for (n, i) in names.iter().zip(ids.iter()) {
-            if let (Some(n), Some(i)) = (n.as_str(), i.as_u64()) {
-                name_to_asset.insert(n.to_string(), i);
-            }
-        }
-    }
-    let mut idx = load_index(state, instance_id);
-    for s in idx.iter_mut() {
-        if chosen.iter().any(|c| c.file == s.file) {
-            s.uploaded = true;
-            s.release_id = release_id;
-            s.asset_id = name_to_asset.get(&s.file).copied().unwrap_or(0);
-        }
-    }
-    save_index(state, instance_id, &idx)?;
 
     // 超出保留数时清理最早的那几批
     let cleaned = release::cleanup_quota(
@@ -557,7 +593,7 @@ pub async fn flush(state: &AppState, instance_id: &str, force: bool) -> Result<V
     .unwrap_or(0);
 
     Ok(json!({
-        "uploaded": parts.len(),
+        "uploaded": names.len(),
         "releaseId": release_id,
         "waiting": pending_shots(state, instance_id).len(),
         "cleaned": cleaned,
@@ -571,10 +607,8 @@ fn capture_game_screenshot(
     instance_dir: &Path,
 ) -> Result<PathBuf, String> {
     let pid = state
-        .game_pids
-        .lock()
-        .ok()
-        .and_then(|g| g.get(instance_id).copied())
+        .jobs.game_pids()
+        .get(instance_id).copied()
         .unwrap_or(0);
     if pid == 0 {
         return Err("游戏进程未运行".into());
@@ -787,7 +821,7 @@ fn engines() -> &'static std::sync::Mutex<HashSet<String>> {
 }
 
 /// 游戏启动后（或中途打开开关时）跑起来：定时 + 日志事件 双通道触发截图。
-/// 游戏进程从 `state.game_pids` 移除、或用户在设置里关掉总开关后自动结束。
+/// 游戏进程从 `state.jobs` 移除、或用户在设置里关掉总开关后自动结束。
 pub fn start_engine(app: tauri::AppHandle, instance_id: String, pid: u32) {
     match engines().lock() {
         Ok(mut g) => {
@@ -824,10 +858,8 @@ async fn engine_loop(app: tauri::AppHandle, state: &AppState, instance_id: &str,
     loop {
         // 游戏退出了就停
         let alive = state
-            .game_pids
-            .lock()
-            .map(|g| g.get(instance_id).copied() == Some(pid))
-            .unwrap_or(false);
+            .jobs.game_pids()
+            .get(instance_id).copied() == Some(pid);
         if !alive {
             // 游戏退了：把这局攒着的零头也传上去，不然要等下局凑够一批
             if load(state).cloud_enabled {
@@ -1211,9 +1243,8 @@ pub async fn timeline_snapshots(state: &AppState) -> Result<Value, String> {
     }
 
     // 2) 云端快照（需要授权；失败时只给本地，不影响时间轴显示）
-    let cs = crate::cloud_sync::store::load(state);
-    if !cs.access_token.is_empty() && !cs.repo_name.is_empty() {
-        if let Ok(token) = auth::ensure_token(state).await {
+    if let Ok((token, cs)) = auth::ensure_context(state).await {
+        if !cs.repo_name.is_empty() {
             if let Ok(all) = release::list(state, &token, &cs.repo_name, &cs.account).await {
                 for s in all {
                     out.push(json!({
@@ -1268,16 +1299,29 @@ pub async fn delete_shot(
     release_id: u64,
     asset_id: u64,
 ) -> Result<(), String> {
+    if !instance_id.is_empty() {
+        crate::instances::validate_instance_id(instance_id)?;
+    }
+    if !file.is_empty() && !crate::fsutil::is_portable_filename(file) {
+        return Err("截图文件名称无效".into());
+    }
+    let upload_lock = state.jobs.download_lock(index_path(state, instance_id).with_extension("upload"));
+    let _upload = upload_lock.lock().await;
+    let mut release_id = release_id;
+    let mut asset_id = asset_id;
     if !instance_id.is_empty() && !file.is_empty() {
+        let local_record = read_index(state, instance_id)?.into_iter().find(|shot| shot.file == file);
+        if let Some(shot) = &local_record {
+            if shot.uploaded {
+                release_id = shot.release_id;
+                asset_id = shot.asset_id;
+            }
+            update_index(state, instance_id, |index| index.retain(|shot| shot.file != file))?;
+        }
         let tm_path = shots_dir(state, instance_id).join(file);
         if tm_path.exists() {
             let _ = std::fs::remove_file(&tm_path);
-            let left: Vec<LocalShot> = load_index(state, instance_id)
-                .into_iter()
-                .filter(|s| s.file != file)
-                .collect();
-            save_index(state, instance_id, &left)?;
-        } else {
+        } else if local_record.is_none() {
             // 不在时光机副本目录 → 游戏截图文件夹里的原图（trigger=game）
             let game_path = state
                 .instances_dir()
@@ -1406,14 +1450,11 @@ pub async fn timemachine_init_repo(state: State<'_, AppState>) -> Result<Value, 
     init_repo(&state).await
 }
 
-/// 正在运行的实例 id（`game_pids` 只记本启动器启动、还没退出的游戏）。
+/// 正在运行的实例 id（注册表只列出本启动器启动、还没退出的游戏）。
 /// 前端那份来自 `launch://state` 事件，重启就丢——这里是权威来源。
 pub fn running_instance_ids(state: &AppState) -> Vec<String> {
     let mut ids: Vec<String> = state
-        .game_pids
-        .lock()
-        .map(|g| g.keys().cloned().collect())
-        .unwrap_or_default();
+        .jobs.game_pids().into_keys().collect();
     ids.sort(); // 结果稳定，前端显示与挑选不会来回跳
     ids
 }
@@ -1426,10 +1467,7 @@ pub fn timemachine_running_instances(state: State<'_, AppState>) -> Vec<String> 
 /// 正在运行的实例 + 进程号（"中途打开总开关"时补起引擎要用）
 fn running_pids(state: &AppState) -> Vec<(String, u32)> {
     state
-        .game_pids
-        .lock()
-        .map(|g| g.iter().map(|(k, v)| (k.clone(), *v)).collect())
-        .unwrap_or_default()
+        .jobs.game_pids().into_iter().collect()
 }
 
 #[tauri::command]

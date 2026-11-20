@@ -17,11 +17,9 @@ pub const MARKER_TYPE_TIMEMACHINE: &str = "qookix-time-machine";
 
 /// 确保云端存在云存档仓库（不存在则创建私有仓库并写入标识文件）。
 /// 返回 `{ repoName, repositoryId }`。
-pub async fn ensure(state: &AppState, token: &str) -> Result<serde_json::Value, String> {
-    let mut cs = store::load(state);
-    if cs.account.is_empty() {
-        return Err("账号信息缺失，请重新授权".into());
-    }
+pub async fn ensure(state: &AppState) -> Result<serde_json::Value, String> {
+    let (token, cs) = super::auth::ensure_context(state).await?;
+    let token = token.as_str();
     let account = cs.account.clone();
     let repo = if cs.repo_name.is_empty() {
         DEFAULT_REPO.to_string()
@@ -50,9 +48,12 @@ pub async fn ensure(state: &AppState, token: &str) -> Result<serde_json::Value, 
         "chore: 初始化 Qookix 云存档仓库",
     )
     .await?;
-    cs.repo_name = repo.clone();
-    cs.repository_id = rid.clone();
-    store::save(state, &cs)?;
+    store::edit(state, |current| {
+        current.check_session(&cs)?;
+        current.repo_name.clone_from(&repo);
+        current.repository_id.clone_from(&rid);
+        Ok(())
+    })?;
     Ok(json!({ "repoName": repo, "repositoryId": rid }))
 }
 

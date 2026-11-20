@@ -8,7 +8,7 @@
 use std::collections::{BTreeMap, HashMap};
 use std::io::Read;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use super::preview_sessions::PreviewSessions;
 
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
@@ -160,20 +160,8 @@ struct PreviewSession {
     regions: Vec<SessionRegion>,
 }
 
-static SESSIONS: OnceLock<Mutex<HashMap<String, Arc<PreviewSession>>>> = OnceLock::new();
-
-fn sessions() -> &'static Mutex<HashMap<String, Arc<PreviewSession>>> {
-    SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
-fn find_session(session_id: &str) -> Result<Arc<PreviewSession>, String> {
-    sessions()
-        .lock()
-        .map_err(|_| "会话存储不可用".to_string())?
-        .get(session_id)
-        .cloned()
-        .ok_or_else(|| "投影预览会话已过期".to_string())
-}
+static SESSIONS: PreviewSessions<PreviewSession> =
+    PreviewSessions::new(2, "投影预览会话已过期");
 
 // ---------------------------------------------------------------------------
 // NBT 反序列化结构
@@ -997,10 +985,7 @@ pub async fn schematic_preview_open(
     .await
     .map_err(|e| e.to_string())??;
     let manifest = session.manifest.clone();
-    sessions()
-        .lock()
-        .map_err(|_| "会话存储不可用".to_string())?
-        .insert(manifest.session_id.clone(), Arc::new(session));
+    SESSIONS.insert(manifest.session_id.clone(), session)?;
     Ok(manifest)
 }
 
@@ -1072,7 +1057,7 @@ pub async fn schematic_preview_read_chunk(
     region_id: String,
     position: [i32; 3],
 ) -> Result<Response, String> {
-    let session = find_session(&session_id)?;
+    let session = SESSIONS.get(&session_id)?;
     let region = session
         .regions
         .iter()
@@ -1132,7 +1117,7 @@ pub async fn schematic_preview_block_info(
     region_id: String,
     position: [i32; 3],
 ) -> Result<Option<PreviewBlockState>, String> {
-    let session = find_session(&session_id)?;
+    let session = SESSIONS.get(&session_id)?;
     let region = session
         .regions
         .iter()
@@ -1260,11 +1245,7 @@ mod tests {
 /// 关闭预览会话，释放内存。
 #[tauri::command]
 pub fn schematic_preview_close(session_id: String) -> Result<(), String> {
-    sessions()
-        .lock()
-        .map_err(|_| "会话存储不可用".to_string())?
-        .remove(&session_id);
-    Ok(())
+    SESSIONS.close(&session_id)
 }
 
 /// 把投影文件复制到指定实例的 schematics 目录，返回最终保存路径。
@@ -1288,7 +1269,7 @@ pub fn copy_file_to_instance_schematics(
         .map(|s| s.trim().to_string())
         .or_else(|| src.file_name().map(|f| f.to_string_lossy().to_string()))
         .unwrap_or_else(|| "schematic".to_string());
-    if !crate::util::is_safe_filename(&raw_name) {
+    if !crate::fsutil::is_safe_filename(&raw_name) {
         return Err("非法文件名".into());
     }
     let mut dest = dir.join(&raw_name);

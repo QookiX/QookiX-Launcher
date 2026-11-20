@@ -13,34 +13,15 @@
 //    ]
 // ============================================================================
 import fs from 'node:fs'
+import { parseChangelog } from './shared/changelog.mjs'
 
 const [changelogPath, outputPath, maxCount = '5'] = process.argv.slice(2)
 if (!changelogPath || !outputPath) {
   throw new Error('Usage: node generate-changelog-json.mjs <changelog.md> <output.json> [maxVersions]')
 }
 
-const text = fs.readFileSync(changelogPath, 'utf8').replace(/\r\n/g, '\n')
-const lines = text.split('\n')
-
-const releases = []
-let current = null
-
-for (const line of lines) {
-  const heading = /^##\s+\[(.*?)\]\s*-\s*(\d{4}-\d{2}-\d{2})/.exec(line)
-  if (heading) {
-    const [, version, date] = heading
-    if (/unreleased/i.test(version)) { current = null; continue }
-    current = { version, date, entries: [] }
-    releases.push(current)
-    continue
-  }
-  if (!current) continue
-  const entry = /^\d+[.)]\s+\*\*(.+?)\*\*[:：]\s*(.+)$/.exec(line.trim())
-  if (entry) {
-    current.entries.push({ category: entry[1].trim(), text: entry[2].trim() })
-  }
-}
-
-const result = releases.slice(0, parseInt(maxCount, 10))
+const count = Number(maxCount)
+if (!Number.isSafeInteger(count) || count < 1) throw new Error('maxVersions must be a positive integer')
+const result = parseChangelog(fs.readFileSync(changelogPath, 'utf8'), count)
 fs.writeFileSync(outputPath, `${JSON.stringify(result, null, 2)}\n`)
 console.log(`Generated ${outputPath} with ${result.length} releases`)

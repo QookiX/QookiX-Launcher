@@ -126,7 +126,7 @@ onBeforeUnmount(unbind);
 <style scoped>
 .ctx {
   position: fixed;
-  z-index: 1200;
+  z-index: var(--z-context-menu);
   min-width: 176px;
   max-width: 260px;
   padding: 5px;

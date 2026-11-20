@@ -1,9 +1,10 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { computed, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { useMessage } from "naive-ui";
 import { useAccountsStore } from "../stores/accounts";
 import { useAccountAvatars } from "../composables/useAccountAvatars";
+import FloatingDrawer from "./FloatingDrawer.vue";
 import AddAccountDialog from "./AddAccountDialog.vue";
 import { IconUsers, IconClose, IconTrash, IconCheck, IconPlus, IconUser } from "./icons";
 import type { Account } from "../types";
@@ -19,11 +20,6 @@ function close() {
   accounts.showManager = false;
 }
 
-function onKey(e: KeyboardEvent) {
-  if (e.key === "Escape") close();
-}
-onMounted(() => window.addEventListener("keydown", onKey));
-onBeforeUnmount(() => window.removeEventListener("keydown", onKey));
 
 async function select(acc: Account) {
   await accounts.select(acc.uuid);
@@ -72,23 +68,13 @@ watch(
 </script>
 
 <template>
-  <Teleport to="body">
-    <!-- 半透明遮罩：点击关闭 -->
-    <Transition name="acct-drawer-fade">
-      <div v-if="accounts.showManager" class="acct-mask" @click="close"></div>
-    </Transition>
-
-    <!-- 右抽屉本体：悬浮岛样式（右侧留空 + 圆角 + 环绕投影 + 磨砂）。
-         ⚠ 滑入用 right（layout）而不是 transform：transform 会创建独立
-         合成层，抽屉的 backdrop-filter 磨砂在滑动期间采样不到背后内容。 -->
-    <Transition name="acct-drawer-slide">
-      <aside v-if="accounts.showManager" class="acct-drawer glass">
+  <FloatingDrawer :open="accounts.showManager" :label="t('accountChip.drawerTitle')" @close="close">
         <header class="acct-head">
           <div class="acct-title">
             <IconUsers class="acct-title-icon" />
             <span>{{ t("accountChip.drawerTitle") }}</span>
           </div>
-          <button class="acct-close-btn" :title="t('titlebar.close')" @click="close">
+          <button class="acct-close-btn" :aria-label="t('titlebar.close')" :title="t('titlebar.close')" data-drawer-close @click="close">
             <IconClose />
           </button>
         </header>
@@ -101,8 +87,8 @@ watch(
               :key="acc.uuid"
               class="acct-row"
               :class="{ active: current?.uuid === acc.uuid }"
-              @click="select(acc)"
             >
+              <button type="button" class="acct-select" :aria-pressed="current?.uuid === acc.uuid" @click="select(acc)">
               <img
                 v-if="avatar(acc.uuid)"
                 :src="avatar(acc.uuid)"
@@ -116,6 +102,7 @@ watch(
                 <span class="acct-type" :class="acc.type">{{ typeLabel(acc) }}</span>
               </div>
               <IconCheck v-if="current?.uuid === acc.uuid" class="acct-check" />
+              </button>
               <button class="acct-remove" :title="t('accountChip.removeAccount')" @click.stop="remove(acc)">
                 <IconTrash />
               </button>
@@ -128,38 +115,11 @@ watch(
             <IconPlus /> {{ t("accountChip.addAccountTitle") }}
           </button>
         </div>
-      </aside>
-    </Transition>
-
-    <AddAccountDialog ref="addDialog" />
-  </Teleport>
+  </FloatingDrawer>
+  <AddAccountDialog ref="addDialog" />
 </template>
 
 <style scoped>
-/* —— 遮罩 —— */
-.acct-mask {
-  position: fixed;
-  inset: 0;
-  z-index: 90;
-  background: rgba(0, 0, 0, 0.18);
-}
-/* —— 抽屉本体 —— */
-.acct-drawer {
-  position: fixed;
-  top: 50px; /* 标题栏 40px + 10px 悬浮间距 */
-  bottom: 10px;
-  right: 10px;
-  width: 380px;
-  max-width: calc(100vw - 40px);
-  z-index: 95;
-  display: flex;
-  flex-direction: column;
-  padding: 14px 14px 12px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-xl);
-  box-shadow: var(--layer-shadow);
-  overflow: hidden;
-}
 .acct-head {
   display: flex;
   align-items: center;
@@ -227,6 +187,18 @@ watch(
   cursor: pointer;
   border: 1px solid transparent;
   transition: all 0.12s;
+}
+.acct-select {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
 }
 .acct-row:hover {
   background: var(--w-06);
@@ -337,23 +309,4 @@ watch(
 }
 
 /* —— 遮罩淡入淡出 —— */
-.acct-drawer-fade-enter-active,
-.acct-drawer-fade-leave-active {
-  transition: opacity 0.2s ease;
-}
-.acct-drawer-fade-enter-from,
-.acct-drawer-fade-leave-to {
-  opacity: 0;
-}
-/* —— 抽屉滑入滑出（right 位移，layout 属性，磨砂全程有效） —— */
-.acct-drawer-slide-enter-active {
-  transition: right 0.26s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.acct-drawer-slide-leave-active {
-  transition: right 0.2s ease-in;
-}
-.acct-drawer-slide-enter-from,
-.acct-drawer-slide-leave-to {
-  right: -400px;
-}
 </style>

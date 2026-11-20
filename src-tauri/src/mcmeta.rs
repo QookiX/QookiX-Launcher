@@ -3,44 +3,73 @@ use crate::state::AppState;
 use std::path::PathBuf;
 
 const MANIFEST_URL: &str = "https://piston-meta.mojang.com/mc/game/version_manifest_v2.json";
+const BMCLAPI_MANIFEST: &str = "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json";
 
 /// Fetch and cache the Mojang version manifest.
 pub async fn fetch_manifest(state: &AppState) -> Result<VersionManifest, String> {
     let path = state.root.join("version_manifest.json");
-    // refresh if older than 1 hour
-    let stale = std::fs::metadata(&path)
-        .and_then(|m| m.modified())
-        .map(|t| t.elapsed().map(|e| e.as_secs() > 3600).unwrap_or(true))
-        .unwrap_or(true);
-    if path.exists() && !stale {
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            if let Ok(m) = serde_json::from_str::<VersionManifest>(&text) {
-                return Ok(m);
-            }
-        }
-    }
-    let url = crate::mirror::manifest_url(state);
-    // 双向兜底：镜像挂了回退官方，官方直连失败（国内常态）回退镜像
-    const BMCLAPI_MANIFEST: &str =
-        "https://bmclapi2.bangbang93.com/mc/game/version_manifest_v2.json";
-    let text = if url == MANIFEST_URL {
-        match crate::download::get_text(&state.client, MANIFEST_URL).await {
-            Ok(t) => t,
-            Err(e) => crate::download::get_text(&state.client, BMCLAPI_MANIFEST)
-                .await
-                .map_err(|e2| format!("{e}（镜像源也失败: {e2}）"))?,
-        }
+    let primary = crate::mirror::manifest_url(state);
+    let fallback = if primary == MANIFEST_URL {
+        BMCLAPI_MANIFEST
     } else {
-        match crate::download::get_text(&state.client, &url).await {
-            Ok(t) => t,
-            Err(_) => crate::download::get_text(&state.client, MANIFEST_URL).await?,
-        }
+        MANIFEST_URL
     };
-    let manifest: VersionManifest = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-    if let Some(dir) = path.parent() {
-        crate::util::fs_best_effort("mkdir", dir, std::fs::create_dir_all(dir));
+    let client = &state.client;
+    load_manifest(&path, [&primary, fallback], |url| async move {
+        crate::download::get_text(client, &url).await
+    })
+    .await
+}
+
+async fn load_manifest<F, R>(
+    path: &std::path::Path,
+    sources: [&str; 2],
+    mut fetch: F,
+) -> Result<VersionManifest, String>
+where
+    F: FnMut(String) -> R,
+    R: std::future::Future<Output = Result<String, String>>,
+{
+    let fresh = std::fs::metadata(&path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|time| time.elapsed().ok())
+        .is_some_and(|age| age.as_secs() <= 3600);
+    let cached = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| parse_manifest(&text).ok());
+    let cached = match (fresh, cached) {
+        (true, Some(manifest)) => return Ok(manifest),
+        (_, cached) => cached,
+    };
+    let mut errors = Vec::new();
+    for (index, source) in sources.into_iter().enumerate() {
+        match fetch(source.to_string())
+            .await
+            .and_then(|text| parse_manifest(&text).map(|manifest| (manifest, text)))
+        {
+            Ok((manifest, text)) => {
+                crate::fsutil::fs_best_effort(
+                    "write",
+                    path,
+                    crate::fsutil::atomic_write(path, text.as_bytes()),
+                );
+                return Ok(manifest);
+            }
+            Err(err) => errors.push(format!("来源 {}：{err}", index + 1)),
+        }
     }
-    crate::util::fs_best_effort("write", &path, std::fs::write(&path, &text));
+    cached.ok_or_else(|| format!("获取 Minecraft 版本清单失败（{}）", errors.join("；")))
+}
+
+fn parse_manifest(text: &str) -> Result<VersionManifest, String> {
+    let manifest: VersionManifest = serde_json::from_str(text).map_err(|err| err.to_string())?;
+    if [&manifest.latest.release, &manifest.latest.snapshot]
+        .iter()
+        .any(|id| id.is_empty() || find_version(&manifest, id).is_none())
+    {
+        return Err("版本清单缺少最新正式版或快照版".into());
+    }
     Ok(manifest)
 }
 
@@ -53,8 +82,7 @@ pub fn find_version<'a>(manifest: &'a VersionManifest, id: &str) -> Option<&'a M
 /// following `inheritsFrom` chains.
 pub async fn fetch_version_json(state: &AppState, id: &str) -> Result<VersionJson, String> {
     let manifest = fetch_manifest(state).await?;
-    let entry = find_version(&manifest, id)
-        .ok_or_else(|| format!("未找到 Minecraft 版本 {id}"))?;
+    let entry = find_version(&manifest, id).ok_or_else(|| format!("未找到 Minecraft 版本 {id}"))?;
     let url = crate::mirror::version_json_url(state, &entry.url, id);
     // 官方直连失败（国内常态）时回退 BMCLAPI 镜像
     const BMCLAPI_BASE: &str = "https://bmclapi2.bangbang93.com";
@@ -128,4 +156,61 @@ pub fn resolve_inheritance(root: &VersionJson, parents: &[VersionJson]) -> Versi
     }
     merged.inherits_from = None;
     merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::future::ready;
+    use std::time::{Duration, SystemTime};
+
+    const MANIFEST: &str = r#"{
+        "latest":{"release":"1.0","snapshot":"1.0"},
+        "versions":[{"id":"1.0","type":"release","url":"https://example.invalid",
+        "time":"2020-01-01T00:00:00Z","releaseTime":"2020-01-01T00:00:00Z"}]
+    }"#;
+
+    #[tokio::test]
+    async fn invalid_response_tries_next_source_and_caches_only_the_valid_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        let mut hits = Vec::new();
+        let manifest = load_manifest(&path, ["mirror", "official"], |source| {
+            let response = if source == "mirror" {
+                r#"{"latest":{"release":"1.0","snapshot":"1.0"},"versions":[]}"#
+            } else {
+                MANIFEST
+            };
+            hits.push(source);
+            ready(Ok(response.into()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(hits, ["mirror", "official"]);
+        assert_eq!(manifest.latest.release, "1.0");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), MANIFEST);
+    }
+
+    #[tokio::test]
+    async fn stale_valid_cache_survives_all_source_failures() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("manifest.json");
+        std::fs::write(&path, MANIFEST).unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .unwrap()
+            .set_modified(SystemTime::now() - Duration::from_secs(7200))
+            .unwrap();
+        let mut hits = 0;
+        let manifest = load_manifest(&path, ["official", "mirror"], |_| {
+            hits += 1;
+            ready(Err("offline".into()))
+        })
+        .await
+        .unwrap();
+        assert_eq!(hits, 2);
+        assert_eq!(manifest.latest.release, "1.0");
+        assert_eq!(std::fs::read_to_string(path).unwrap(), MANIFEST);
+    }
 }

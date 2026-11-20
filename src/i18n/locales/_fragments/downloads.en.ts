@@ -8,6 +8,7 @@ export default {
     noFinished: "No finished tasks",
   },
   status: {
+    cancelling: "Cancelling…",
     running: "Running",
     failed: "Failed",
     done: "Done",

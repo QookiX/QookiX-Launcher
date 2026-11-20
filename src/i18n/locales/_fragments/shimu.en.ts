@@ -37,9 +37,9 @@ export default {
     fillClientId: "Please enter the client_id",
     needClientId: "Enter the client_id / client_secret issued by Shimu Space first",
     notConfigured:
-      "This build has no Shimu Space credentials baked in, so sign-in is unavailable (credentials are injected at build time).",
+      "Shimu Space sign-in is unavailable until the QookiX authorization service is configured.",
     secretHint:
-      "client_secret is stored locally and used only by the backend to exchange tokens; it is never exposed to the page. Public builds should inject SHIMU_CLIENT_ID / SHIMU_CLIENT_SECRET.",
+      "Development builds can test a personal OAuth client. Public builds use the QookiX authorization service.",
     redirectHint: "Scheme callback URL to register with Shimu Space (click to copy):",
     redirectCopied: "Callback URL copied",
     score: "{n} points",

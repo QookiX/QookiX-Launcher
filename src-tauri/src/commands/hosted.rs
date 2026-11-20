@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use tauri::State;
 
 // 托管服务器面板复用实例文件管理器那套文件操作助手
-use crate::fsutil::{self, FsEntry};
+use crate::fsutil::{self, DirectoryListing, FileDocument, FileInfo};
 
 // Hosted game servers
 // ---------------------------------------------------------------------------
@@ -78,8 +78,8 @@ pub fn is_hosted_server_running(state: State<AppState>, id: String) -> Result<bo
 }
 
 #[tauri::command]
-pub fn read_hosted_server_log(state: State<AppState>, id: String) -> Result<Vec<String>, String> {
-    crate::servers::read_server_log(&state, &id)
+pub async fn read_hosted_server_log(state: State<'_, AppState>, id: String) -> Result<Vec<String>, String> {
+    crate::servers::read_server_log(&state, &id).await
 }
 
 #[tauri::command]
@@ -168,16 +168,16 @@ pub async fn list_hosted_server_dir(
     state: State<'_, AppState>,
     id: String,
     rel: String,
-) -> Result<Value, String> {
+) -> Result<DirectoryListing, String> {
     let dir = crate::servers::resolve_server_path(&state, &id, &rel)?;
     if !dir.is_dir() {
         return Err("不是一个目录".into());
     }
     let base = rel.clone();
-    let entries: Vec<FsEntry> = tokio::task::spawn_blocking(move || fsutil::list_dir(&dir, &base))
+    let entries = tokio::task::spawn_blocking(move || fsutil::list_dir(&dir, &base))
         .await
         .map_err(|e| e.to_string())??;
-    Ok(json!({ "rel": rel, "entries": entries }))
+    Ok(DirectoryListing { rel, entries })
 }
 
 #[tauri::command]
@@ -185,7 +185,7 @@ pub fn read_hosted_server_file(
     state: State<AppState>,
     id: String,
     rel: String,
-) -> Result<Value, String> {
+) -> Result<FileDocument, String> {
     let path = crate::servers::resolve_server_path(&state, &id, &rel)?;
     fsutil::read_text(&path, &rel)
 }
@@ -196,7 +196,7 @@ pub fn write_hosted_server_file(
     id: String,
     rel: String,
     content: String,
-) -> Result<Value, String> {
+) -> Result<FileInfo, String> {
     let path = crate::servers::resolve_server_path(&state, &id, &rel)?;
     fsutil::write_text(&path, &rel, content)
 }

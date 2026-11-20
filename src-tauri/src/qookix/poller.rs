@@ -33,24 +33,30 @@ pub fn start_background(app: tauri::AppHandle) {
         let mut last_rooms = 0u64;
         // 上一次推送的房间列表，内容没变就不再打扰前端
         let mut rooms_sig = String::new();
+        let mut observed_session = None;
         loop {
             tokio::time::sleep(Duration::from_secs(1)).await;
             let state = app.state::<AppState>();
-            if !state.qookix().logged_in() {
+            let active = {
+                let session = state.qookix();
+                session.logged_in().then_some(session.generation)
+            };
+            if active != observed_session {
                 last_presence = 0;
                 last_notify = 0;
                 last_friends = 0;
                 last_rooms = 0;
                 rooms_sig.clear();
-                continue;
+                observed_session = active;
             }
+            let Some(generation) = active else { continue };
             let now = crate::util::now_secs();
 
             if now.saturating_sub(last_presence) >= PRESENCE_EVERY {
                 last_presence = now;
                 // 顺带汇报「正在玩什么」：好友列表据此显示「在玩 XX 实例」
                 let body = current_activity(&state).unwrap_or_else(|| json!({}));
-                if let Err(e) = api::post(&state, "/api/v1/presence/heartbeat", body).await {
+                if let Err(e) = api::post_for_session(&state, generation, "/api/v1/presence/heartbeat", body).await {
                     if auth_lost(&app, &state, &e) {
                         continue;
                     }
@@ -61,6 +67,7 @@ pub fn start_background(app: tauri::AppHandle) {
                 last_notify = now;
                 match fetch_notifications(&state).await {
                     Ok(v) => {
+                        if api::generation(&state) != generation { continue; }
                         let has_friend = v
                             .get("friend_requests")
                             .and_then(|a| a.as_array())
@@ -85,6 +92,7 @@ pub fn start_background(app: tauri::AppHandle) {
                 last_friends = now;
                 match api::get(&state, "/api/v1/friends", Vec::new()).await {
                     Ok(v) => {
+                        if api::generation(&state) != generation { continue; }
                         let _ = app.emit("qookix://friends", v);
                     }
                     Err(e) => {
@@ -97,6 +105,7 @@ pub fn start_background(app: tauri::AppHandle) {
                 last_rooms = now;
                 match fetch_rooms(&state, "friends", 1, 20).await {
                     Ok(v) => {
+                        if api::generation(&state) != generation { continue; }
                         let sig = v.get("rooms").map(|r| r.to_string()).unwrap_or_default();
                         if sig != rooms_sig {
                             rooms_sig = sig;
@@ -130,10 +139,7 @@ fn current_activity(state: &AppState) -> Option<serde_json::Value> {
         return None;
     }
     // 正常同时只会跑一个实例，取第一个即可
-    let inst_id = {
-        let pids = state.game_pids.lock().unwrap_or_else(|e| e.into_inner());
-        pids.keys().next().cloned()?
-    };
+    let inst_id = state.jobs.game_pids().into_keys().next()?;
     let inst = crate::instances::get_instance(state, &inst_id).ok()?;
     Some(json!({
         "instance": inst.name,
@@ -155,6 +161,7 @@ async fn sleep_or_cancel(cancel: &Arc<AtomicBool>, secs: u64) -> bool {
 /// 房间分享 supervisor：每 40 秒对一次账，陶瓦那边不在了就关闭目录条目。
 pub fn start_share_task(
     app: tauri::AppHandle,
+    generation: uuid::Uuid,
     cancel: Arc<AtomicBool>,
     room_id: String,
     mut code: String,
@@ -171,18 +178,27 @@ pub fn start_share_task(
                 break;
             }
             let state = app.state::<AppState>();
-            if !state.qookix().logged_in() {
+            if api::generation(&state) != generation {
                 break;
             }
             let local = crate::terracotta::local_state(&state).await;
             let Ok(local) = local else {
                 // 陶瓦进程没了：目录条目留着只会显示成假房间
-                let _ =
-                    api::post(&state, "/api/v1/rooms/close", json!({ "room_id": &room_id })).await;
+                let _ = api::post_for_session(
+                    &state,
+                    generation,
+                    "/api/v1/rooms/close",
+                    json!({ "room_id": &room_id }),
+                )
+                .await;
                 break;
             };
             let host_ok = local.get("state").and_then(|v| v.as_str()) == Some("host-ok");
             let current = crate::terracotta::room_code_of(&local);
+            // 玩家列表随心跳一起续约：有人进出时后端会整表替换。
+            // has_profiles 区分"列表还没就绪"（不传）和"人都走了"（传空数组清空）。
+            let members = crate::terracotta::members_of(&local);
+            let members_ready = crate::terracotta::has_profiles(&local);
             match current {
                 Some(c) if host_ok => {
                     if c != code {
@@ -197,16 +213,17 @@ pub fn start_share_task(
                             body["pack_json"] = json!(&pack);
                             body["mods_count"] = json!(mods_count);
                         }
-                        let _ = api::post(&state, "/api/v1/rooms", body).await;
+                        if members_ready {
+                            body["members"] = json!(&members);
+                        }
+                        let _ = api::post_for_session(&state, generation, "/api/v1/rooms", body).await;
                     } else {
-                        // 不传 members：显式传空数组会清掉成员快照
-                        match api::post(
-                            &state,
-                            "/api/v1/rooms/heartbeat",
-                            json!({ "room_id": &room_id }),
-                        )
-                        .await
-                        {
+                        // 成员列表：拿到 profiles 才带（即使为空），否则保留后端旧快照
+                        let mut hb = json!({ "room_id": &room_id });
+                        if members_ready {
+                            hb["members"] = json!(&members);
+                        }
+                        match api::post_for_session(&state, generation, "/api/v1/rooms/heartbeat", hb).await {
                             Ok(_) => {}
                             // 被管理员下架 / 房间已关闭：继续心跳只会一直 409
                             Err(e)
@@ -226,9 +243,13 @@ pub fn start_share_task(
                     }
                 }
                 _ => {
-                    let _ =
-                        api::post(&state, "/api/v1/rooms/close", json!({ "room_id": &room_id }))
-                            .await;
+                    let _ = api::post_for_session(
+                        &state,
+                        generation,
+                        "/api/v1/rooms/close",
+                        json!({ "room_id": &room_id }),
+                    )
+                    .await;
                     break;
                 }
             }
@@ -238,10 +259,10 @@ pub fn start_share_task(
         let state = app.state::<AppState>();
         let cleared = {
             let mut s = state.qookix();
-            let same = s
+            let same = s.generation == generation && s
                 .share
                 .as_ref()
-                .map(|r| r.room_id == room_id)
+                .map(|r| r.room_id == room_id && Arc::ptr_eq(&r.cancel, &cancel))
                 .unwrap_or(false);
             if same {
                 s.share = None;
@@ -259,6 +280,7 @@ pub fn start_share_task(
 
 /// 应用退出时的兜底：关掉目录条目、结束陶瓦进程（顺手补上孤儿进程清理）。
 pub fn cleanup_on_exit(app: &tauri::AppHandle) {
+    let _ = crate::room_pack::qookix_pack_stop_serve();
     let state = app.state::<AppState>();
     let room_id = {
         let mut s = state.qookix();
@@ -277,11 +299,6 @@ pub fn cleanup_on_exit(app: &tauri::AppHandle) {
             )
             .await;
         }
-        let session = state.terracotta.lock().unwrap().take();
-        if let Some(s) = session {
-            let _ = std::process::Command::new("taskkill")
-                .args(["/PID", &s.pid.to_string(), "/F", "/T"])
-                .spawn();
-        }
+        let _ = crate::terracotta::stop_session(&state).await;
     });
 }

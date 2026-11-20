@@ -1,11 +1,12 @@
 <script setup lang="ts">
+import { motionScrollBehavior, prefersReducedMotion } from "../composables/useMotionPreference";
 /**
  * 云存档同步弹窗（GitHub 私有仓库）。
  * 三种状态：未连接（设备流程授权）→ 初始化仓库 → 快照管理
  * （上传 / 恢复 / 删除 / 自动同步开关 / 每世界保留数）。
  */
-import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { NButton, NModal, NSelect, NSpin, NSwitch, useDialog, useMessage } from "naive-ui";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { api } from "../api";
@@ -21,6 +22,8 @@ import {
   IconTrash,
   IconUploadCloud,
 } from "./icons";
+
+const { listen } = useTauriListenerScope();
 
 const props = defineProps<{
   show: boolean;
@@ -248,7 +251,11 @@ function toggleWorld(g: CloudWorldGroup, ev: MouseEvent) {
   targetName.value = g.worldName;
   const group = (ev.currentTarget as HTMLElement | null)?.closest(".cw-group");
   // 等展开动画跑完再滚，否则按展开前的高度算位置、滚不到位
-  window.setTimeout(() => group?.scrollIntoView({ block: "nearest", behavior: "smooth" }), 260);
+  const scroll = () => {
+    if (isExpanded(g.worldId)) group?.scrollIntoView({ block: "nearest", behavior: motionScrollBehavior() });
+  };
+  if (prefersReducedMotion.value) void nextTick(scroll);
+  else window.setTimeout(scroll, 260);
 }
 
 /** 浏览模式恢复：写入 targetInstance 的 targetName 目录，并重建与云端世界的映射 */

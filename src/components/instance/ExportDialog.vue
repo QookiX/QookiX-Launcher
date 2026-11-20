@@ -6,11 +6,13 @@
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
 import { NCollapse, NCollapseItem, NButton, NInput, NModal, NScrollbar, NCheckbox, useMessage } from "naive-ui";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../../composables/tauriListeners";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../../api";
 import type { ExportGroup, ExportItem, ExportPreview, IdentifiedMod } from "../../types";
 import { fmtCount } from "../../utils/format";
+
+const { listen } = useTauriListenerScope();
 
 const props = defineProps<{ instanceId: string; instanceName: string }>();
 const show = defineModel<boolean>("show", { required: true });

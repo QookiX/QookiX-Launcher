@@ -5,21 +5,8 @@
 //! 令牌，再调两个新 API 把它换成可直接用于 Yggdrasil API 的 Minecraft 令牌，
 //! 最终登记成一个普通的皮肤站（Yggdrasil）启动账号。
 //!
-//! 流程（与官方文档一致，见 manual.littleskin.cn/feature/oauth-for-yggdrasil）：
-//! 1. `yggdrasil_oauth_start` 生成带 `state` 的授权页地址，前端用系统浏览器打开；
-//! 2. 用户在浏览器里点「允许」，站点 302 回 `qookix://oauth/littleskin/callback?code=..&state=..`；
-//! 3. deep-link 插件把回调交给 JS，JS 调 `yggdrasil_oauth_complete(code, state)`：
-//!    后端用授权码换 OAuth access_token，再拉用户名下全部角色，把 token 临时记在
-//!    内存里，返回角色列表供前端挑选（单角色时前端直接进入下一步）；
-//! 4. 前端选定角色后调 `yggdrasil_oauth_add_account(profileId)`：后端用 OAuth
-//!    access_token 调 `/api/yggdrasil/authserver/oauth` 拿到 Minecraft 令牌
-//!    （响应格式与 Yggdrasil 登录 API 完全一致），登记为皮肤站账号，清掉临时 token。
-//!
-//! ⚠️ 桌面启动器没有「我方服务端」，`client_secret` 只能编译期注入或开发期填写，
-//! 不能被认为真的保密；与拾木空间同，secret 泄露的最坏后果是他人可代换 token。
-//!
-//! 仅在配置了 client_id（编译期 `LITTLESKIN_CLIENT_ID` 或设置页 dev 模式填写）
-//! 时才在界面露出 OAuth2 入口——「有专门设置的才有」。
+//! 正式构建使用 LittleSkin 的公开设备代码流。角色签发完成后登记为皮肤站账号。
+//! 开发构建可以使用个人测试客户端验证授权代码回调。
 
 use crate::models::Account;
 use crate::state::AppState;
@@ -39,15 +26,11 @@ pub const SCOPE: &str = "Yggdrasil.PlayerProfiles.Read Yggdrasil.MinecraftToken.
 /// `state` 有效期（10 分钟）：够用户登录 + 点「允许」
 const STATE_TTL: u64 = 600;
 
-/// 编译期注入的 client_id / client_secret
-pub const BUILTIN_CLIENT_ID: &str = match option_env!("LITTLESKIN_CLIENT_ID") {
-    Some(v) => v,
+const DEVICE_CLIENT_ID: &str = match option_env!("LITTLESKIN_DEVICE_CLIENT_ID") {
+    Some(value) => value,
     None => "",
 };
-pub const BUILTIN_CLIENT_SECRET: &str = match option_env!("LITTLESKIN_CLIENT_SECRET") {
-    Some(v) => v,
-    None => "",
-};
+const DEVICE_ORIGIN: &str = "https://open.littleskin.cn";
 
 /// 登录结果里带回前端的角色（与 yggdrasil.rs 的 YggProfile 同形）
 #[derive(Serialize, Clone)]
@@ -68,6 +51,7 @@ pub struct YggOauthLinks {
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct YggOauthCompleteResult {
+    pub authorization_id: String,
     pub profiles: Vec<YggOauthProfile>,
     pub server: String,
     pub server_name: String,
@@ -76,10 +60,42 @@ pub struct YggOauthCompleteResult {
 
 /// 进行中的 OAuth 流程状态：待校验的 state（落盘，扛冷启动回调）+ 换到的 OAuth
 /// access_token（仅内存，选角色前临时持有）。
-#[derive(Default)]
+#[derive(Clone, Default)]
 pub struct YggOauthPending {
-    pub pending_state: Option<(String, u64)>,
-    pub oauth_token: Option<String>,
+    pending_state: Option<(String, u64)>,
+    device_flow: bool,
+    device: Option<DeviceGrant>,
+    selection: Option<ProfileSelection>,
+}
+
+#[derive(Clone)]
+struct DeviceGrant {
+    code: String,
+    client_id: String,
+    interval: u64,
+    poll_after: u64,
+}
+
+#[derive(Clone)]
+struct ProfileSelection {
+    authorization_id: String,
+    oauth_token: String,
+    expires_at: u64,
+    profiles: Vec<YggOauthProfile>,
+}
+
+impl YggOauthPending {
+    fn check_callback(&self, authorization_id: &str) -> Result<(), String> {
+        matches!(&self.pending_state, Some((id, expires)) if id == authorization_id && now_secs() <= *expires)
+            .then_some(()).ok_or_else(|| "LittleSkin 授权已变化或过期，请重新发起授权".into())
+    }
+
+    fn profile_selection(&self, authorization_id: &str, profile_id: &str) -> Result<&ProfileSelection, String> {
+        self.selection.as_ref().filter(|selection| selection.authorization_id == authorization_id
+            && now_secs() <= selection.expires_at
+            && selection.profiles.iter().any(|p| p.id == profile_id))
+            .ok_or_else(|| "LittleSkin 授权或所选角色已变化，请重新选择".into())
+    }
 }
 
 fn pending_path(state: &AppState) -> PathBuf {
@@ -106,44 +122,34 @@ pub fn load_saved(root: &std::path::Path) -> YggOauthPending {
                     v.get("pending_expires").and_then(|e| e.as_u64()).unwrap_or(0),
                 )
             }),
-        oauth_token: None,
+        device_flow: v.get("device_flow").and_then(Value::as_bool).unwrap_or(false),
+        ..Default::default()
     }
 }
 
 fn save_pending(state: &AppState, pending: &YggOauthPending) -> Result<(), String> {
     if pending.pending_state.is_none() {
-        let _ = std::fs::remove_file(pending_path(state));
-        return Ok(());
+        return match std::fs::remove_file(pending_path(state)) {
+            Ok(()) => Ok(()),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(err) => Err(format!("清理 LittleSkin 授权状态失败: {err}")),
+        };
     }
     let payload = json!({
         "pending_state": pending.pending_state.as_ref().map(|(s, _)| s.clone()),
         "pending_expires": pending.pending_state.as_ref().map(|(_, e)| *e),
+        "device_flow": pending.device_flow,
     });
-    std::fs::write(pending_path(state), serde_json::to_string_pretty(&payload).map_err(|e| e.to_string())?)
+    crate::fsutil::atomic_write(&pending_path(state), &serde_json::to_vec_pretty(&payload).map_err(|e| e.to_string())?)
         .map_err(|e| format!("保存 LittleSkin 授权状态失败: {e}"))
 }
 
-pub fn effective_client_id(state: &AppState) -> String {
-    let user = state.settings().littleskin_client_id.trim().to_string();
-    if !user.is_empty() {
-        return user;
-    }
-    BUILTIN_CLIENT_ID.trim().to_string()
-}
-
-pub fn effective_client_secret(state: &AppState) -> String {
-    let user = state
-        .settings
-        .read()
-        .unwrap()
-        .littleskin_client_secret
-        .clone()
-        .unwrap_or_default();
-    let user = user.trim().to_string();
-    if !user.is_empty() {
-        return user;
-    }
-    BUILTIN_CLIENT_SECRET.trim().to_string()
+fn development_credentials(state: &AppState) -> Option<(String, String)> {
+    if !cfg!(debug_assertions) { return None; }
+    let settings = state.settings();
+    let id = settings.littleskin_client_id.trim();
+    let secret = settings.littleskin_client_secret.as_deref()?.trim();
+    (!id.is_empty() && !secret.is_empty()).then(|| (id.to_owned(), secret.to_owned()))
 }
 
 fn now_secs() -> u64 {
@@ -172,23 +178,19 @@ fn oauth_error(v: &Value, fallback: &str) -> String {
 /// 当前接入配置（登录窗口据此决定是否露出 OAuth2 入口）
 #[tauri::command]
 pub fn yggdrasil_oauth_config(app_state: tauri::State<'_, AppState>) -> Value {
-    let client_id = effective_client_id(&app_state);
+    let dev = development_credentials(&app_state);
+    let client_id = if cfg!(debug_assertions) {
+        app_state.settings().littleskin_client_id.clone()
+    } else {
+        DEVICE_CLIENT_ID.to_owned()
+    };
     json!({
-        "host": HOST,
-        "apiRoot": API_ROOT,
-        "authorizeUrl": format!("{HOST}/oauth/authorize"),
-        "redirectUri": REDIRECT_URI,
-        "scope": SCOPE,
-        "clientId": client_id,
-        "configured": !client_id.is_empty(),
-        "secretConfigured": !effective_client_secret(&app_state).is_empty(),
-        "devMode": cfg!(debug_assertions),
+        "host": HOST, "apiRoot": API_ROOT, "redirectUri": REDIRECT_URI, "scope": SCOPE,
+        "clientId": client_id, "configured": !DEVICE_CLIENT_ID.trim().is_empty() || dev.is_some(),
+        "secretConfigured": dev.is_some(), "devMode": cfg!(debug_assertions),
     })
 }
 
-/// 写入 client_id / client_secret（未提供 secret 时保持原值）
-///
-/// ⚠️ **仅开发构建可用**：正式包里凭证应由打包时注入。
 #[tauri::command]
 pub fn yggdrasil_set_credentials(
     app_state: tauri::State<'_, AppState>,
@@ -196,52 +198,147 @@ pub fn yggdrasil_set_credentials(
     client_secret: Option<String>,
 ) -> Result<Value, String> {
     if !cfg!(debug_assertions) {
-        return Err(
-            "正式构建不允许在客户端设置接入凭证，请在打包时注入 \
-             LITTLESKIN_CLIENT_ID / LITTLESKIN_CLIENT_SECRET"
-                .into(),
-        );
+        return Err("正式构建通过 LittleSkin 设备代码授权".into());
     }
-    {
-        let mut s = app_state.settings_mut();
-        s.littleskin_client_id = client_id.trim().to_string();
-        if let Some(sec) = client_secret {
-            let sec = sec.trim().to_string();
-            if !sec.is_empty() {
-                s.littleskin_client_secret = Some(sec);
-            }
-        }
+    let mut patch = json!({ "littleskin_client_id": client_id });
+    if let Some(secret) = client_secret.filter(|value| !value.trim().is_empty()) {
+        patch["littleskin_client_secret"] = Value::String(secret);
     }
-    crate::settings::persist(&app_state)?;
+    crate::settings::update_settings(&app_state, patch)?;
     Ok(yggdrasil_oauth_config(app_state))
 }
 
-/// 第一步：生成授权页地址（前端用系统浏览器打开）
 #[tauri::command]
-pub fn yggdrasil_oauth_start(app_state: tauri::State<'_, AppState>) -> Result<Value, String> {
-    let client_id = effective_client_id(&app_state);
-    if client_id.is_empty() {
-        return Err(if cfg!(debug_assertions) {
-            "尚未配置 LittleSkin client_id：请在设置里填写，或用 LITTLESKIN_CLIENT_ID 重新构建".to_string()
-        } else {
-            "当前版本未内置 LittleSkin 接入凭证，无法完成 OAuth 登录".to_string()
-        });
+pub async fn yggdrasil_oauth_start(app_state: tauri::State<'_, AppState>) -> Result<Value, String> {
+    let public_id = DEVICE_CLIENT_ID.trim();
+    let dev = development_credentials(&app_state);
+    let device_flow = !public_id.is_empty();
+    if !device_flow && dev.is_none() {
+        return Err("LittleSkin 设备授权尚未配置".into());
     }
-    let st = uuid::Uuid::new_v4().simple().to_string();
+    let id = uuid::Uuid::new_v4().simple().to_string();
     {
         let mut pending = app_state.ygg_oauth.lock().unwrap();
-        pending.pending_state = Some((st.clone(), now_secs() + STATE_TTL));
-        pending.oauth_token = None;
-        save_pending(&app_state, &pending)?;
+        let next = YggOauthPending {
+            pending_state: Some((id.clone(), now_secs() + STATE_TTL)),
+            device_flow,
+            ..Default::default()
+        };
+        save_pending(&app_state, &next)?;
+        *pending = next;
     }
-    let url = format!(
-        "{HOST}/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
-        utf8_percent_encode(&client_id, NON_ALPHANUMERIC),
-        utf8_percent_encode(REDIRECT_URI, NON_ALPHANUMERIC),
-        utf8_percent_encode(SCOPE, NON_ALPHANUMERIC),
-        st
-    );
-    Ok(json!({ "url": url, "state": st, "redirectUri": REDIRECT_URI }))
+    if let Some((client_id, _)) = dev.filter(|_| !device_flow) {
+        let url = format!(
+            "{HOST}/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope={}&state={id}",
+            utf8_percent_encode(&client_id, NON_ALPHANUMERIC),
+            utf8_percent_encode(REDIRECT_URI, NON_ALPHANUMERIC),
+            utf8_percent_encode(SCOPE, NON_ALPHANUMERIC),
+        );
+        return Ok(json!({ "mode": "callback", "url": url, "state": id, "redirectUri": REDIRECT_URI }));
+    }
+
+    let response = crate::settings::oauth_http_client(&app_state).post(format!("{DEVICE_ORIGIN}/oauth/device_code"))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .form(&[("client_id", public_id), ("scope", SCOPE)])
+        .send().await.map_err(|err| format!("获取 LittleSkin 授权码失败: {err}"))?;
+    let status = response.status();
+    let data = oauth_json(response).await?;
+    if !status.is_success() {
+        return Err(oauth_error(&data, "LittleSkin 拒绝申请设备代码"));
+    }
+    let code = data.get("device_code").and_then(Value::as_str).filter(|value| !value.is_empty())
+        .ok_or("LittleSkin 未返回设备代码")?;
+    let user_code = data.get("user_code").and_then(Value::as_str).filter(|value| !value.is_empty())
+        .ok_or("LittleSkin 未返回用户授权码")?;
+    let address = data.get("verification_uri_complete").or_else(|| data.get("verification_uri"))
+        .and_then(Value::as_str).ok_or("LittleSkin 未返回验证地址")?;
+    let mut url = reqwest::Url::parse(address).map_err(|_| "LittleSkin 验证地址无效")?;
+    if url.scheme() != "https" || url.host_str() != Some("open.littleskin.cn") || url.path() != "/oauth/link"
+        || !url.username().is_empty() || url.password().is_some()
+    {
+        return Err("LittleSkin 验证地址无效".into());
+    }
+    if !url.query_pairs().any(|(key, _)| key == "user_code") {
+        url.query_pairs_mut().append_pair("user_code", user_code);
+    }
+    let interval = data.get("interval").and_then(Value::as_u64).unwrap_or(5).clamp(1, 60);
+    let expires_in = data.get("expires_in").and_then(Value::as_u64).unwrap_or(300).clamp(1, STATE_TTL);
+    let mut pending = app_state.ygg_oauth.lock().unwrap();
+    pending.check_callback(&id)?;
+    let mut next = pending.clone();
+    next.pending_state = Some((id.clone(), now_secs() + expires_in));
+    next.device = Some(DeviceGrant { code: code.to_owned(), client_id: public_id.to_owned(), interval, poll_after: now_secs() + interval });
+    save_pending(&app_state, &next)?;
+    *pending = next;
+    Ok(json!({ "mode": "device", "url": url.as_str(), "state": id, "userCode": user_code, "interval": interval, "expiresIn": expires_in }))
+}
+
+async fn oauth_json(response: reqwest::Response) -> Result<Value, String> {
+    let data = crate::util::read_response_limited(response, 128 * 1024).await?;
+    serde_json::from_slice(&data).map_err(|_| "LittleSkin 返回了无效的授权数据".into())
+}
+
+#[tauri::command]
+pub async fn yggdrasil_oauth_poll(app_state: tauri::State<'_, AppState>, state: String) -> Result<Value, String> {
+    let lock = app_state.jobs.download_lock(app_state.root.join("littleskin-device-auth"));
+    let Ok(_guard) = lock.try_lock() else { return Ok(json!({ "status": "pending" })); };
+    let (code, client_id) = {
+        let mut pending = app_state.ygg_oauth.lock().unwrap();
+        pending.check_callback(&state)?;
+        let device = pending.device.as_mut().ok_or("LittleSkin 设备授权已失效，请重新开始")?;
+        if now_secs() < device.poll_after {
+            return Ok(json!({ "status": "pending" }));
+        }
+        device.poll_after = now_secs() + device.interval;
+        (device.code.clone(), device.client_id.clone())
+    };
+    let response = crate::settings::oauth_http_client(&app_state).post(format!("{DEVICE_ORIGIN}/oauth/token"))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .form(&[
+            ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+            ("client_id", client_id.as_str()), ("device_code", code.as_str()),
+        ]).send().await.map_err(|err| format!("查询设备授权失败: {err}"))?;
+    let status = response.status();
+    let data = oauth_json(response).await?;
+    app_state.ygg_oauth.lock().unwrap().check_callback(&state)?;
+    match data.get("error").and_then(Value::as_str) {
+        Some("authorization_pending") => return Ok(json!({ "status": "pending" })),
+        Some("slow_down") => {
+            let mut pending = app_state.ygg_oauth.lock().unwrap();
+            pending.check_callback(&state)?;
+            if let Some(device) = &mut pending.device {
+                device.interval += 5;
+                device.poll_after = now_secs() + device.interval;
+            }
+            return Ok(json!({ "status": "pending" }));
+        }
+        Some(_) => return Err(oauth_error(&data, "LittleSkin 设备授权失败")),
+        None => {}
+    }
+    if !status.is_success() {
+        return Err(oauth_error(&data, "LittleSkin 设备授权失败"));
+    }
+    let token = oauth_access(&data)?;
+    let result = complete_with_token(&app_state, state, token).await?;
+    Ok(json!({ "status": "ok", "result": result }))
+}
+
+#[tauri::command]
+pub fn yggdrasil_oauth_cancel(app_state: tauri::State<'_, AppState>, state: String) -> Result<(), String> {
+    let mut pending = app_state.ygg_oauth.lock().unwrap();
+    let matches = pending.pending_state.as_ref().is_some_and(|(id, _)| id == &state)
+        || pending.selection.as_ref().is_some_and(|flow| flow.authorization_id == state);
+    if matches {
+        let cleared = YggOauthPending::default();
+        save_pending(&app_state, &cleared)?;
+        *pending = cleared;
+    }
+    Ok(())
+}
+
+fn oauth_access(data: &Value) -> Result<String, String> {
+    data.get("access_token").and_then(Value::as_str).filter(|value| !value.is_empty())
+        .map(str::to_owned).ok_or_else(|| "LittleSkin 未返回访问令牌".into())
 }
 
 /// 第三步：用授权码换 OAuth access_token，并拉取用户名下全部角色。
@@ -259,49 +356,30 @@ pub async fn yggdrasil_oauth_complete(
     // state 必须与发起时一致（防 CSRF / 回调来源校验）
     {
         let pending = app_state.ygg_oauth.lock().unwrap();
-        let ok = matches!(&pending.pending_state, Some((s, exp)) if s == &state && now_secs() <= *exp);
-        if !ok {
-            return Err("授权校验失败（state 不匹配或已过期），请重新发起授权".into());
+        pending.check_callback(&state)?;
+        if pending.device_flow {
+            return Err("LittleSkin 设备授权无需回调地址".into());
         }
     }
-    let client_id = effective_client_id(&app_state);
-    let client_secret = effective_client_secret(&app_state);
-    if client_id.is_empty() {
-        return Err("尚未配置 LittleSkin client_id".into());
-    }
-    if client_secret.is_empty() {
-        return Err("尚未配置 LittleSkin client_secret（换 token 必需，只在后端使用）".into());
-    }
-
-    // ---- 兑换 OAuth access_token ----
-    let resp = app_state
-        .client
-        .post(format!("{HOST}/oauth/token"))
+    let (client_id, client_secret) = development_credentials(&app_state).ok_or("此授权需要重新发起")?;
+    let response = crate::settings::oauth_http_client(&app_state).post(format!("{HOST}/oauth/token"))
         .form(&[
-            ("grant_type", "authorization_code"),
-            ("code", code.as_str()),
-            ("client_id", client_id.as_str()),
-            ("client_secret", client_secret.as_str()),
+            ("grant_type", "authorization_code"), ("code", code.as_str()),
+            ("client_id", client_id.as_str()), ("client_secret", client_secret.as_str()),
             ("redirect_uri", REDIRECT_URI),
-        ])
-        .send()
-        .await
-        .map_err(|e| format!("换取 access_token 失败: {e}"))?;
-    let status = resp.status().as_u16();
-    let text = resp.text().await.map_err(|e| e.to_string())?;
-    let v: Value = serde_json::from_str(&text).map_err(|_| {
-        format!("token 接口返回非 JSON（HTTP {status}）：{}", text.chars().take(120).collect::<String>())
-    })?;
-    if status != 200 {
-        return Err(oauth_error(&v, &format!("换取 access_token 失败（HTTP {status}）")));
+        ]).send().await.map_err(|err| format!("换取访问令牌失败: {err}"))?;
+    let status = response.status();
+    let data = oauth_json(response).await?;
+    if !status.is_success() {
+        return Err(oauth_error(&data, "换取 LittleSkin 访问令牌失败"));
     }
-    let oauth_token = v
-        .get("access_token")
-        .and_then(|t| t.as_str())
-        .filter(|t| !t.is_empty())
-        .ok_or("token 接口未返回 access_token")?
-        .to_string();
+    complete_with_token(&app_state, state, oauth_access(&data)?).await
+}
 
+async fn complete_with_token(app_state: &AppState, state: String, oauth_token: String)
+    -> Result<YggOauthCompleteResult, String>
+{
+    app_state.ygg_oauth.lock().unwrap().check_callback(&state)?;
     // ---- 拉取用户名下全部角色档案 ----
     let resp = app_state
         .client
@@ -338,12 +416,22 @@ pub async fn yggdrasil_oauth_complete(
     // 临时持有 OAuth token，清掉 pending_state（回调已用完）
     {
         let mut pending = app_state.ygg_oauth.lock().unwrap();
-        pending.pending_state = None;
-        pending.oauth_token = Some(oauth_token);
-        save_pending(&app_state, &pending)?;
+        pending.check_callback(&state)?;
+        let next = YggOauthPending {
+            selection: Some(ProfileSelection {
+                authorization_id: state.clone(),
+                oauth_token,
+                expires_at: now_secs() + STATE_TTL,
+                profiles: profiles.clone(),
+            }),
+            ..Default::default()
+        };
+        save_pending(&app_state, &next)?;
+        *pending = next;
     }
 
     Ok(YggOauthCompleteResult {
+        authorization_id: state,
         profiles,
         server: API_ROOT.to_string(),
         server_name: "LittleSkin".to_string(),
@@ -359,21 +447,15 @@ pub async fn yggdrasil_oauth_complete(
 pub async fn yggdrasil_oauth_add_account(
     app_state: tauri::State<'_, AppState>,
     profile_id: String,
+    authorization_id: String,
 ) -> Result<Account, String> {
     let profile_id = profile_id.trim().to_string();
     if profile_id.is_empty() {
         return Err("缺少角色信息".into());
     }
     let oauth_token = {
-        let mut pending = app_state.ygg_oauth.lock().unwrap();
-        let token = pending
-            .oauth_token
-            .clone()
-            .filter(|t| !t.is_empty())
-            .ok_or_else(|| "授权会话已失效，请重新发起 OAuth 登录".to_string())?;
-        // 先清掉，失败也不留半截会话
-        pending.oauth_token = None;
-        token
+        let pending = app_state.ygg_oauth.lock().unwrap();
+        pending.profile_selection(&authorization_id, &profile_id)?.oauth_token.clone()
     };
 
     // 调 LittleSkin 专属 API：用 OAuth token 换 Minecraft 令牌
@@ -425,6 +507,9 @@ pub async fn yggdrasil_oauth_add_account(
     if pname.is_empty() {
         return Err("服务端未返回角色名".into());
     }
+    if !pid.eq_ignore_ascii_case(&profile_id) {
+        return Err("LittleSkin 返回的角色与所选角色不一致".into());
+    }
 
     let account = Account::Yggdrasil {
         uuid: pid,
@@ -435,9 +520,34 @@ pub async fn yggdrasil_oauth_add_account(
         server: API_ROOT.to_string(),
         server_name: "LittleSkin".to_string(),
     };
-    let mut list = crate::accounts::load_accounts(app_state.inner());
-    list.retain(|a| a.uuid() != account.uuid());
-    list.push(account.clone());
-    crate::accounts::save_accounts(app_state.inner(), &list)?;
+    let mut pending = app_state.ygg_oauth.lock().unwrap();
+    pending.profile_selection(&authorization_id, &profile_id)?;
+    crate::accounts::save_account(app_state.inner(), &account)?;
+    pending.selection = None;
     Ok(account)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn newer_authorization_invalidates_old_callback_and_profile_selection() {
+        let expires = now_secs() + 60;
+        let pending = YggOauthPending { pending_state: Some(("new".into(), expires)), ..Default::default() };
+        assert!(pending.check_callback("old").is_err());
+        assert!(pending.check_callback("new").is_ok());
+        let ready = YggOauthPending {
+            selection: Some(ProfileSelection {
+                authorization_id: "new".into(), oauth_token: "test-token".into(), expires_at: expires,
+                profiles: vec![YggOauthProfile { id: "profile".into(), name: "Test".into() }],
+            }),
+            ..Default::default()
+        };
+        assert!(ready.check_callback("new").is_err());
+        assert!(ready.profile_selection("old", "profile").is_err());
+        assert!(ready.profile_selection("new", "unlisted").is_err());
+        assert!(ready.profile_selection("new", "profile").is_ok());
+        assert!(pending.profile_selection("new", "profile").is_err());
+    }
 }

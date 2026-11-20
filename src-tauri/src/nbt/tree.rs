@@ -77,17 +77,19 @@ pub fn set_node(
     path: Vec<String>,
     value: &Json,
     declared_type: &str,
-) -> Result<(), String> {
-    let mut root = level::read_level(level_path)?;
-    level::on_world_data(&mut root, |data| set_node_in(data, &path, value, declared_type))?;
-    level::write_level(level_path, &root)
+) -> Result<String, String> {
+    let (backup, _) = super::edit_level(level_path, |root| {
+        level::on_world_data(root, |data| set_node_in(data, &path, value, declared_type))
+    })?;
+    Ok(backup)
 }
 
 /// 删除 level.dat 里某个节点
-pub fn delete_node(level_path: &Path, path: Vec<String>) -> Result<(), String> {
-    let mut root = level::read_level(level_path)?;
-    level::on_world_data(&mut root, |data| delete_node_in(data, &path))?;
-    level::write_level(level_path, &root)
+pub fn delete_node(level_path: &Path, path: Vec<String>) -> Result<String, String> {
+    let (backup, _) = super::edit_level(level_path, |root| {
+        level::on_world_data(root, |data| delete_node_in(data, &path))
+    })?;
+    Ok(backup)
 }
 
 #[cfg(test)]
@@ -96,6 +98,21 @@ mod tests {
     use crate::nbt::level::get_int;
     use serde_json::json;
     use std::collections::HashMap;
+
+    #[test]
+    fn editing_long_array_preserves_tag_and_full_precision() {
+        let mut world = Value::Compound(HashMap::from([(
+            "ids".into(),
+            Value::LongArray(fastnbt::LongArray::new(vec![0])),
+        )]));
+        let path = ["ids".into()];
+        set_node_in(&mut world, &path, &json!(["9223372036854775807"]), "list").unwrap();
+        assert_eq!(
+            resolve(&world, &path),
+            Some(&Value::LongArray(fastnbt::LongArray::new(vec![i64::MAX])))
+        );
+        assert!(set_node_in(&mut world, &path, &json!(["9223372036854775808"]), "long_array").is_err());
+    }
 
     fn sample_path(dir: &str) -> std::path::PathBuf {
         let p = std::env::temp_dir()

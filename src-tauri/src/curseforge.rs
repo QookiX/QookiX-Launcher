@@ -1,7 +1,6 @@
 use crate::models::{InstalledContent, Instance};
 use crate::state::AppState;
 use serde_json::{json, Value};
-use tauri::Emitter;
 
 const GAME_ID: u32 = 432; // Minecraft
 
@@ -604,6 +603,18 @@ pub async fn install_file(
     file_id: &str,
     kind: &str,
 ) -> Result<Value, String> {
+    install_file_replacing(app, state, instance, mod_id, file_id, kind, None).await
+}
+
+pub(crate) async fn install_file_replacing(
+    app: tauri::AppHandle,
+    state: &AppState,
+    instance: &Instance,
+    mod_id: &str,
+    file_id: &str,
+    kind: &str,
+    replacement: Option<crate::content_replacement::Replacement>,
+) -> Result<Value, String> {
     let body = get(state, &format!("/mods/{mod_id}/files/{file_id}"), &[]).await?;
     let file = body.get("data").ok_or("未找到该文件")?;
     let filename = file
@@ -613,7 +624,7 @@ pub async fn install_file(
         .to_string();
     // `fileName` comes from the CurseForge API (untrusted); it is joined onto
     // the instance content folder, so require a plain file name.
-    if !crate::util::is_safe_filename(&filename) {
+    if !crate::fsutil::is_safe_filename(&filename) {
         return Err(format!("文件名为非法路径: {filename}"));
     }
     let url = file_download_url(file);
@@ -629,42 +640,26 @@ pub async fn install_file(
         .join(&instance.id)
         .join(kind_folder(kind))
         .join(&filename);
+    let dest = replacement.as_ref().map_or(dest, |plan| plan.download_path());
+    let sha1 = file.get("hashes").and_then(Value::as_array).and_then(|hashes| {
+        let hash = hashes.iter().find(|item| item.get("algo").and_then(Value::as_u64) == Some(1))?;
+        hash.get("value").and_then(Value::as_str).map(str::to_owned)
+    });
     let items = vec![crate::download::DownloadItem {
         url,
         dest: dest.clone(),
-        sha1: None,
+        sha1,
         sha512: None,
         size: if size > 0 { Some(size) } else { None },
         label: filename.clone(),
     }];
     let task_id = state.next_task_id();
     let source = format!("CurseForge：{project_name}");
-    crate::install::emit_progress(
-        &app,
-        task_id,
-        "content",
-        &format!("正在下载 {filename}…"),
-        0,
-        1,
-        instance,
-        &source,
-    );
-    if let Err(e) = crate::download::download_many(app.clone(), state, task_id, "content", items).await {
-        let _ = app.emit(
-            "install://progress",
-            serde_json::json!({
-                "taskId": task_id,
-                "stage": "done",
-                "message": format!("安装失败：{e}"),
-                "done": 1,
-                "total": 1,
-                "instanceId": &instance.id,
-                "instanceName": &instance.name,
-                "source": &source,
-                "ok": false,
-            }),
-        );
-        return Err(e);
+    let mut task = crate::install::TaskCtx::new(&app, instance, &source, task_id);
+    task.emit("content", &format!("正在下载 {filename}…"), 0, 1);
+    if let Err(error) = crate::download::download_many(app.clone(), state, task_id, "content", items).await {
+        task.finish_err(&format!("安装失败：{error}"));
+        return Err(error);
     }
 
     let slug = get(state, &format!("/mods/{mod_id}"), &[])
@@ -697,14 +692,16 @@ pub async fn install_file(
         icon: cf_mod_logo(state, mod_id).await,
         enabled: true,
     };
-    let jar_path = state
-        .instances_dir()
-        .join(&instance.id)
-        .join(crate::modrinth::kind_folder(&kind))
-        .join(&filename);
-    crate::util::fill_content_from_jar(&mut record, &jar_path);
-    crate::instances::add_content(state, &instance.id, kind, record)?;
-    crate::install::emit_progress(&app, task_id, "done", "安装完成", 1, 1, instance, &format!("CurseForge：{project_name}"));
+    crate::content_metadata::fill_content_from_jar(&mut record, &dest);
+    let committed = match replacement {
+        Some(plan) => plan.commit(state, instance, kind, record),
+        None => crate::instances::add_content(state, &instance.id, kind, record),
+    };
+    if let Err(error) = committed {
+        task.finish_err(&format!("安装失败：{error}"));
+        return Err(error);
+    }
+    task.finish_ok("安装完成");
     Ok(json!({ "ok": true, "filename": filename }))
 }
 
@@ -726,25 +723,16 @@ pub async fn install_modpack(
     file_id: &str,
 ) -> Result<Value, String> {
     let task_id = state.next_task_id();
-    let app_err = app.clone();
-    crate::util::log_line(&format!("[cf_modpack] 开始安装 modpack={modpack_id} file={file_id} task={task_id}"));
-    let result = install_modpack_inner(app, state, task_id, modpack_id, file_id).await;
-    crate::util::log_line(&format!("[cf_modpack] 结束 task={task_id}，结果: {:?}", result.as_ref().map(|_| "Ok")));
-    if let Err(ref e) = result {
-        let _ = app_err.emit(
-            "install://progress",
-            serde_json::json!({
-                "taskId": task_id,
-                "stage": "done",
-                "message": format!("安装失败：{e}"),
-                "done": 0,
-                "total": 0,
-                "instanceId": "",
-                "instanceName": "",
-                "source": "整合包安装",
-                "ok": false,
-            }),
-        );
+    let lease = state.jobs.register_install(task_id, &format!("@pack:{task_id}"), None)?;
+    let placeholder = Instance::default();
+    let mut task = crate::install::TaskCtx::new(&app, &placeholder, "整合包：CurseForge", task_id);
+    task.emit("prepare", "正在读取整合包信息…", 0, 1);
+    let result = async {
+        install_modpack_inner(app.clone(), state, &lease, modpack_id, file_id).await
+    }.await;
+    match &result {
+        Ok(_) => task.finish_ok("整合包安装完成"),
+        Err(err) => task.finish_err(&format!("安装失败：{err}")),
     }
     result
 }
@@ -752,11 +740,13 @@ pub async fn install_modpack(
 async fn install_modpack_inner(
     app: tauri::AppHandle,
     state: &AppState,
-    task_id: u64,
+    lease: &crate::runtime_jobs::InstallLease,
     modpack_id: &str,
     file_id: &str,
 ) -> Result<Value, String> {
-    let body = get(state, &format!("/mods/{modpack_id}/files/{file_id}"), &[]).await?;
+    let task_id = lease.task_id;
+    let endpoint = format!("/mods/{modpack_id}/files/{file_id}");
+    let body = lease.until_cancelled(get(state, &endpoint, &[])).await??;
     let file = body.get("data").ok_or("未找到该文件")?;
     let filename = file
         .get("fileName")
@@ -765,12 +755,9 @@ async fn install_modpack_inner(
         .to_string();
     let url = file_download_url(file);
     let size = file.get("fileLength").and_then(|v| v.as_u64()).unwrap_or(0);
-    crate::util::log_line(&format!("[cf_modpack] 文件元数据 OK: {filename} url={url} size={size}"));
+    crate::util::log_line(&format!("[cf_modpack] 文件元数据 OK: {filename} size={size}"));
 
-    let dl_dir = state.root.join("runtimes");
-    std::fs::create_dir_all(&dl_dir).map_err(|e| e.to_string())?;
-    let pack_path = dl_dir.join(&filename);
-    crate::util::fs_best_effort("remove_file", &pack_path, std::fs::remove_file(&pack_path));
+    let (_stage, pack_path) = crate::modpack::stage_pack_download(state, &filename)?;
     let items = vec![crate::download::DownloadItem {
         url,
         dest: pack_path.clone(),
@@ -794,12 +781,12 @@ async fn install_modpack_inner(
         &placeholder,
         &source,
     );
-    crate::download::download_many(app.clone(), state, task_id, "modpack", vec![items[0].clone()]).await?;
+    crate::download::download_many(app.clone(), state, task_id, "modpack", items).await?;
     crate::util::log_line("[cf_modpack] 整包 zip 下载完成");
 
     // ---- 公共骨架第一步：建实例 + 图标 ----
-    let icon_fallback_url = crate::curseforge::project_info(state, modpack_id)
-        .await
+    let icon_fallback_url = lease.until_cancelled(crate::curseforge::project_info(state, modpack_id))
+        .await?
         .ok()
         .and_then(|info| info.get("icon_url").and_then(|v| v.as_str()).map(|s| s.to_string()));
     let (instance, source) = crate::modpack::prepare_pack(
@@ -808,11 +795,12 @@ async fn install_modpack_inner(
             pack_path: pack_path.clone(),
             icon_fallback_url,
         },
+        Some(lease),
     )
     .await?;
 
     // ---- 数据源差异部分：解析 CurseForge manifest，收集下载项与内容记录 ----
-    let manifest_bytes = crate::util::read_zip_entry(&pack_path, "manifest.json")
+    let manifest_bytes = crate::archive::read_zip_entry(&pack_path, "manifest.json")
         .map_err(|e| format!("整合包缺少 manifest.json: {e}"))?;
     let manifest: Value = serde_json::from_slice(&manifest_bytes).map_err(|e| e.to_string())?;
     let files = manifest.get("files").and_then(|f| f.as_array()).cloned().unwrap_or_default();
@@ -833,7 +821,8 @@ async fn install_modpack_inner(
             &instance,
             &source,
         );
-        let fbody = get(state, &format!("/mods/{pid}/files/{fid}"), &[]).await?;
+        let endpoint = format!("/mods/{pid}/files/{fid}");
+        let fbody = lease.until_cancelled(get(state, &endpoint, &[])).await??;
         if let Some(fdata) = fbody.get("data") {
             metas.push((*pid, *fid, fdata.clone()));
         }
@@ -849,8 +838,8 @@ async fn install_modpack_inner(
         state,
         &instance,
         &pack_path,
+        lease,
         crate::modpack::PackContentsSpec {
-            task_id,
             source: source.clone(),
             download_label: format!("正在下载 {} 个模组…", dl_items.len()),
             downloads: dl_items,
@@ -863,7 +852,6 @@ async fn install_modpack_inner(
     .await?;
     crate::util::log_line(&format!("[cf_modpack] 整合包安装完成，实例 {}", instance.id));
 
-    crate::install::emit_progress(&app, task_id, "done", "整合包安装完成", 1, 1, &instance, &source);
     Ok(json!({ "ok": true, "mods": mods_count, "instanceId": instance.id }))
 }
 

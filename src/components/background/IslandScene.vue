@@ -20,6 +20,7 @@
  *   - WebGL 创建失败时静默隐藏 canvas，底层渐变背景自动顶上。
  */
 import { onBeforeUnmount, onMounted, ref, watch } from "vue";
+import { prefersReducedMotion } from "../../composables/useMotionPreference";
 import * as THREE from "three";
 import { resolveQuality, type BgQualityProfile } from "./quality";
 
@@ -937,14 +938,22 @@ function init() {
   window.addEventListener("pointermove", onPointerMove, { passive: true });
   window.addEventListener("resize", resize);
 
-  const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+  syncMotion(prefersReducedMotion.value);
+}
+
+function syncMotion(reduced: boolean) {
+  if (!renderer || !scene || !camera) return;
   if (reduced) {
     // 减少动态：给一帧静止画面，不启动动画循环
+    cancelAnimationFrame(raf);
+    raf = 0;
+    active = false;
     step(12);
     renderOnce();
     return;
   }
 
+  if (active) return;
   active = true;
   startedAt = performance.now();
   lastFrameAt = 0;
@@ -986,6 +995,7 @@ function destroy() {
 
 onMounted(init);
 onBeforeUnmount(destroy);
+watch(prefersReducedMotion, syncMotion);
 
 watch(
   () => props.dark,
@@ -1000,7 +1010,10 @@ watch(
 
 watch(
   () => props.accent,
-  () => applyPalette(props.dark),
+  () => {
+    applyPalette(props.dark);
+    if (!active) renderOnce();
+  },
 );
 </script>
 

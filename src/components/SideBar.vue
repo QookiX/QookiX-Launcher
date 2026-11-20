@@ -4,6 +4,7 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import AppIcon from "./AppIcon.vue";
 import { useOnboarding } from "../composables/useOnboarding";
 import { useInstancesStore } from "../stores/instances";
+import { useTasksStore } from "../stores/tasks";
 import { useSettingsStore } from "../stores/settings";
 import { useAccountsStore } from "../stores/accounts";
 import { usePinsStore } from "../stores/pins";
@@ -24,6 +25,7 @@ import { loaderBadge } from "../utils/format";
 
 const route = useRoute();
 const instances = useInstancesStore();
+const tasks = useTasksStore();
 const settingsStore = useSettingsStore();
 const accounts = useAccountsStore();
 const pins = usePinsStore();
@@ -167,7 +169,7 @@ function isActive(n: { to: string }) {
 }
 
 function unpin(id: string) {
-  pins.remove(id);
+  void pins.remove(id).catch((error) => message.error(String(error)));
 }
 </script>
 
@@ -226,7 +228,7 @@ function unpin(id: string) {
 
     <button
       class="split-main"
-      :disabled="!!instances.launchingId"
+      :disabled="tasks.gamePreparing"
       :title="selected ? `${selected.name} · ${selected.mc_version}` : t('home.message.noInstance')"
       @click="launchSelected"
     >
@@ -235,7 +237,7 @@ function unpin(id: string) {
         <IconGrid v-else />
       </span>
       <span class="split-text">
-        <span class="split-title">{{ instances.launchingId ? t("home.resident.launching") : t("home.resident.launchGame") }}</span>
+        <span class="split-title">{{ tasks.gamePreparing ? t("home.resident.launching") : t("home.resident.launchGame") }}</span>
         <span v-if="selected" class="split-name text-ellipsis">{{ selected.name }}</span>
         <span v-else class="split-name split-none">{{ t("home.empty.noInstance") }}</span>
       </span>

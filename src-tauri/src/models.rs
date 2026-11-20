@@ -77,7 +77,7 @@ pub struct Settings {
     #[serde(default)]
     pub shimu_client_secret: Option<String>,
     /// LittleSkin OAuth2 应用 ID（用于「通过 OAuth 访问 Yggdrasil API」）。
-    /// 空则回退到 LITTLESKIN_CLIENT_ID 编译期常量。非敏感，可下发前端。
+    /// 用于开发构建中的个人测试客户端，可下发前端。
     #[serde(default)]
     pub littleskin_client_id: String,
     /// LittleSkin OAuth2 应用密钥，**仅用于后端换 token**。
@@ -252,7 +252,7 @@ impl std::str::FromStr for LoaderType {
 
 /// A single installed content item (mod / resource pack / shader) tracked
 /// so it can be upgraded later.
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct InstalledContent {
     pub filename: String,
     /// modrinth | curseforge | manual
@@ -387,7 +387,7 @@ pub struct InstanceGroup {
 // Accounts
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum Account {
     Offline {
@@ -731,9 +731,10 @@ pub struct InstallPlan {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(rename_all = "camelCase")]
 pub struct LaunchResult {
     pub pid: u32,
-    pub command: Vec<String>,
+    pub task_id: u64,
 }
 
 /// Maven coordinate -> local path under `libraries/`

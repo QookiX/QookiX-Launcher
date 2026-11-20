@@ -21,10 +21,7 @@
   --accent-deep: #d97f33;
   --accent-hover: #f2a860;
   --accent-soft: rgba(232, 154, 75, 0.14);
-  /* 与 App.vue 的 accentContrast() 对默认琥珀色的结果保持一致（白字）。
-     运行时会按用户主题色覆写；这里写深色墨字会让首帧 / 纯浏览器预览里的
-     主按钮变成黑字，而其它按钮是浅字，看起来就像「主题色没全局生效」。 */
-  --accent-contrast: #ffffff;
+  --accent-contrast: #000000;
   --accent-01: rgba(232, 154, 75, 0.01);
   --accent-02: rgba(232, 154, 75, 0.02);
   --accent-03: rgba(232, 154, 75, 0.03);
@@ -173,16 +170,17 @@
   --gap-grid: 16px;
   --gap-page: 16px;
 
-  /* —— 层级：全应用只用这 7 层 + 内容层 —— */
+  /* —— 局部层级与应用浮层。Naive UI 弹窗和抽屉共用从 2000 开始的动态栈。 —— */
   --z-bg: 0;
   --z-content: 1;
   --z-dock: 10;
   --z-header: 20;
   --z-popover: 30;
-  --z-drawer: 40;
-  --z-modal: 50;
-  --z-lightbox: 60;
-  --z-boot: 70;
+  --z-local-dialog: 50;
+  --z-context-menu: 1200;
+  --z-drop: 1400;
+  --z-launch-progress: 1600;
+  --z-boot: 10000;
 
   /* —— 玻璃与次要表面 —— */
   --glass-blur: 8px;
@@ -205,8 +203,7 @@
   --accent-deep: #e8893c;
   --accent-hover: #ffb978;
   --accent-soft: rgba(255, 160, 80, 0.12);
-  /* 同深色主题：运行时由 accentContrast() 覆写，兜底值必须是白字 */
-  --accent-contrast: #ffffff;
+  --accent-contrast: #000000;
   --accent-01: rgba(255, 160, 80, 0.01);
   --accent-02: rgba(255, 160, 80, 0.02);
   --accent-03: rgba(255, 160, 80, 0.03);

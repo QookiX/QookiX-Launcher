@@ -17,6 +17,27 @@
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 
+pub struct Node(Child);
+
+impl Node {
+    pub fn is_running(&mut self) -> Result<bool, String> {
+        self.0.try_wait().map(|exited| exited.is_none()).map_err(|e| e.to_string())
+    }
+
+    fn stop(&mut self) {
+        if !matches!(self.0.try_wait(), Ok(Some(_))) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+}
+
+impl Drop for Node {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 /// 一套连接信息
 #[derive(Debug, Clone, PartialEq, Eq)]
 /// 客人的取文件方式：局域网直连（EasyTier）或公网中继（frp / 其它 TCP 转发）
@@ -148,8 +169,13 @@ pub fn spawn_node(
     listen: Option<&str>,
     peer: Option<&str>,
     whitelist_ports: &[u16],
-) -> Result<Child, String> {
+) -> Result<Node, String> {
     let mut cmd = Command::new(core);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000);
+    }
     cmd.arg("--network-name")
         .arg(&net.network)
         .arg("--network-secret")
@@ -176,19 +202,22 @@ pub fn spawn_node(
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()
+        .map(Node)
         .map_err(|e| format!("启动 EasyTier 节点失败: {e}"))
 }
 
 /// 把对端虚拟 IP 的端口映射到本地回环，之后直接访问 127.0.0.1 即可
-pub fn port_forward(
+pub async fn port_forward(
     cli: &Path,
     rpc_port: u16,
     local: u16,
     remote_ip: &str,
     remote_port: u16,
 ) -> Result<(), String> {
-    let out = Command::new(cli)
-        .args([
+    let mut command = tokio::process::Command::new(cli);
+    #[cfg(windows)]
+    command.creation_flags(0x0800_0000);
+    command.kill_on_drop(true).args([
             "-p",
             &format!("127.0.0.1:{rpc_port}"),
             "port-forward",
@@ -196,8 +225,10 @@ pub fn port_forward(
             "tcp",
             &format!("127.0.0.1:{local}"),
             &format!("{remote_ip}:{remote_port}"),
-        ])
-        .output()
+        ]);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(3), command.output())
+        .await
+        .map_err(|_| "调用 easytier-cli 超时")?
         .map_err(|e| format!("调用 easytier-cli 失败: {e}"))?;
     if out.status.success() {
         return Ok(());
@@ -206,14 +237,6 @@ pub fn port_forward(
         "port-forward 失败: {}",
         String::from_utf8_lossy(&out.stderr).trim()
     ))
-}
-
-/// 进程退出兜底：先 try_wait，没死才 kill
-pub fn kill_child(child: &mut Child) {
-    if let Ok(Some(_)) = child.try_wait() {
-        return;
-    }
-    let _ = child.kill();
 }
 
 #[cfg(test)]
@@ -247,6 +270,17 @@ mod tests {
         assert_eq!(PackNet::parse("qkx1|a|b|c|d|notaport|e"), None);
         // token 为空
         assert_eq!(PackNet::parse("qkx1|a|b|c|d|8080|"), None);
+    }
+
+    #[test]
+    fn closing_a_forwarding_node_reaps_the_owned_child() {
+        let child = Command::new(std::env::current_exe().unwrap())
+            .args(["--ignored", "--exact", "terracotta::tests::delayed_port_fixture"])
+            .stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+            .spawn().unwrap();
+        let mut node = Node(child);
+        node.stop();
+        assert!(!node.is_running().unwrap());
     }
 
     /// 不硬断言：把「本机能不能找到 EasyTier / 局域网 IP 是多少」打出来，

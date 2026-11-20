@@ -47,13 +47,7 @@ pub fn resolve_close_request(
     }
     if remember {
         let state = app.state::<AppState>();
-        {
-            let mut s = state.settings_mut();
-            s.close_behavior = action.clone();
-            // 勾选「保持我的选择」= 用户的明确选择，之后不再询问也不再被迁移覆盖
-            s.close_behavior_prompted = true;
-        }
-        settings::persist(&state)?;
+        settings::update_settings(&state, serde_json::json!({ "close_behavior": &action }))?;
     }
     if action == "minimize" {
         if let Some(win) = app.get_webview_window("main") {
@@ -174,7 +168,19 @@ pub fn change_data_dir(
     mode: String,
 ) -> Result<Value, String> {
     let new_dir = settings::change_data_dir(&state, &new_dir, &mode)?;
-    Ok(json!({ "ok": true, "new_dir": new_dir, "need_restart": true }))
+    Ok(json!({ "ok": true, "new_dir": new_dir, "need_restart": true, "scheduled": mode != "pointer" }))
+}
+
+#[tauri::command]
+pub fn data_root_migration_error() -> Option<String> {
+    let bootstrap = settings::bootstrap_root(settings::portable_data_dir());
+    crate::data_root_migration::latest_error(&bootstrap)
+}
+
+#[tauri::command]
+pub fn cancel_failed_data_root_migration() -> Result<(), String> {
+    let bootstrap = settings::bootstrap_root(settings::portable_data_dir());
+    crate::data_root_migration::cancel_failed(&bootstrap)
 }
 
 /// 在系统文件管理器中打开启动器数据目录（设置页「打开」按钮）。
@@ -202,8 +208,8 @@ pub fn auto_detect_memory() -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub fn detect_java(
-    state: State<AppState>,
+pub async fn detect_java(
+    state: State<'_, AppState>,
     refresh: Option<bool>,
 ) -> Result<JavaDetection, String> {
     let force = refresh.unwrap_or(false);
@@ -223,7 +229,11 @@ pub fn detect_java(
     let root = state.root.clone();
     let runtimes = root.join("runtimes");
     // Reuse the persisted cache when possible; `force` re-scans and updates it.
-    let (ts, candidates) = crate::java::cached_detect(&root, &runtimes, now, force);
+    let (ts, candidates) = tauri::async_runtime::spawn_blocking(move || {
+        crate::java::cached_detect(&root, &runtimes, now, force)
+    })
+    .await
+    .map_err(|err| err.to_string())?;
     let selected = candidates.first().cloned();
     *state.java_cache.lock().unwrap() = Some((ts, candidates.clone()));
     Ok(JavaDetection { candidates, selected })

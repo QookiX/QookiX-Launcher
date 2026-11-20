@@ -1,62 +1,31 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from "vue";
-import { listen } from "@tauri-apps/api/event";
+import { computed, watch } from "vue";
 import { useI18n } from "vue-i18n";
+import { useTasksStore } from "../stores/tasks";
 
-const visible = ref(false);
-const step = ref("");
-const progress = ref(0);
-const done = ref(false);
+const tasks = useTasksStore();
 const { t } = useI18n();
+const overlay = computed(() => tasks.launchOverlay);
+const done = computed(() => overlay.value?.done ?? false);
+const step = computed(() => done.value ? t("launchProgress.launchSuccess") : overlay.value?.step ?? "");
+const progress = computed(() => overlay.value?.progress ?? 0);
 
-let unlistenProgress: (() => void) | null = null;
-let unlistenLog: (() => void) | null = null;
-let unlistenExit: (() => void) | null = null;
-let doneTimer: ReturnType<typeof setTimeout> | null = null;
-
-onMounted(async () => {
-  unlistenProgress = await listen<{ step: string; progress: number }>("launch://progress", (e) => {
-    if (done.value) return;
-    visible.value = true;
-    step.value = e.payload.step;
-    progress.value = e.payload.progress;
-  });
-
-  unlistenLog = await listen<{ line: string }>("launch://log", () => {
-    if (!visible.value || done.value) return;
-    done.value = true;
-    step.value = t("launchProgress.launchSuccess");
-    progress.value = 100;
-    doneTimer = setTimeout(() => {
-      visible.value = false;
-      done.value = false;
-    }, 2000);
-  });
-
-  unlistenExit = await listen("launch://exit", () => {
-    visible.value = false;
-    done.value = false;
-    if (doneTimer) { clearTimeout(doneTimer); doneTimer = null; }
-  });
-});
-
-onBeforeUnmount(() => {
-  unlistenProgress?.();
-  unlistenLog?.();
-  unlistenExit?.();
-  if (doneTimer) clearTimeout(doneTimer);
+watch(overlay, (current, _, onCleanup) => {
+  if (!current?.done) return;
+  const timer = setTimeout(() => tasks.dismissLaunchOverlay(current.taskId), 2000);
+  onCleanup(() => clearTimeout(timer));
 });
 </script>
 
 <template>
   <Transition name="lp-slide">
-    <div v-if="visible" class="launch-progress">
-      <div class="lp-bar">
+    <div v-if="overlay" class="launch-progress">
+      <div class="lp-bar" role="progressbar" :aria-label="step" :aria-valuenow="progress">
         <div class="lp-fill" :class="{ done }" :style="{ width: progress + '%' }"></div>
       </div>
       <div class="lp-info">
-        <span class="lp-step">{{ step }}</span>
-        <span class="lp-pct">{{ progress }}%</span>
+        <span class="lp-step" role="status">{{ step }}</span>
+        <span class="lp-pct" aria-hidden="true">{{ progress }}%</span>
       </div>
     </div>
   </Transition>
@@ -79,7 +48,7 @@ onBeforeUnmount(() => {
   box-shadow: 0 8px 32px var(--k-40);
   backdrop-filter: blur(var(--glass-blur, 8px));
   -webkit-backdrop-filter: blur(var(--glass-blur, 8px));
-  z-index: 9999;
+  z-index: var(--z-launch-progress);
 }
 .lp-bar {
   height: 4px;

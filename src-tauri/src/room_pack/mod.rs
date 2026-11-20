@@ -477,19 +477,23 @@ pub async fn qookix_compare_pack(
 /// 正在共享环境的会话（单例：一个启动器同时只挂一个房间）
 struct PackServe {
     /// 中继模式不需要 EasyTier 节点，这里为 None
-    child: Option<std::process::Child>,
+    node: Option<net::Node>,
     server: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for PackServe {
+    fn drop(&mut self) {
+        self.server.abort();
+    }
 }
 
 static SERVE: std::sync::Mutex<Option<PackServe>> = std::sync::Mutex::new(None);
 
-/// 房主/客人各用一个虚拟 IP 与 RPC 端口（同机双开时不会互相踩）
+/// 房主使用固定虚拟地址，客人按连接选择虚拟地址与本地端口。
 const HOST_VIP: &str = "10.144.144.1";
-const GUEST_VIP: &str = "10.144.145.1";
 const HOST_RPC_PORT: u16 = 16888;
 /// 中继模式下文件服务的默认端口（要和 frp 隧道里填的本地端口一致）
 const DEFAULT_HTTP_PORT: u16 = 18099;
-const GUEST_RPC_PORT: u16 = 16889;
 
 /// 取一个当前空闲的本机端口
 fn free_port() -> Result<u16, String> {
@@ -498,13 +502,8 @@ fn free_port() -> Result<u16, String> {
 }
 
 fn stop_serve_inner() {
-    let mut guard = SERVE.lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(mut s) = guard.take() {
-        if let Some(mut c) = s.child.take() {
-            net::kill_child(&mut c);
-        }
-        s.server.abort();
-    }
+    let session = SERVE.lock().unwrap_or_else(|e| e.into_inner()).take();
+    drop(session);
 }
 
 /// 房主开服务：起 HTTP + EasyTier 节点，返回要写进房间元数据的 `pack_net`
@@ -558,6 +557,7 @@ pub async fn qookix_pack_serve(
         transfer::serve(base, manifest.files.clone(), token.clone(), want_port)
             .await
             .map_err(|e| format!("启动文件服务失败: {e}"))?;
+    let mut session = PackServe { node: None, server };
 
     let mods_count = manifest.files.iter().filter(|f| f.kind == "mod").count();
     let manifest_json = serde_json::to_string(&manifest).map_err(|e| e.to_string())?;
@@ -567,7 +567,7 @@ pub async fn qookix_pack_serve(
         let pack_net = net::encode_relay(url.trim(), &token);
         {
             let mut guard = SERVE.lock().unwrap_or_else(|e| e.into_inner());
-            *guard = Some(PackServe { child: None, server });
+            *guard = Some(session);
         }
         return Ok(serde_json::json!({
             "packNet": pack_net,
@@ -594,7 +594,7 @@ pub async fn qookix_pack_serve(
         http_port,
         token: token.clone(),
     };
-    let child = net::spawn_node(
+    let node = net::spawn_node(
         &core,
         &net_info,
         HOST_VIP,
@@ -604,13 +604,11 @@ pub async fn qookix_pack_serve(
         &[http_port],
     )
     .map_err(|e| format!("启动 P2P 节点失败: {e}"))?;
+    session.node = Some(node);
 
     {
         let mut guard = SERVE.lock().unwrap_or_else(|e| e.into_inner());
-        *guard = Some(PackServe {
-            child: Some(child),
-            server,
-        });
+        *guard = Some(session);
     }
 
     Ok(serde_json::json!({
@@ -688,39 +686,44 @@ pub async fn qookix_pack_pull(
     if todo.is_empty() {
         return Ok(serde_json::json!({ "downloaded": 0, "failed": 0, "bytes": 0 }));
     }
+    let _instance_files = state.jobs.reserve_game_files(&instance_id)?;
 
     // 3. 建立通道：中继直连，或起 EasyTier 节点 + 端口映射
-    let mut child: Option<std::process::Child> = None;
-    let (origin, token) = match route {
+    let (origin, token, _node) = match route {
         // 房主已经把 HTTP 端口挂到了公网（frp 等），直接拉
-        net::PackRoute::Relay { url, token } => (url, token),
+        net::PackRoute::Relay { url, token } => (url, token, None),
         net::PackRoute::Lan(net_info) => {
             let (core, cli) = net::locate_easytier()
                 .ok_or_else(|| "找不到 EasyTier（请先运行一次陶瓦联机）".to_string())?;
-            // 客人：连房主公布的监听地址（实测必须用真实 IP，127.0.0.1 会被内核拒绝）
-            let c = net::spawn_node(
+            let (rpc_port, local_port) = guest_ports()?;
+            let id = uuid::Uuid::new_v4();
+            let [a, b, ..] = *id.as_bytes();
+            let subnet = if a == 144 { 145 } else { a };
+            let vip = format!("10.144.{subnet}.{}", 1 + u16::from(b) % 254);
+            let mut node = net::spawn_node(
                 &core,
                 &net_info,
-                GUEST_VIP,
-                GUEST_RPC_PORT,
+                &vip,
+                rpc_port,
                 None,
                 Some(&format!("tcp://{}", net_info.peer_addr)),
                 &[],
             )?;
 
-            let local_port = free_port()?;
-
             // 节点要几秒才能和房主握手，失败就重试几次，别一次失败就报错
             let mut forward_err = None;
             for _ in 0..8 {
                 tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                if !node.is_running()? {
+                    return Err("EasyTier 节点在连接房主前退出".into());
+                }
                 match net::port_forward(
                     &cli,
-                    GUEST_RPC_PORT,
+                    rpc_port,
                     local_port,
                     &net_info.vip,
                     net_info.http_port,
-                ) {
+                ).await {
                     Ok(()) => {
                         forward_err = None;
                         break;
@@ -729,12 +732,9 @@ pub async fn qookix_pack_pull(
                 }
             }
             if let Some(e) = forward_err {
-                let mut c = c;
-                net::kill_child(&mut c);
                 return Err(format!("连不上房主：{e}"));
             }
-            child = Some(c);
-            (format!("http://127.0.0.1:{local_port}"), net_info.token.clone())
+            (format!("http://127.0.0.1:{local_port}"), net_info.token.clone(), Some(node))
         }
     };
 
@@ -742,6 +742,10 @@ pub async fn qookix_pack_pull(
     let base = state.instances_dir().join(&instance_id);
     let client = reqwest::Client::builder()
         .no_proxy()
+        .no_gzip()
+        .no_brotli()
+        .no_deflate()
+        .no_zstd()
         .timeout(std::time::Duration::from_secs(120))
         .build()
         .map_err(|e| format!("网络客户端初始化失败: {e}"))?;
@@ -766,15 +770,16 @@ pub async fn qookix_pack_pull(
             }
         }
     }
-    if let Some(mut c) = child {
-        net::kill_child(&mut c);
-    }
-
     Ok(serde_json::json!({
         "downloaded": done,
         "failed": failed,
         "bytes": bytes,
     }))
+}
+
+fn guest_ports() -> Result<(u16, u16), String> {
+    let rpc = std::net::TcpListener::bind("127.0.0.1:0").map_err(|e| e.to_string())?;
+    Ok((rpc.local_addr().map_err(|e| e.to_string())?.port(), free_port()?))
 }
 
 #[cfg(test)]

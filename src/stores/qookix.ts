@@ -23,6 +23,7 @@ import type {
   QookixRoom,
   QookixShare,
   QookixStatus,
+  QookixTwoFactorChallenge,
 } from "../types";
 
 /** 命令层错误码：未登录（不是错误，是引导登录的信号） */
@@ -70,6 +71,19 @@ export function qookixErrorMessage(err: unknown): string {
     invalid_password: t("qookix.err.invalidPassword"),
     invalid_nickname: t("qookix.err.invalidNickname"),
     account_exists: t("qookix.err.accountExists"),
+    terms_not_accepted: t("qookix.err.termsRequired"),
+    invite_required: t("qookix.err.inviteRequired"),
+    invite_invalid: t("qookix.err.inviteInvalid"),
+    turnstile_failed: t("qookix.err.turnstileFailed"),
+    register_limit_exceeded: t("qookix.err.registerLimited"),
+    email_domain_not_allowed: t("qookix.err.emailDomainNotAllowed"),
+    invalid_two_factor_code: t("qookix.err.invalidTwoFactorCode"),
+    challenge_expired: t("qookix.err.challengeExpired"),
+    two_factor_already_enabled: t("qookix.err.twoFactorAlreadyEnabled"),
+    two_factor_not_setup: t("qookix.err.twoFactorNotSetup"),
+    two_factor_unavailable: t("qookix.err.twoFactorUnavailable"),
+    invalid_old_password: t("qookix.err.invalidOldPassword"),
+    content_blocked: t("qookix.err.contentBlocked"),
     // 正版绑定（MC_ACCOUNT_BIND v0.3）
     mc_token_malformed: t("qookix.err.mcTokenMalformed"),
     mc_token_invalid: t("qookix.err.mcTokenInvalid"),
@@ -165,20 +179,42 @@ export const useQookixStore = defineStore("qookix", {
         this.status = { ...EMPTY_STATUS };
       }
     },
+    /** 登录成功返回 null；账号开了 2FA 时返回 challenge，由弹窗继续第二步 */
     async login(login: string, password: string) {
       this.loading = true;
       try {
-        this.status = await api.qookixLogin(login, password);
+        const r = await api.qookixLogin(login, password);
+        if ((r as { two_factor_required?: boolean }).two_factor_required) {
+          return r as QookixTwoFactorChallenge;
+        }
+        this.status = r as QookixStatus;
+        await this.loadAll();
+        return null;
+      } finally {
+        this.loading = false;
+      }
+    },
+    async login2fa(challengeToken: string, code: string) {
+      this.loading = true;
+      try {
+        this.status = await api.qookixLogin2fa(challengeToken, code);
         await this.loadAll();
       } finally {
         this.loading = false;
       }
     },
     /** 注册：开启邮箱验证时只是发信，不产生登录态 */
-    async register(username: string, email: string, password: string, nickname?: string) {
+    async register(
+      username: string,
+      email: string,
+      password: string,
+      nickname: string | undefined,
+      inviteCode: string | undefined,
+      agreedTerms: boolean,
+    ) {
       this.loading = true;
       try {
-        const data = await api.qookixRegister(username, email, password, nickname);
+        const data = await api.qookixRegister(username, email, password, nickname, inviteCode, agreedTerms);
         if (!data.email_verification_required) {
           // 服务端关掉了邮箱验证：等同于注册即登录
           this.status = await api.qookixStatus();

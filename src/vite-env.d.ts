@@ -5,3 +5,8 @@ declare module "*.vue" {
   const component: DefineComponent<{}, {}, any>;
   export default component;
 }
+
+declare module "*.md?releases" {
+  const releases: import("./updater").ChangelogRelease[];
+  export default releases;
+}

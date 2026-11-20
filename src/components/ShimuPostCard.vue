@@ -71,7 +71,7 @@ const paid = computed(() => {
         <span v-if="paid" class="paid-badge">{{ paid }}</span>
       </div>
       <div class="p-grid-body">
-        <div class="p-title" :title="title">{{ title }}</div>
+        <button type="button" class="p-title qx-title-action" :title="title" @click.stop="emit('open', post)">{{ title }}</button>
         <div class="p-author">
           {{ post.authorName || "" }}
           <span v-if="post.createTime" class="p-updated">{{ post.createTime }}</span>
@@ -122,7 +122,7 @@ const paid = computed(() => {
       </div>
       <div class="p-body">
         <div class="p-meta">
-          <div class="p-title text-ellipsis" :title="title">{{ title }}</div>
+          <button type="button" class="p-title text-ellipsis qx-title-action" :title="title" @click.stop="emit('open', post)">{{ title }}</button>
           <div class="p-author">{{ post.authorName || "" }}</div>
         </div>
         <div class="p-cats">

@@ -338,7 +338,7 @@ function buildChunkMesh(chunkPos: [number, number, number], blocks: Uint32Array,
   return { opaque: toMeshData(opaque), translucent: toMeshData(translucent) };
 }
 
-self.onmessage = async (event: MessageEvent) => {
+async function handleMessage(event: MessageEvent) {
   const msg = event.data;
   if (msg.type === "init") {
     if (msg.resourceBase) resourceBase = msg.resourceBase;
@@ -361,4 +361,10 @@ self.onmessage = async (event: MessageEvent) => {
       result.translucent.uvs.buffer, result.translucent.colors.buffer,
     ]);
   }
+}
+
+self.onmessage = (event: MessageEvent) => {
+  void handleMessage(event).catch((error) => {
+    self.postMessage({ type: "error", message: error instanceof Error ? error.message : String(error) });
+  });
 };

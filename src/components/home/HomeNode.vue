@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, inject, ref, watch } from "vue";
+import { computed, inject, ref, useId, watch } from "vue";
+import { NCollapseTransition } from "naive-ui";
 import { HOME_CTX } from "../../home/context";
 import type { HomeAction, HomeNode } from "../../home/types";
 import { IconChevronRight } from "../icons";
@@ -44,6 +45,7 @@ const n = computed(() => props.node as unknown as NodeView);
 
 /* —— 卡片折叠 —— */
 const collapsed = ref(false);
+const cardBodyId = useId();
 watch(
   () => props.node,
   (node) => {
@@ -125,15 +127,25 @@ function onImgError() {
       class="qx-card"
       :class="{ 'qx-card--swap': n.collapsible, 'qx-card--plain': !n.title }"
     >
-      <div v-if="n.title" class="qx-card__head" @click="toggle">
+      <button
+        v-if="n.title && n.collapsible"
+        type="button"
+        class="qx-card__head hl-card-trigger"
+        :aria-expanded="!collapsed"
+        :aria-controls="cardBodyId"
+        @click="toggle"
+      >
         <span class="qx-card__title">{{ ctx.interp(n.title) }}</span>
-        <span v-if="n.collapsible" class="qx-card__arrow" :class="{ 'is-open': !collapsed }">
+        <span class="qx-card__arrow" :class="{ 'is-open': !collapsed }" aria-hidden="true">
           <IconChevronRight />
         </span>
+      </button>
+      <div v-else-if="n.title" class="qx-card__head">
+        <span class="qx-card__title">{{ ctx.interp(n.title) }}</span>
       </div>
-      <div v-show="!collapsed" class="qx-card__body">
+      <NCollapseTransition :id="cardBodyId" class="qx-card__body" :show="!collapsed" display-directive="show">
         <HomeNode v-for="(child, i) in n.children" :key="i" :node="child" />
-      </div>
+      </NCollapseTransition>
     </div>
 
     <!-- 文本 -->
@@ -210,6 +222,14 @@ function onImgError() {
 </template>
 
 <style scoped>
+.hl-card-trigger {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: start;
+  transition: background-color var(--dur-sm) var(--ease-out);
+}
+
 /* 卡片正文用 flex + gap 排版（见 components.css 的 .qx-card__body），
    所以这里所有块都不写 margin，避免和 gap 叠加。 */
 .hl-text {

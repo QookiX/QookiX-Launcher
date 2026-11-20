@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vSegmented } from "../composables/vSegmented";
 /**
  * 实例详情页（壳）。
  * 只保留：页头（启动/固定/删除/打开目录）、tab 栏、截图 tab、确认与预览弹窗。
@@ -18,7 +19,9 @@ import { useMessage, NButton, NModal, NPopover } from "naive-ui";
 import { useI18n } from "vue-i18n";
 import { api } from "../api";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { getCurrentWebview, type DragDropEvent } from "@tauri-apps/api/webview";
+import type { Event } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { instanceDetailActive } from "../composables/instanceDetailDrag";
 import LogViewer from "../components/LogViewer.vue";
 import FileManager from "../components/FileManager.vue";
@@ -162,10 +165,8 @@ watch(tabs, (ts) => {
 // 既不额外加一层 wrapper 影响布局，也不会连带重建各 tab 组件的内部状态。
 // 只做布局位移（padding-top），不动 opacity/transform：玻璃卡片对这两者
 // 都敏感，动画期间磨砂会失效。
-const tabSwap = ref(0);
-watch(tab, () => {
-  tabSwap.value = tabSwap.value ? 0 : 1;
-});
+const tabSwap = ref(false);
+watch(tab, () => { tabSwap.value = !tabSwap.value; });
 
 // Sliding active-highlight indicator for the tab bar
 const tabsBox = ref<HTMLElement | null>(null);
@@ -313,7 +314,7 @@ const sidebarPinId = computed(() => pins.makeId("instance", instanceId, instance
 function toggleInstancePin(target: PinTarget) {
   const i = instance.value;
   if (!i) return;
-  pins.toggle({
+  void pins.toggle({
     id: pins.makeId("instance", instanceId, instanceId, target),
     type: "instance",
     target,
@@ -324,7 +325,7 @@ function toggleInstancePin(target: PinTarget) {
     loader: i.loader,
     name: i.name,
     icon: null,
-  });
+  }).catch((error) => message.error(String(error)));
 }
 
 // 点击遮罩关闭弹窗（document 委托兜底，naive-ui mask 机制在此环境不可靠）
@@ -388,14 +389,13 @@ async function handleDrop(paths: string[]) {
   }
 }
 
-let unlistenDrag: (() => void) | null = null;
+const dragScope = useTauriListenerScope();
 
 onMounted(() => {
   document.addEventListener("mousedown", onDocMouseDown);
   loadFolders();
   instanceDetailActive.value = true;
-  void getCurrentWebview()
-    .onDragDropEvent((event) => {
+  void dragScope.observe<Event<DragDropEvent>>((handle) => getCurrentWebview().onDragDropEvent(handle), (event) => {
       const p = event.payload;
       if (p.type === "enter") {
         if (filterDropPaths(p.paths).length) dropOverlay.value = true;
@@ -406,15 +406,12 @@ onMounted(() => {
         dropOverlay.value = false;
       }
     })
-    .then((fn) => { unlistenDrag = fn; })
     .catch(() => { /* 拖放监听不可用时忽略 */ });
 });
 
 onBeforeUnmount(() => {
   document.removeEventListener("mousedown", onDocMouseDown);
   instanceDetailActive.value = false;
-  unlistenDrag?.();
-  unlistenDrag = null;
 });
 
 // tab 切换时：只有截图需要父组件加载数据，其余 tab 由子组件自行加载
@@ -439,7 +436,7 @@ watch(
   <div v-if="instance" class="detail">
     <div class="d-head glass">
       <div class="d-icon"><AppIcon :name="instance.icon" /></div>
-      <div class="d-info">
+      <div class="d-info qx-card-open">
         <h1>
           {{ instance.name }}
           <!-- 符号链接实例：只用一个图标提示，hover 展开说明（不占整行） -->
@@ -473,10 +470,10 @@ watch(
         </div>
       </div>
       <div class="d-actions">
-        <button class="qx-btn qx-btn--primary" @click="launch">
-          <IconPlay />
+        <NButton type="primary" @click="launch">
+          <template #icon><IconPlay /></template>
           {{ t("instanceDetail.launchGame") }}
-        </button>
+        </NButton>
         <button
           class="qx-btn pin"
           :class="{ active: pins.isPinned(homePinId) }"
@@ -533,9 +530,9 @@ watch(
         <h3>{{ t("instanceDetail.installFailed") }}</h3>
         <p>{{ installTask.message }}</p>
       </div>
-      <button class="qx-btn qx-btn--primary" :disabled="installingGame" @click="installGame">
-        <IconPlay /> {{ t("instanceDetail.reinstall") }}
-      </button>
+      <NButton type="primary" :disabled="installingGame" @click="installGame">
+        <template #icon><IconPlay /></template> {{ t("instanceDetail.reinstall") }}
+      </NButton>
     </div>
 
     <!-- 未安装：安装按钮 -->
@@ -544,12 +541,13 @@ watch(
         <h3>{{ t("instanceDetail.gameNotInstalledTitle") }}</h3>
         <p>{{ t("instanceDetail.gameNotInstalledDesc", { version: instance.mc_version }) }}</p>
       </div>
-      <button class="qx-btn qx-btn--primary" :disabled="installingGame" @click="installGame">
-        <IconPlay /> {{ installingGame ? t("instanceDetail.installing") : t("instanceDetail.installGame") }}
-      </button>
+      <NButton type="primary" :disabled="installingGame" @click="installGame">
+        <template #icon><IconPlay /></template> {{ installingGame ? t("instanceDetail.installing") : t("instanceDetail.installGame") }}
+      </NButton>
     </div>
 
-    <div ref="tabsBox" class="tabs qx-seg">
+    <div class="detail-tabs-row">
+    <div ref="tabsBox" v-segmented="{ label: t('page.instanceDetail'), panel: 'instance-tab-panel', animatePanel: false }" class="tabs qx-seg">
       <div class="qx-seg__indicator" :style="tabIndicatorStyle"></div>
       <button
         v-for="tabItem in tabs"
@@ -561,6 +559,7 @@ watch(
         <component :is="tabItem.icon" />
         {{ t(tabItem.label) }}
       </button>
+    </div>
       <div class="tab-right">
         <template v-if="CONTENT_TABS.includes(tab)">
           <button v-if="tab === 'mods'" class="mini-btn icon-only" :title="t('instanceContent.depCheck')" :disabled="contentRef?.checkingDeps" @click="contentRef?.runDepCheck()">
@@ -581,7 +580,7 @@ watch(
       </div>
     </div>
 
-    <div class="tab-body" :class="tabSwap ? 'tab-swap-b' : 'tab-swap-a'">
+    <div id="instance-tab-panel" class="tab-body" :class="tabSwap ? 'tab-swap-b' : 'tab-swap-a'" role="tabpanel">
       <!-- mods / resourcepacks / shaders -->
       <ContentTab
         v-if="CONTENT_TABS.includes(tab)"
@@ -865,32 +864,18 @@ watch(
   display: flex;
   align-items: center;
 }
-/* 切 tab 的内容入场：只做布局位移（padding-top 8px → 0），内容从下方 8px
-   抬到位。两个同名关键帧交替触发，见 script 里的 tabSwap。
-   ⚠ 不能带 opacity / transform：两者都会让元素成为 backdrop root，
-   卡片磨砂在动画期间直接失效（与 SettingsView 子标签页动画同一约定，
-   那里已实测过）。padding 也不会像 position/top 那样改变包含块。 */
-.tab-swap-a {
-  animation: tab-swap-a 0.16s var(--ease-out) both;
-}
-.tab-swap-b {
-  animation: tab-swap-b 0.16s var(--ease-out) both;
-}
+.detail-tabs-row { display: flex; align-items: center; flex-wrap: wrap; gap: var(--sp-2); }
+.tab-swap-a { animation: tab-swap-a 0.16s var(--ease-out) both; }
+.tab-swap-b { animation: tab-swap-b 0.16s var(--ease-out) both; }
+
 @keyframes tab-swap-a {
-  from {
-    padding-top: 8px;
-  }
-  to {
-    padding-top: 0;
-  }
+  from { padding-top: 8px; }
+  to { padding-top: 0; }
 }
+
 @keyframes tab-swap-b {
-  from {
-    padding-top: 8px;
-  }
-  to {
-    padding-top: 0;
-  }
+  from { padding-top: 8px; }
+  to { padding-top: 0; }
 }
 .tab-right {
   margin-left: auto;
@@ -955,7 +940,7 @@ watch(
 .drop-overlay {
   position: fixed;
   inset: 0;
-  z-index: 2500;
+  z-index: var(--z-local-dialog);
   display: flex;
   align-items: center;
   justify-content: center;

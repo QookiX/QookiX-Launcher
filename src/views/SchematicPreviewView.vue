@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, watch, nextTick, computed } from "vue";
+import UiStatus from "../components/UiStatus.vue";
+import { ref, onMounted, onBeforeUnmount, watch, nextTick, computed } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { useI18n } from "vue-i18n";
@@ -21,6 +22,7 @@ import {
   type ViewMode,
 } from "../composables/useSchematicRenderer";
 import { createSchematicWorkerPool, type SchematicWorkerPool } from "../composables/useSchematicWorkerPool";
+import { createPreviewLifetime } from "../composables/previewLifetime";
 
 const { t } = useI18n();
 const message = useMessage();
@@ -135,8 +137,10 @@ let renderer: SchematicRenderer | null = null;
  *  旧 renderer 会继续往脱离文档的旧画布上画（界面一片空白），靠它来判断 */
 let rendererCanvas: HTMLCanvasElement | null = null;
 let resources: SchematicResources | null = null;
+let resourceLoad: Promise<SchematicResources> | null = null;
 let workerPool: SchematicWorkerPool | null = null;
 let resizeObserver: ResizeObserver | null = null;
+const preview = createPreviewLifetime((sessionId) => invoke("schematic_preview_close", { sessionId }));
 
 // —— 最近打开 ——
 interface RecentFile {
@@ -184,10 +188,21 @@ async function openRecent(r: RecentFile) {
   await openSchematic({ kind: "external", path: r.path });
 }
 
-async function ensureResources() {
-  if (resources) return resources;
-  resources = await loadSchematicResources();
-  return resources;
+function ensureResources() {
+  if (resourceLoad) return resourceLoad;
+  const load = loadSchematicResources().then((loaded) => {
+    if (resourceLoad !== load) {
+      loaded.texture.dispose();
+      throw new DOMException("Schematic preview closed", "AbortError");
+    }
+    resources = loaded;
+    return loaded;
+  }).catch((reason) => {
+    if (resourceLoad === load) resourceLoad = null;
+    throw reason;
+  });
+  resourceLoad = load;
+  return load;
 }
 
 async function pickAndOpen() {
@@ -202,11 +217,14 @@ async function pickAndOpen() {
 }
 
 let currentPath: string | null = null;
-/** 每次打开投影自增：用来作废上一轮还没跑完的区块加载 */
-let openSeq = 0;
 
 async function openSchematic(source: { kind: string; path?: string; instanceId?: string; relativePath?: string }) {
-  openSeq++;
+  const opening = preview.beginOpen();
+  if (opening.aborted) return;
+  if (loading.value) {
+    workerPool?.dispose();
+    workerPool = null;
+  }
   loading.value = true;
   error.value = null;
   // ⚠️ 不要在这里把 manifest 清成 null：画布是 `<div v-if="manifest">` 里的，
@@ -219,15 +237,21 @@ async function openSchematic(source: { kind: string; path?: string; instanceId?:
   // 首次打开要提取客户端资源（几秒的重活），必须给出反馈，
   // 否则界面看起来就是"空白 + 卡死"
   loadLabel.value = t("toolbox.schematicPreparing");
-  currentPath = source.path ?? null;
+  let acceptedId: string | undefined;
   try {
-    const m = await invoke<PreviewManifest>("schematic_preview_open", { source });
+    const opened = await preview.open(opening, () => invoke<PreviewManifest>("schematic_preview_open", { source }));
+    if (!opened || opening.aborted) return;
+    const { manifest: m, session } = opened;
+    acceptedId = session.id;
+    currentPath = source.path ?? null;
     manifest.value = m;
 
     const res = await ensureResources();
+    if (opening.aborted) return;
     loadLabel.value = t("toolbox.schematicMeshing");
 
     await nextTick();
+    if (opening.aborted) return;
     const canvas = canvasRef.value;
     if (!canvas) throw new Error("Canvas not ready");
     // 兜底：万一 canvas 元素被换掉（模板结构变动 / 重新挂载），旧 renderer
@@ -262,8 +286,11 @@ async function openSchematic(source: { kind: string; path?: string; instanceId?:
     if (!workerPool) {
       const workerCount = Math.min(navigator.hardwareConcurrency ?? 4, 8);
       workerPool = createSchematicWorkerPool(workerCount);
-      await workerPool.init(res.resourceBase);
     }
+    const pool = workerPool;
+    const scene = renderer;
+    await pool.init(res.resourceBase);
+    if (opening.aborted) return;
 
     const allChunks: { regionId: string; position: [number, number, number] }[] = [];
     for (const region of m.regions) {
@@ -276,44 +303,49 @@ async function openSchematic(source: { kind: string; path?: string; instanceId?:
     loadTotal.value = allChunks.length;
 
     // 调色板只下发一次，之后每个区块只传方块数据
-    workerPool.setPalette(m.palette);
-    renderer.requestRender();
+    pool.setPalette(m.palette);
+    scene.requestRender();
 
     // 分批复用固定数量的并发，而不是几千个请求一起打出去：
     // 一次性并发会挤爆 IPC，进度条也刷不动
     const CONCURRENCY = Math.max(4, Math.min(navigator.hardwareConcurrency ?? 4, 12));
-    const myOpen = openSeq;
     let cursor = 0;
     let sinceRender = 0;
     const runOne = async () => {
-      while (cursor < allChunks.length) {
-        // 中途又打开了别的投影：这轮的区块不能再往场景里塞（调色板也换了）
-        if (myOpen !== openSeq) return;
+      while (!opening.aborted && !session.signal.aborted && cursor < allChunks.length) {
         const c = allChunks[cursor++];
         const buf = await invoke<ArrayBuffer>("schematic_preview_read_chunk", {
           sessionId: m.sessionId,
           regionId: c.regionId,
           position: c.position,
         });
+        if (opening.aborted || session.signal.aborted) return;
         const { blocks, neighbors } = parseChunkData(buf);
-        const { opaque, translucent } = await workerPool!.buildMesh(c.position, blocks, neighbors);
-        renderer!.setChunkFromMeshData(c.position, opaque, translucent, res.texture);
+        const { opaque, translucent } = await pool.buildMesh(c.position, blocks, neighbors);
+        if (opening.aborted || session.signal.aborted) return;
+        scene.setChunkFromMeshData(c.position, opaque, translucent, res.texture);
         loadProgress.value++;
         // 每 16 个区块刷一次画面就够，逐个刷屏反而更慢
         if (++sinceRender >= 16) {
           sinceRender = 0;
-          renderer!.requestRender();
+          scene.requestRender();
         }
       }
     };
     await Promise.all(Array.from({ length: Math.min(CONCURRENCY, allChunks.length) }, runOne));
-    renderer.requestRender();
+    if (opening.aborted) return;
+    scene.requestRender();
 
     if (currentPath) pushRecent(m, currentPath);
   } catch (e) {
-    error.value = String(e);
+    if (!opening.aborted) {
+      if (acceptedId) preview.close(acceptedId);
+      workerPool?.dispose();
+      workerPool = null;
+      error.value = String(e);
+    }
   } finally {
-    loading.value = false;
+    if (!opening.aborted) loading.value = false;
   }
 }
 
@@ -382,31 +414,32 @@ watch(
   }
 );
 
-onUnmounted(() => {
+onBeforeUnmount(() => {
+  preview.dispose();
   resizeObserver?.disconnect();
   renderer?.dispose();
   renderer = null;
   rendererCanvas = null;
   workerPool?.dispose();
   workerPool = null;
-  if (manifest.value) {
-    invoke("schematic_preview_close", { sessionId: manifest.value.sessionId }).catch(() => {});
-  }
+  resourceLoad = null;
+  resources?.texture.dispose();
+  resources = null;
 });
 </script>
 
 <template>
   <div class="schematic-view" data-tauri-drag-region>
     <!-- 参数栏 -->
-    <div class="glass param-bar">
-      <button class="mini-btn primary" @click="pickAndOpen" :disabled="loading">
-        <IconFolder />{{ loading ? t("toolbox.schematicLoading") : t("toolbox.schematicOpen") }}
-      </button>
+    <div class="glass qx-toolbar param-bar">
+      <NButton type="primary" :loading="loading" @click="pickAndOpen" :disabled="loading">
+        <template #icon><IconFolder /></template> {{ loading ? t("toolbox.schematicLoading") : t("toolbox.schematicOpen") }}
+      </NButton>
       <NPopover trigger="click" placement="bottom-start" :width="320">
         <template #trigger>
-          <button class="mini-btn" :disabled="!recentFiles.length">
-            <IconClock />{{ t("toolbox.schematicRecent") }}({{ recentFiles.length }})
-          </button>
+          <NButton :disabled="!recentFiles.length">
+            <template #icon><IconClock /></template> {{ t("toolbox.schematicRecent") }}({{ recentFiles.length }})
+          </NButton>
         </template>
         <div class="recent-panel">
           <div class="recent-head">
@@ -429,20 +462,21 @@ onUnmounted(() => {
       <!-- 拾木空间账号入口已隐藏（登录/账号状态在发现页的「投影」分类里展示），
            这里只留一个「下载投影」入口 -->
       <span class="param-sep" />
-      <button
-        class="mini-btn primary"
+      <NButton
+
         :title="t('shimu.downloadSchematicHint')"
         @click="openShimuLibrary"
         :disabled="loading"
       >
         {{ t("shimu.downloadSchematic") }}
-      </button>
+      </NButton>
     </div>
 
-    <div v-if="error" class="error glass">{{ error }}</div>
+    <UiStatus v-if="error" kind="error" :text="error" compact />
+    <UiStatus v-if="loading && !manifest" kind="loading" :text="loadLabel || t('toolbox.schematicLoading')" />
 
     <!-- 主预览区 -->
-    <div v-if="manifest" class="map-wrap glass">
+    <div v-if="manifest" class="map-wrap glass qx-enter">
       <!-- 预览画布区 -->
       <div class="canvas-area">
         <canvas ref="canvasRef"></canvas>
@@ -603,9 +637,7 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-      <div v-else class="empty-hint">
-        <p>{{ t("toolbox.schematicEmpty") }}</p>
-      </div>
+      <UiStatus v-else class="empty-hint" kind="empty" :text="t('toolbox.schematicEmpty')" />
     </div>
 
   </div>
@@ -615,7 +647,6 @@ onUnmounted(() => {
 .schematic-view { display: flex; flex-direction: column; gap: 16px; height: 100%; min-height: 0; overflow: hidden; }
 
 /* —— 参数栏 —— */
-.param-bar { padding: 10px 14px; display: flex; gap: 8px; align-items: center; }
 
 /* —— 通用按钮 —— */
 /* 参数栏内的分组分隔（本地文件操作 | 拾木空间） */
@@ -701,7 +732,6 @@ onUnmounted(() => {
 }
 
 /* —— 错误 —— */
-.error { padding: 12px 16px; border-radius: var(--r-md); color: var(--danger); font-size: var(--fs-sm); }
 
 /* —— 空状态 —— */
 .empty-state { flex: 1; border-radius: var(--r-md); padding: 24px; display: flex; flex-direction: column; gap: 16px; overflow-y: auto; }

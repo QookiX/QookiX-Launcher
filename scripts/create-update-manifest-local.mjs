@@ -13,8 +13,8 @@
 //    exit code 0 = wrote manifest, 2 = nothing to write (caller may skip)
 // ============================================================================
 import fs from 'node:fs'
-import path from 'node:path'
-import { UPDATER_TARGETS } from './shared/updater-targets.mjs'
+import { requireUpdaterCoverage, selectUpdaterBundles } from './shared/updater-targets.mjs'
+import { buildUpdateManifest, readLocalSignature } from './shared/update-manifest.mjs'
 
 const [dir, tag, outputPath] = process.argv.slice(2)
 if (!dir || !tag || !outputPath) {
@@ -25,55 +25,26 @@ if (!dir || !tag || !outputPath) {
 const repo = process.env.GITHUB_REPOSITORY
 if (!repo) throw new Error('GITHUB_REPOSITORY is not set')
 
-// Shared with verify-artifacts.mjs and fix-update-manifest.mjs so all three
-// always agree on what counts as an updater bundle.
-const targets = UPDATER_TARGETS
-
-function filesEndingWith(dir, suffix) {
-  try {
-    return fs.readdirSync(dir).filter((name) => name.endsWith(suffix))
-  } catch {
-    return []
-  }
-}
-
-const platforms = {}
-for (const t of targets) {
-  let matches = []
-  for (const suffix of t.suffixes) {
-    matches = filesEndingWith(dir, suffix)
-    if (matches.length >= 1) break
-  }
-  if (matches.length !== 1) continue // platform not built (or named differently)
-  const name = matches[0]
-  const sigPath = path.join(dir, `${name}.sig`)
-  if (!fs.existsSync(sigPath)) continue // unsigned bundle -> skip
-  const signature = fs.readFileSync(sigPath, 'utf8')
-  const url = `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`
-  for (const p of t.platforms) {
-    platforms[p] = { signature, url }
-  }
-}
-
-if (Object.keys(platforms).length === 0) {
-  console.warn(
-    'create-update-manifest-local: no signed updater bundles found (TAURI_SIGNING_PRIVATE_KEY not configured?), skipping latest.json',
-  )
+const artifacts = fs.readdirSync(dir, { withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map(({ name }) => ({ name }))
+const bundles = await selectUpdaterBundles(artifacts, {
+  signatureFor: (asset) => readLocalSignature(dir, asset),
+})
+if (!bundles.length) {
+  console.warn('create-update-manifest-local: no signed updater bundles found')
   process.exit(2)
 }
+requireUpdaterCoverage(bundles)
 
-const manifest = {
-  version: tag.replace(/^v/, ''),
-  notes: '',
-  pub_date: new Date().toISOString(),
-  platforms,
-}
-// 强制更新：低于此版本的客户端必须更新（全屏锁死遮罩 + 自动重启）。
-// CI 通过 QOOKIX_MIN_VERSION 环境变量注入；不设则普通更新流程。
-const minVersion = process.env.QOOKIX_MIN_VERSION
-if (minVersion) manifest.minVersion = minVersion
+const manifest = buildUpdateManifest({
+  tag,
+  minVersion: process.env.QOOKIX_MIN_VERSION,
+  bundles,
+  urlFor: ({ name }) => `https://github.com/${repo}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`,
+})
 
 fs.writeFileSync(outputPath, `${JSON.stringify(manifest, null, 2)}\n`)
 console.log(
-  `create-update-manifest-local: wrote ${outputPath} for ${Object.keys(platforms).length} platform(s)`,
+  `create-update-manifest-local: wrote ${outputPath} for ${Object.keys(manifest.platforms).length} platform(s)`,
 )

@@ -1,7 +1,6 @@
-use crate::fsutil::{self, FsEntry};
+use crate::fsutil::{self, CreatedEntry, DirectoryListing, FileDocument, FileInfo, RenamedEntry};
 use crate::models::*;
 use crate::state::AppState;
-use serde_json::{json, Value};
 use tauri::Emitter;
 use tauri::Manager;
 use tauri::State;
@@ -25,16 +24,16 @@ pub async fn list_instance_dir(
     state: State<'_, AppState>,
     instance_id: String,
     rel: String,
-) -> Result<Value, String> {
+) -> Result<DirectoryListing, String> {
     let dir = resolve_instance_path(&state, &instance_id, &rel)?;
     if !dir.is_dir() {
         return Err("不是一个目录".into());
     }
     let base = rel.clone();
-    let entries: Vec<FsEntry> = tokio::task::spawn_blocking(move || fsutil::list_dir(&dir, &base))
+    let entries = tokio::task::spawn_blocking(move || fsutil::list_dir(&dir, &base))
         .await
         .map_err(|e| e.to_string())??;
-    Ok(json!({ "rel": rel, "entries": entries }))
+    Ok(DirectoryListing { rel, entries })
 }
 
 /// Read a text file inside an instance folder for the built-in editor.
@@ -43,7 +42,7 @@ pub fn read_instance_file(
     state: State<AppState>,
     instance_id: String,
     rel: String,
-) -> Result<Value, String> {
+) -> Result<FileDocument, String> {
     let path = resolve_instance_path(&state, &instance_id, &rel)?;
     fsutil::read_text(&path, &rel)
 }
@@ -55,7 +54,7 @@ pub fn write_instance_file(
     instance_id: String,
     rel: String,
     content: String,
-) -> Result<Value, String> {
+) -> Result<FileInfo, String> {
     let path = resolve_instance_path(&state, &instance_id, &rel)?;
     fsutil::write_text(&path, &rel, content)
 }
@@ -67,7 +66,7 @@ pub fn create_instance_entry(
     instance_id: String,
     rel: String,
     is_dir: bool,
-) -> Result<Value, String> {
+) -> Result<CreatedEntry, String> {
     let last = rel.rsplit('/').next().unwrap_or("");
     fsutil::validate_name(last)?;
     let path = resolve_instance_path(&state, &instance_id, &rel)?;
@@ -80,9 +79,9 @@ pub fn create_instance_entry(
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).map_err(|e| format!("创建目录失败: {e}"))?;
         }
-        std::fs::write(&path, "").map_err(|e| format!("创建文件失败: {e}"))?;
+        std::fs::File::create_new(&path).map_err(|e| format!("创建文件失败: {e}"))?;
     }
-    Ok(json!({ "rel": rel, "is_dir": is_dir }))
+    Ok(CreatedEntry { rel, is_dir })
 }
 
 /// Delete a file or a folder (recursively) inside an instance folder.
@@ -92,7 +91,7 @@ pub fn delete_instance_path(
     instance_id: String,
     rel: String,
 ) -> Result<(), String> {
-    if rel.trim().is_empty() {
+    if rel.trim_matches(|c: char| c.is_whitespace() || c == '/' || c == '\\').is_empty() {
         return Err("不能删除实例根目录".into());
     }
     let path = resolve_instance_path(&state, &instance_id, &rel)?;
@@ -114,8 +113,8 @@ pub fn rename_instance_path(
     instance_id: String,
     rel: String,
     new_name: String,
-) -> Result<Value, String> {
-    if rel.trim().is_empty() {
+) -> Result<RenamedEntry, String> {
+    if rel.trim_matches(|c: char| c.is_whitespace() || c == '/' || c == '\\').is_empty() {
         return Err("不能重命名实例根目录".into());
     }
     fsutil::validate_name(&new_name)?;
@@ -138,7 +137,7 @@ pub fn rename_instance_path(
     } else {
         format!("{}/{}", parent_rel, new_name.trim())
     };
-    Ok(json!({ "rel": new_rel, "name": new_name.trim().to_string() }))
+    Ok(RenamedEntry { rel: new_rel, name: new_name.trim().to_string() })
 }
 
 /// Open the path (or its parent folder for files) in the system file manager.
@@ -195,6 +194,7 @@ pub async fn import_modpack(
             pack_path: path.clone(),
             icon_fallback_url: None,
         },
+        None,
     )
     .await?;
 

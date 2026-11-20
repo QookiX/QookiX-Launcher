@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import { useRouter } from "vue-router";
-import { IconBox, IconCheck, IconClock, IconCopy, IconDownload, IconHeart, IconStar, IconStarFilled } from "./icons";
+import { IconBox, IconCheck, IconClock, IconCopy, IconDownload, IconStar, IconStarFilled } from "./icons";
 import { translateCategory } from "../utils/categories";
 import { fmtRelative as fmtDate, fmtCount as fmt } from "../utils/format";
 import type { ProjectHit } from "../types";
@@ -71,7 +71,7 @@ async function copyName() {
         </div>
         <div class="p-body">
           <div class="p-title-row">
-            <div class="p-title text-ellipsis" :title="project.title">{{ project.title }}</div>
+            <button type="button" class="p-title text-ellipsis qx-title-action" :title="project.title" @click.stop="onCardClick">{{ project.title }}</button>
             <span v-if="typeLabel" class="type-chip">{{ typeLabel }}</span>
           </div>
           <div class="p-author">
@@ -90,8 +90,7 @@ async function copyName() {
       <div class="p-foot">
         <div class="p-stats">
           <span class="provider-badge" :class="project.provider">{{ project.provider === 'modrinth' ? 'Modrinth' : 'CurseForge' }}</span>
-          <span class="dl"><IconDownload /> {{ fmt(project.downloads) }}</span>
-          <span v-if="project.follows" class="fl"><IconHeart /> {{ fmt(project.follows) }}</span>
+          <span class="dl"><IconDownload /><span>{{ fmt(project.downloads) }}</span></span>
         </div>
         <div class="p-actions">
           <button
@@ -126,7 +125,7 @@ async function copyName() {
       <div class="p-body">
         <div class="p-meta">
           <div class="p-title-row">
-            <div class="p-title text-ellipsis" :title="project.title">{{ project.title }}</div>
+            <button type="button" class="p-title text-ellipsis qx-title-action" :title="project.title" @click.stop="onCardClick">{{ project.title }}</button>
             <span v-if="typeLabel" class="type-chip">{{ typeLabel }}</span>
           </div>
           <div class="p-author">{{ project.author }}</div>
@@ -143,7 +142,6 @@ async function copyName() {
         <div class="p-stats">
           <span class="provider-badge" :class="project.provider">{{ project.provider === 'modrinth' ? 'Modrinth' : 'CurseForge' }}</span>
           <span class="dl"><IconDownload /> {{ fmt(project.downloads) }}</span>
-          <span v-if="project.follows" class="fl"><IconHeart /> {{ fmt(project.follows) }}</span>
           <span v-if="fmtDate(project.updated)" class="up"><IconClock /> {{ fmtDate(project.updated) }}</span>
         </div>
         <div class="p-side-actions">
@@ -380,6 +378,7 @@ async function copyName() {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: var(--sp-3);
   border-top: 1px solid var(--border);
   padding-top: 10px;
 }
@@ -394,8 +393,19 @@ async function copyName() {
   font-size: var(--fs-2xs);
   vertical-align: -1px;
 }
+.p-foot .p-stats,
+.p-foot .dl {
+  min-width: 0;
+}
+.p-foot .dl svg {
+  flex-shrink: 0;
+}
+.p-foot .dl span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .dl,
-.fl,
 .up {
   display: inline-flex;
   align-items: center;
@@ -429,7 +439,9 @@ async function copyName() {
 .install-btn {
   display: inline-flex;
   align-items: center;
+  flex-shrink: 0;
   gap: 6px;
+  white-space: nowrap;
   border: none;
   background: linear-gradient(135deg, var(--accent), var(--accent-deep));
   color: var(--accent-contrast);
@@ -454,6 +466,7 @@ async function copyName() {
 }
 .p-actions {
   display: flex;
+  flex-shrink: 0;
   gap: 6px;
   align-items: center;
 }

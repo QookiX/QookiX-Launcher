@@ -66,8 +66,7 @@ interface LoginResult {
   serverName: string;
   links: { homepage: string; register: string };
   profiles: { id: string; name: string }[];
-  /** 来自 OAuth2 流程：yggAdd 时改走 yggdrasil_oauth_add_account */
-  fromOauth?: boolean;
+  authorizationId?: string;
 }
 const yggResult = ref<LoginResult | null>(null);
 const chosenProfile = ref("");
@@ -88,6 +87,14 @@ async function yggOauthLogin() {
   }
 }
 
+async function cancelYggOauth() {
+  try {
+    await accounts.cancelYggOauth();
+  } catch (error) {
+    message.error(String(error));
+  }
+}
+
 // OAuth2 回调拿到多角色时，把列表塞进 yggResult 复用既有角色选择 UI
 watch(
   () => accounts.yggOauthResult,
@@ -98,8 +105,9 @@ watch(
       serverName: r.serverName,
       links: r.links,
       profiles: r.profiles,
-      fromOauth: true,
+      authorizationId: r.authorizationId,
     };
+    accounts.yggOauthWaiting = false;
     chosenProfile.value = "";
   },
 );
@@ -166,9 +174,10 @@ async function yggAdd() {
   yggAdding.value = true;
   try {
     let acc: Account;
-    if (r.fromOauth) {
+    if (r.authorizationId) {
       // OAuth2 流程：Minecraft 令牌由后端用临时 OAuth token 签发
-      acc = await accounts.addYggOauthAccount(profile.id);
+      acc = await accounts.addYggOauthAccount(profile.id, r.authorizationId);
+      if (yggResult.value !== r) return;
     } else {
       acc = await api.yggdrasilAddAccount({
         serverUrl: r.server,
@@ -381,7 +390,10 @@ defineExpose({ open, close });
           </template>
           <template v-else-if="accounts.yggOauthWaiting">
             <p class="qk-add-hint">{{ t("yggLogin.oauthWaiting") }}</p>
-            <n-button block @click="accounts.yggOauthWaiting = false">{{ t("yggLogin.oauthCancel") }}</n-button>
+            <p v-if="accounts.yggOauthUserCode" class="qk-add-hint">
+              {{ t("yggLogin.oauthUserCode", { code: accounts.yggOauthUserCode }) }}
+            </p>
+            <n-button block @click="cancelYggOauth">{{ t("yggLogin.oauthCancel") }}</n-button>
           </template>
           <template v-else-if="yggResult">
             <p class="qk-add-hint">{{ t("yggLogin.loginSuccess", { server: yggResult.serverName }) }}</p>

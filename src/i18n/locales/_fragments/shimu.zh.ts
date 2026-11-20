@@ -35,9 +35,9 @@ export default {
     credsSaved: "凭证已保存",
     fillClientId: "请填写 client_id",
     needClientId: "请先填写拾木空间分配的 client_id / client_secret",
-    notConfigured: "当前版本未内置拾木空间接入凭证，无法登录（凭证由打包时注入）。",
+    notConfigured: "拾木空间登录需启用 QookiX 授权服务。",
     secretHint:
-      "client_secret 只保存在本地并仅用于后端换取令牌，不会下发给页面。公开构建建议用 SHIMU_CLIENT_ID / SHIMU_CLIENT_SECRET 环境变量注入。",
+      "开发构建可测试个人 OAuth 客户端。正式构建通过 QookiX 授权服务登录。",
     redirectHint: "需向拾木空间登记的 Scheme 回调地址（点击复制）：",
     redirectCopied: "回调地址已复制",
     score: "积分 {n}",

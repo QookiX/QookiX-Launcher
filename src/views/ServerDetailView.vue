@@ -1,11 +1,14 @@
 <script setup lang="ts">
+import UiStatus from "../components/UiStatus.vue";
+import { vSegmented } from "../composables/vSegmented";
 import { computed, onBeforeUnmount, onMounted, ref, watch, nextTick } from "vue";
 import { useI18n } from "vue-i18n";
 import { copyText } from "../utils/clipboard";
 import { fmtSize } from "../utils/format";
 import { useRoute, useRouter } from "vue-router";
-import { NInput, NInputNumber, NCheckbox, NSwitch, NSelect, NModal, useMessage } from "naive-ui";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { NButton, NInput, NInputNumber, NCheckbox, NSwitch, NSelect, NModal, useMessage } from "naive-ui";
+import { useTauriListenerScope } from "../composables/tauriListeners";
+import { type UnlistenFn } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { useServersStore } from "../stores/servers";
@@ -25,6 +28,8 @@ import {
   IconStop,
   IconTrash,
 } from "../components/icons";
+
+const { listen } = useTauriListenerScope();
 
 const route = useRoute();
 const router = useRouter();
@@ -507,6 +512,7 @@ async function exportLogs() {
 
 // ---- 启动 / 停止 ----
 const starting = ref(false);
+const stopping = ref(false);
 async function start() {
   if (!server.value) return;
   if (!server.value.eula) {
@@ -541,11 +547,15 @@ async function start() {
 }
 
 async function stop() {
+  if (stopping.value) return;
+  stopping.value = true;
   try {
     await servers.stop(serverId);
     message.success(t("serverDetail.msg.serverStopped"));
   } catch (e) {
     message.error(String(e));
+  } finally {
+    stopping.value = false;
   }
 }
 
@@ -555,13 +565,19 @@ function openFolder(sub?: string) {
 
 // ---- 删除 ----
 const confirmDelete = ref(false);
+const deleting = ref(false);
 async function doDelete() {
+  if (deleting.value) return;
+  deleting.value = true;
   try {
     await servers.remove(serverId);
     message.success(t("serverDetail.msg.serverDeleted"));
+    confirmDelete.value = false;
     router.push("/multiplayer");
   } catch (e) {
     message.error(String(e));
+  } finally {
+    deleting.value = false;
   }
 }
 
@@ -633,7 +649,7 @@ onBeforeUnmount(() => {
     </button>
 
     <div class="head glass">
-      <div class="head-info">
+      <div class="head-info qx-card-open">
         <span
           class="core-badge"
           :style="{ color: CORE_COLORS[server.core], borderColor: CORE_COLORS[server.core] }"
@@ -647,17 +663,17 @@ onBeforeUnmount(() => {
         </p>
       </div>
       <div class="head-ops">
-        <button v-if="!running" class="btn primary" :disabled="starting" @click="start">
-          <IconPlay /> {{ starting ? t('serverDetail.starting') : t('serverDetail.start') }}
-        </button>
-        <button v-else class="btn warn" @click="stop">
-          <IconStop /> {{ t('serverDetail.stop') }}
-        </button>
-        <button class="btn ghost" @click="openFolder()"><IconFolder /> {{ t('serverDetail.folder') }}</button>
+        <NButton v-if="!running" type="primary" :loading="starting" class="server-power" :disabled="starting || stopping" :aria-busy="starting" @click="start">
+          <template #icon><IconPlay /></template> {{ starting ? t('serverDetail.starting') : t('serverDetail.start') }}
+        </NButton>
+        <NButton v-else type="warning" secondary :loading="stopping" class="server-power" :disabled="stopping" :aria-busy="stopping" @click="stop">
+          <template #icon><IconStop /></template> {{ stopping ? t('common.loading') : t('serverDetail.stop') }}
+        </NButton>
+        <NButton @click="openFolder()"><template #icon><IconFolder /></template> {{ t('serverDetail.folder') }}</NButton>
       </div>
     </div>
 
-    <div ref="tabSegRef" class="tabs qx-seg">
+    <div ref="tabSegRef" v-segmented="{ label: t('page.serverDetail'), panel: 'server-tab-panel' }" class="tabs qx-seg">
       <div class="qx-seg__indicator" :style="tabSegStyle"></div>
       <button
         v-for="tabItem in tabs"
@@ -670,7 +686,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 设置 -->
-    <div v-if="tab === 'settings'" class="panel glass">
+    <div v-if="tab === 'settings'" id="server-tab-panel" role="tabpanel" class="panel glass">
       <div class="section">
         <h3 class="section-title">{{ t('serverDetail.settings.basic') }}</h3>
         <p class="section-hint">{{ t('serverDetail.settings.autoSaveHint') }}</p>
@@ -701,8 +717,8 @@ onBeforeUnmount(() => {
         <p class="section-hint">{{ t('serverDetail.settings.javaHint') }}</p>
         <div class="java-row">
           <n-input v-model:value="form.javaPath" :placeholder="t('serverDetail.settings.javaPlaceholder')" @update:value="scheduleAutoSave" />
-          <button class="btn sm ghost" @click="pickJava">{{ t('serverDetail.settings.browse') }}</button>
-          <button class="btn sm ghost" @click="loadJavaCandidates">{{ t('serverDetail.settings.refresh') }}</button>
+          <NButton size="small" @click="pickJava">{{ t('serverDetail.settings.browse') }}</NButton>
+          <NButton size="small" @click="loadJavaCandidates">{{ t('serverDetail.settings.refresh') }}</NButton>
         </div>
         <div v-if="javaCandidates.length" class="java-list">
           <button
@@ -731,18 +747,18 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="panel-foot">
-        <button class="btn danger" @click="confirmDelete = true"><IconTrash /> {{ t('serverDetail.settings.deleteServer') }}</button>
+        <NButton type="error" secondary @click="confirmDelete = true"><template #icon><IconTrash /></template> {{ t('serverDetail.settings.deleteServer') }}</NButton>
         <span v-if="autoSaving" class="save-hint">{{ t('serverDetail.settings.saving') }}</span>
       </div>
     </div>
 
     <!-- 配置文件 -->
-    <div v-else-if="tab === 'config'" class="panel glass">
+    <div v-else-if="tab === 'config'" id="server-tab-panel" role="tabpanel" class="panel glass">
       <!-- server.properties -->
       <div class="section">
         <div class="section-head">
           <h3 class="section-title">server.properties</h3>
-          <div ref="propsModeSegRef" class="props-mode-tabs qx-seg qx-seg--sm">
+          <div ref="propsModeSegRef" v-segmented="{ label: t('common.editorMode') }" class="props-mode-tabs qx-seg qx-seg--sm">
             <div class="qx-seg__indicator" :style="propsModeSegStyle"></div>
             <button :class="{ active: propsMode === 'form' }" @click="propsMode = 'form'">{{ t('serverDetail.config.formMode') }}</button>
             <button :class="{ active: propsMode === 'source' }" @click="propsMode = 'source'">{{ t('serverDetail.config.sourceMode') }}</button>
@@ -751,7 +767,7 @@ onBeforeUnmount(() => {
         <p class="section-hint">{{ t('serverDetail.config.propsHint') }}</p>
 
         <div v-if="propsMode === 'form'" class="props-form">
-          <div v-if="loadingProps" class="empty-inline">{{ t('serverDetail.config.loadingConfig') }}</div>
+          <UiStatus v-if="loadingProps" kind="loading" :text="t('serverDetail.config.loadingConfig')" compact />
           <template v-else>
             <div v-for="g in PROPS_GROUPS" :key="g" class="props-group">
               <h4 class="props-group-title">{{ t('serverDetail.config.propsGroup.' + g) }}</h4>
@@ -801,24 +817,25 @@ onBeforeUnmount(() => {
             </div>
           </template>
           <div class="panel-foot">
-            <button class="btn primary" :disabled="savingProps || loadingProps" @click="savePropsForm">
+            <NButton type="primary" :loading="savingProps" :disabled="savingProps || loadingProps" @click="savePropsForm">
               {{ savingProps ? t('serverDetail.config.saving') : t('serverDetail.config.saveConfig') }}
-            </button>
+            </NButton>
           </div>
         </div>
 
         <div v-else class="props-source">
-          <div v-if="loadingProps" class="empty-inline">{{ t('serverDetail.config.loadingConfig') }}</div>
+          <UiStatus v-if="loadingProps" kind="loading" :text="t('serverDetail.config.loadingConfig')" compact />
           <template v-else>
-            <textarea
-              v-model="propsSource"
+            <NInput
+              v-model:value="propsSource"
+              type="textarea"
               class="editor-textarea"
-              spellcheck="false"
-            ></textarea>
+              :input-props="{ spellcheck: false }"
+            />
             <div class="panel-foot">
-              <button class="btn primary" :disabled="savingProps" @click="savePropsSource">
+              <NButton type="primary" :loading="savingProps" :disabled="savingProps" @click="savePropsSource">
                 {{ savingProps ? t('serverDetail.config.saving') : t('serverDetail.config.saveConfig') }}
-              </button>
+              </NButton>
             </div>
           </template>
         </div>
@@ -828,10 +845,10 @@ onBeforeUnmount(() => {
       <div class="section">
         <div class="section-head">
           <h3 class="section-title">{{ t('serverDetail.config.otherConfigs') }}</h3>
-          <button class="btn sm ghost" @click="loadConfigFiles"><IconRefresh /> {{ t('serverDetail.config.refresh') }}</button>
+          <NButton size="small" @click="loadConfigFiles"><template #icon><IconRefresh /></template> {{ t('serverDetail.config.refresh') }}</NButton>
         </div>
         <p class="section-hint">{{ t('serverDetail.config.otherConfigsHint') }}</p>
-        <div v-if="loadingConfigs" class="empty-inline">{{ t('serverDetail.config.scanningConfigs') }}</div>
+        <UiStatus v-if="loadingConfigs" kind="loading" :text="t('serverDetail.config.scanningConfigs')" compact />
         <div v-else-if="!configFiles.length" class="empty-inline">
           {{ t('serverDetail.config.noOtherConfigs') }}
         </div>
@@ -853,12 +870,12 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 模组 -->
-    <div v-else-if="tab === 'mods'" class="panel glass">
+    <div v-else-if="tab === 'mods'" id="server-tab-panel" role="tabpanel" class="panel glass">
       <div class="panel-head">
         <h3><IconBox /> {{ t('serverDetail.mods.title') }}</h3>
-        <button class="btn sm ghost" @click="openFolder('mods')">{{ t('serverDetail.mods.openFolder') }}</button>
+        <NButton size="small" @click="openFolder('mods')">{{ t('serverDetail.mods.openFolder') }}</NButton>
       </div>
-      <div v-if="loadingFiles" class="empty-inline">{{ t('serverDetail.mods.loading') }}</div>
+      <UiStatus v-if="loadingFiles" kind="loading" :text="t('serverDetail.mods.loading')" compact />
       <div v-else-if="!fileList.length" class="empty-inline">
         {{ t('serverDetail.mods.emptyPrefix') }} <code>mods/</code> {{ t('serverDetail.mods.emptySuffix') }}
       </div>
@@ -871,12 +888,12 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 插件 -->
-    <div v-else-if="tab === 'plugins'" class="panel glass">
+    <div v-else-if="tab === 'plugins'" id="server-tab-panel" role="tabpanel" class="panel glass">
       <div class="panel-head">
         <h3><IconBox /> {{ t('serverDetail.plugins.title') }}</h3>
-        <button class="btn sm ghost" @click="openFolder('plugins')">{{ t('serverDetail.plugins.openFolder') }}</button>
+        <NButton size="small" @click="openFolder('plugins')">{{ t('serverDetail.plugins.openFolder') }}</NButton>
       </div>
-      <div v-if="loadingFiles" class="empty-inline">{{ t('serverDetail.plugins.loading') }}</div>
+      <UiStatus v-if="loadingFiles" kind="loading" :text="t('serverDetail.plugins.loading')" compact />
       <div v-else-if="!fileList.length" class="empty-inline">
         {{ t('serverDetail.plugins.emptyPrefix') }} <code>plugins/</code> {{ t('serverDetail.plugins.emptySuffix') }}
       </div>
@@ -889,15 +906,15 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 日志 -->
-    <div v-else-if="tab === 'logs'" class="panel glass log-panel">
+    <div v-else-if="tab === 'logs'" id="server-tab-panel" role="tabpanel" class="panel glass log-panel">
       <div class="panel-head">
         <h3><IconFile /> {{ t('serverDetail.logs.title') }}</h3>
         <div class="log-ops">
           <span class="run-dot" :class="{ on: running }"></span>
           <span class="run-text">{{ running ? t('serverDetail.logs.running') : t('serverDetail.logs.stopped') }}</span>
-          <button class="btn sm ghost" :title="t('serverDetail.logs.copyAll')" @click="copyLogs"><IconCopy /> {{ t('serverDetail.logs.copy') }}</button>
-          <button class="btn sm ghost" :title="t('serverDetail.logs.exportFile')" @click="exportLogs"><IconDownload /> {{ t('serverDetail.logs.export') }}</button>
-          <button class="btn sm ghost" @click="clearLogs">{{ t('serverDetail.logs.clear') }}</button>
+          <NButton size="small" :title="t('serverDetail.logs.copyAll')" @click="copyLogs"><template #icon><IconCopy /></template> {{ t('serverDetail.logs.copy') }}</NButton>
+          <NButton size="small" :title="t('serverDetail.logs.exportFile')" @click="exportLogs"><template #icon><IconDownload /></template> {{ t('serverDetail.logs.export') }}</NButton>
+          <NButton size="small" @click="clearLogs">{{ t('serverDetail.logs.clear') }}</NButton>
         </div>
       </div>
       <div ref="logBox" class="log-box">
@@ -912,7 +929,7 @@ onBeforeUnmount(() => {
     </div>
 
     <!-- 文件 -->
-    <div v-else-if="tab === 'files'" class="panel glass">
+    <div v-else-if="tab === 'files'" id="server-tab-panel" role="tabpanel" class="panel glass">
       <div class="panel-head">
         <h3><IconFolder /> {{ t('serverDetail.files.title') }}</h3>
       </div>
@@ -932,39 +949,47 @@ onBeforeUnmount(() => {
         <p class="editor-doc">{{ editor.doc }}</p>
         <div v-if="editor.loading" class="editor-loading">{{ t('serverDetail.editor.reading') }}</div>
         <div v-else-if="editor.error" class="editor-error">{{ editor.error }}</div>
-        <textarea
+        <NInput
           v-else
-          v-model="editor.content"
-          class="editor-textarea"
-          spellcheck="false"
-        ></textarea>
+          v-model:value="editor.content"
+              type="textarea"
+              class="editor-textarea"
+              :input-props="{ spellcheck: false }"
+            />
         <div class="editor-foot">
-          <button class="btn ghost" @click="editor = null">{{ t('serverDetail.editor.cancel') }}</button>
-          <button
-            class="btn primary"
+          <NButton @click="editor = null">{{ t('serverDetail.editor.cancel') }}</NButton>
+          <NButton
+            type="primary" :loading="editor.saving"
             :disabled="editor.loading || editor.saving"
             @click="saveEditor"
           >
             {{ editor.saving ? t('serverDetail.editor.saving') : t('serverDetail.editor.save') }}
-          </button>
+          </NButton>
         </div>
       </div>
     </n-modal>
 
     <!-- 删除确认 -->
-    <div v-if="confirmDelete" class="mask" @click="confirmDelete = false">
-      <div class="confirm-card glass" @click.stop>
-        <h3>{{ t('serverDetail.delete.title') }}</h3>
+    <NModal
+      v-model:show="confirmDelete"
+      preset="card"
+      class="qx-confirm-modal"
+      :title="t('serverDetail.delete.title')"
+      :mask-closable="!deleting"
+      :close-on-esc="!deleting"
+      :closable="!deleting"
+    >
         <p>{{ t('serverDetail.delete.confirmPrefix') }}<b>{{ server.name }}</b>{{ t('serverDetail.delete.confirmSuffix') }}</p>
-        <div class="confirm-foot">
-          <button class="btn ghost" @click="confirmDelete = false">{{ t('serverDetail.delete.cancel') }}</button>
-          <button class="btn danger" @click="doDelete">{{ t('serverDetail.delete.delete') }}</button>
+        <div class="qx-confirm-actions">
+          <NButton :disabled="deleting" @click="confirmDelete = false">{{ t('serverDetail.delete.cancel') }}</NButton>
+          <NButton type="error" secondary :loading="deleting" :disabled="deleting" :aria-busy="deleting" @click="doDelete">
+            {{ deleting ? t('common.loading') : t('serverDetail.delete.delete') }}
+          </NButton>
         </div>
-      </div>
-    </div>
+    </NModal>
   </div>
 
-  <div v-else class="loading">{{ t('serverDetail.loading') }}</div>
+  <UiStatus v-else kind="loading" :text="t('serverDetail.loading')" />
   </div>
 </template>
 
@@ -1032,59 +1057,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   flex-wrap: wrap;
 }
-.btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 7px;
-  border: none;
-  border-radius: var(--r-md);
-  padding: 9px 18px;
-  font-size: var(--fs-sm);
-  font-weight: 600;
-  cursor: pointer;
-  font-family: inherit;
-  transition: all 0.15s;
-}
-.btn.sm {
-  padding: 6px 12px;
-  font-size: var(--fs-xs);
-}
-.btn.primary {
-  background: linear-gradient(135deg, var(--accent), var(--accent-deep));
-  color: var(--accent-contrast);
-}
-.btn.primary:hover:not(:disabled) {
-  filter: brightness(1.08);
-}
-.btn.ghost {
-  background: var(--w-06);
-  color: var(--text-1);
-  border: 1px solid var(--border);
-}
-.btn.ghost:hover {
-  background: var(--w-10);
-}
-.btn.warn {
-  background: rgba(224, 168, 90, 0.18);
-  color: var(--warn);
-  border: 1px solid rgba(224, 168, 90, 0.4);
-}
-.btn.warn:hover {
-  background: rgba(224, 168, 90, 0.28);
-}
-.btn.danger {
-  background: var(--danger-16);
-  color: var(--danger-text);
-  border: 1px solid var(--danger-40);
-}
-.btn.danger:hover {
-  background: var(--danger-26);
-}
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
+.server-power { min-width: 112px; }
 /* 外观走全局 .qx-seg，这里只保留对齐 */
 .tabs {
   align-self: flex-start;
@@ -1336,47 +1309,6 @@ onBeforeUnmount(() => {
 .log-line.err {
   color: var(--danger-text);
 }
-.loading {
-  padding: 60px;
-  text-align: center;
-  color: var(--text-3);
-}
-.mask {
-  position: fixed;
-  inset: 0;
-  background: var(--k-45);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-.confirm-card {
-  width: 420px;
-  max-width: 92vw;
-  padding: 20px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-.confirm-card h3 {
-  margin: 0;
-  font-size: 16px;
-}
-.confirm-card p {
-  margin: 0;
-  font-size: var(--fs-sm);
-  color: var(--text-2);
-  line-height: 1.6;
-}
-.confirm-card b {
-  color: var(--text-1);
-}
-.confirm-foot {
-  display: flex;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-top: 4px;
-}
 .editor-body {
   display: flex;
   flex-direction: column;
@@ -1401,25 +1333,13 @@ onBeforeUnmount(() => {
 .editor-error {
   color: var(--danger-text);
 }
-.editor-textarea {
-  width: 100%;
+.editor-textarea { width: 100%; }
+.editor-textarea :deep(textarea) {
   min-height: 360px;
   max-height: 56vh;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 12px 14px;
-  background: rgba(0, 0, 0, 0.28);
-  color: var(--text-1);
   font-family: "Cascadia Code", Consolas, "Courier New", monospace;
   font-size: var(--fs-xs);
   line-height: 1.55;
-  outline: none;
-  box-sizing: border-box;
-  transition: border-color 0.13s;
-}
-.editor-textarea:focus {
-  border-color: var(--accent-45);
 }
 .editor-foot {
   display: flex;
@@ -1488,7 +1408,7 @@ onBeforeUnmount(() => {
   gap: 8px;
   align-items: center;
 }
-.java-row .btn {
+.java-row :deep(.n-button) {
   flex-shrink: 0;
 }
 .java-list {

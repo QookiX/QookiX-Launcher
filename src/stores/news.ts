@@ -11,24 +11,29 @@ export const useNewsStore = defineStore("news", () => {
   const loading = ref(false);
   // 「新闻」标签是否激活：BrowseView 写入，TitleBar 读取以决定是否显示刷新按钮
   const active = ref(false);
-  // 标题栏「刷新」按钮触发信号：TitleBar 自增，BrowseView 监听后执行刷新
-  const refreshSignal = ref(0);
+  let pending: Promise<void> | undefined;
 
   function isFresh() {
-    return news.value.length > 0 && Date.now() - loadedAt.value < CACHE_TTL;
+    return loadedAt.value > 0 && Date.now() - loadedAt.value < CACHE_TTL;
   }
 
-  async function load(force = false) {
-    if (!force && isFresh()) return;
-    const hasCache = news.value.length > 0;
-    if (!hasCache || force) loading.value = true;
-    try {
-      news.value = await api.fetchNews();
+  function load(force = false): Promise<void> {
+    if (pending) return pending;
+    if (!force && isFresh()) return Promise.resolve();
+    loading.value = true;
+    pending = api.fetchNews().then((items) => {
+      news.value = items;
       loadedAt.value = Date.now();
-    } finally {
+    }).finally(() => {
       loading.value = false;
-    }
+      pending = undefined;
+    });
+    return pending;
   }
 
-  return { news, loading, isFresh, load, active, refreshSignal };
+  function setActive(value: boolean) {
+    active.value = value;
+  }
+
+  return { news, loading, load, active, setActive };
 });

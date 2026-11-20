@@ -27,7 +27,7 @@ pub fn server_meta_path(state: &AppState, id: &str) -> PathBuf {
 }
 
 pub fn load_servers(state: &AppState) -> Vec<ServerConfig> {
-    crate::util::load_dir_entries(&state.servers_dir(), "server.json", |s: &ServerConfig| s.created)
+    crate::fsutil::load_dir_entries(&state.servers_dir(), "server.json", |s: &ServerConfig| s.created)
 }
 
 pub fn get_server(state: &AppState, id: &str) -> Result<ServerConfig, String> {
@@ -214,6 +214,7 @@ pub fn update_server(state: &AppState, patch: serde_json::Value) -> Result<Serve
 
 pub fn delete_server(state: &AppState, id: &str) -> Result<(), String> {
     validate_server_id(id)?;
+    let _files = state.jobs.reserve_server_files(id)?;
     let dir = server_dir(state, id);
     if dir.exists() {
         std::fs::remove_dir_all(&dir).map_err(|e| format!("删除服务器目录失败: {e}"))?;
@@ -234,6 +235,8 @@ pub async fn install_server_core(
     state: &AppState,
     id: &str,
 ) -> Result<(), String> {
+    validate_server_id(id)?;
+    let _files = state.jobs.reserve_server_files(id)?;
     let server = get_server(state, id)?;
     let dir = server_dir(state, id);
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -746,7 +749,7 @@ async fn pick_java(state: &AppState, jar: &Path, mc_version: &str, java_override
         required = estimated;
     }
     // jar 字节码版本作为补充
-    if let Some(class_major) = crate::util::jar_class_version(jar) {
+    if let Some(class_major) = crate::archive::jar_class_version(jar) {
         let from_jar = class_major.saturating_sub(44);
         if from_jar > required {
             required = from_jar;
@@ -849,11 +852,21 @@ fn split_jvm_args(s: &str) -> Vec<String> {
     out
 }
 
+fn append_jar_args(command: &mut Command, max: &str, min: &str, extra: Option<&str>, jar: &str) {
+    command.args([max, min]);
+    if let Some(extra) = extra {
+        command.args(split_jvm_args(extra));
+    }
+    command.args(["-jar", jar, "nogui"]);
+}
+
 pub async fn start_server(
     app: tauri::AppHandle,
     state: &AppState,
     id: &str,
 ) -> Result<u32, String> {
+    validate_server_id(id)?;
+    let process = state.jobs.reserve_server(id)?;
     let server = get_server(state, id)?;
     let dir = server_dir(state, id);
 
@@ -897,14 +910,6 @@ pub async fn start_server(
         }
     }
 
-    // already running?
-    {
-        let guard = state.server_pids.lock().unwrap();
-        if guard.contains_key(id) {
-            return Err("服务器已在运行".into());
-        }
-    }
-
     ensure_server_files(&dir, server.eula)?;
     let (java, required_java) = pick_java(state, &jar, &server.mc_version, server.java_path.as_deref()).await?;
     let _ = app.emit("server://log", serde_json::json!({
@@ -921,7 +926,7 @@ pub async fn start_server(
             jvm_content.push('\n');
             jvm_content.push_str(extra);
         }
-        let _ = crate::util::fs_best_effort("write", &user_jvm, std::fs::write(&user_jvm, &jvm_content));
+        let _ = crate::fsutil::fs_best_effort("write", &user_jvm, std::fs::write(&user_jvm, &jvm_content));
         let mut c = Command::new(&java.path);
         c.arg(format!("@{}", user_jvm.to_string_lossy()))
             .arg(format!("@{}", args.display()))
@@ -929,21 +934,14 @@ pub async fn start_server(
             .current_dir(&dir);
         c
     } else {
-        // Vanilla/Paper/Fabric: java -jar <jar> nogui
         let mut c = Command::new(&java.path);
-        c.args([&max, &min, "-jar", &launch_jar, "nogui"]).current_dir(&dir);
+        append_jar_args(&mut c, &max, &min, server.jvm_args.as_deref(), &launch_jar);
+        c.current_dir(&dir);
         c
     };
     cmd.stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
-    if args_file.is_none() {
-        if let Some(extra) = &server.jvm_args {
-            for arg in split_jvm_args(extra) {
-                cmd.arg(arg);
-            }
-        }
-    }
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -951,38 +949,18 @@ pub async fn start_server(
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
 
-    let mut child = tokio::process::Command::from(cmd)
+    if process.cancel.is_cancelled() {
+        return Err("服务器启动已取消".into());
+    }
+    let child = tokio::process::Command::from(cmd)
         .spawn()
         .map_err(|e| format!("启动 Java 失败: {e}"))?;
     let pid = child.id().unwrap_or(0);
-    let stdin = child.stdin.take();
-    {
-        let mut guard = state.server_pids.lock().unwrap();
-        guard.insert(id.to_string(), pid);
-    }
-
-    // stdin command channel
-    let (tx, mut rx) = tokio::sync::mpsc::channel::<String>(8);
-    {
-        let mut guard = state.server_senders.lock().unwrap();
-        guard.insert(id.to_string(), tx);
-    }
-    if let Some(stdin) = stdin {
-        let sid_stdin = id.to_string();
-        tauri::async_runtime::spawn(async move {
-            use tokio::io::AsyncWriteExt;
-            let mut stdin = stdin;
-            while let Some(cmd) = rx.recv().await {
-                let line = format!("{}\n", cmd);
-                let _ = stdin.write_all(line.as_bytes()).await;
-                let _ = stdin.flush().await;
-            }
-            let _ = sid_stdin;
-        });
-    }
+    let task_id = process.task_id;
+    process.set_pid(pid);
     let _ = app.emit(
         "server://state",
-        serde_json::json!({ "serverId": id, "state": "running", "pid": pid, "code": null }),
+        serde_json::json!({ "serverId": id, "taskId": task_id, "state": "running", "pid": pid, "code": null }),
     );
 
     // mark started
@@ -995,43 +973,86 @@ pub async fn start_server(
 
     // stream logs in background
     let app2 = app.clone();
-    let sp = state.server_pids.clone();
     let sid = id.to_string();
     let log_path = dir.join("console.log");
+    let stop_command = server.stop_command.unwrap_or_else(|| "stop".to_string());
     tauri::async_runtime::spawn(async move {
-        let (outcome, tail) = stream_server_output(&app2, child, &sid, log_path).await;
-        let was_running = {
-            let guard = sp.lock().unwrap();
-            guard.contains_key(&sid)
-        };
-        if was_running {
-            {
-                let mut guard = sp.lock().unwrap();
-                guard.remove(&sid);
-            }
-            if let Some(c) = outcome {
-                if c != 0 {
-                    let _ = app2.emit(
-                        "server://error",
-                        serde_json::json!({ "serverId": &sid, "code": c, "tail": tail }),
-                    );
-                }
+        let (outcome, tail) =
+            stream_server_output(&app2, child, &sid, log_path, &stop_command, &process.cancel).await;
+        if !process.cancel.is_cancelled() {
+            if let Some(code) = outcome.filter(|code| *code != 0) {
+                let _ = app2.emit(
+                    "server://error",
+                    serde_json::json!({ "serverId": &sid, "code": code, "tail": tail }),
+                );
             }
         }
         let _ = app2.emit(
             "server://state",
-            serde_json::json!({ "serverId": sid, "state": "exited", "pid": pid, "code": outcome }),
+            serde_json::json!({ "serverId": sid, "taskId": task_id, "state": "exited", "pid": pid, "code": outcome }),
         );
+        drop(process);
     });
 
     Ok(pid)
 }
 
-fn append_log_line(path: &Path, line: &str) {
-    use std::io::Write;
-    if let Ok(mut f) = std::fs::OpenOptions::new().append(true).create(true).open(path) {
-        let _ = writeln!(f, "{}", line);
+async fn forward_console_lines(
+    stream: &'static str,
+    reader: impl tokio::io::AsyncRead + Unpin,
+    tx: tokio::sync::mpsc::Sender<(&'static str, String)>,
+) {
+    let mut reader = tokio::io::BufReader::new(reader);
+    while let Ok(Some(line)) = crate::server_logs::read_line(&mut reader).await {
+        if tx.send((stream, line)).await.is_err() {
+            break;
+        }
     }
+}
+
+async fn record_console_lines(
+    app: tauri::AppHandle,
+    server_id: String,
+    path: PathBuf,
+    mut rx: tokio::sync::mpsc::Receiver<(&'static str, String)>,
+) -> Vec<String> {
+    let mut log = match crate::server_logs::DiskLog::open(path).await {
+        Ok(log) => Some(log),
+        Err(err) => {
+            eprintln!("[server] 无法打开控制台日志: {err}");
+            None
+        }
+    };
+    let mut tail = std::collections::VecDeque::with_capacity(15);
+    let mut flush = tokio::time::interval(std::time::Duration::from_millis(500));
+    flush.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        let result = tokio::select! {
+            item = rx.recv() => {
+                let Some((stream, line)) = item else { break };
+                let _ = app.emit("server://log", serde_json::json!({
+                    "serverId": &server_id, "stream": stream, "line": &line
+                }));
+                let written = if let Some(log) = &mut log { log.append(&line).await } else { Ok(()) };
+                if tail.len() == 15 { tail.pop_front(); }
+                tail.push_back(line);
+                written
+            }
+            _ = flush.tick(), if log.is_some() => {
+                if let Some(log) = &mut log { log.flush().await } else { Ok(()) }
+            }
+        };
+        if let Err(err) = result {
+            eprintln!("[server] 无法写入控制台日志: {err}");
+            log = None;
+        }
+    }
+    if let Some(log) = &mut log {
+        if let Err(err) = log.flush().await {
+            eprintln!("[server] 无法刷新控制台日志: {err}");
+        }
+    }
+    tail.into_iter().collect()
 }
 
 async fn stream_server_output(
@@ -1039,122 +1060,81 @@ async fn stream_server_output(
     mut child: tokio::process::Child,
     server_id: &str,
     log_path: PathBuf,
+    stop_command: &str,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> (Option<i32>, Vec<String>) {
-    use std::sync::{Arc, Mutex};
-    let stdout = child.stdout.take();
-    let stderr = child.stderr.take();
-    let lines: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let (tx, rx) = tokio::sync::mpsc::channel(128);
+    let mut output = tokio::spawn(record_console_lines(app.clone(), server_id.to_owned(), log_path, rx));
     let mut tasks = Vec::new();
-    if let Some(out) = stdout {
-        let app = app.clone();
-        let id = server_id.to_string();
-        let lines = lines.clone();
-        let lp = log_path.clone();
-        tasks.push(tauri::async_runtime::spawn(async move {
-            use tokio::io::AsyncBufReadExt;
-            let mut reader = tokio::io::BufReader::new(out).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                lines.lock().unwrap().push(line.clone());
-                append_log_line(&lp, &line);
-                let _ = app.emit(
-                    "server://log",
-                    serde_json::json!({ "serverId": id, "stream": "out", "line": line }),
-                );
+    if let Some(stdout) = child.stdout.take() {
+        tasks.push(tokio::spawn(forward_console_lines("out", stdout, tx.clone())));
+    }
+    if let Some(stderr) = child.stderr.take() {
+        tasks.push(tokio::spawn(forward_console_lines("err", stderr, tx.clone())));
+    }
+    drop(tx);
+    let mut stdin = child.stdin.take();
+    let status = tokio::select! {
+        status = child.wait() => status,
+        _ = cancel.cancelled() => {
+            if let Some(stdin) = stdin.as_mut() {
+                use tokio::io::AsyncWriteExt;
+                let command = format!("{stop_command}\n");
+                let result = tokio::time::timeout(std::time::Duration::from_secs(3), async {
+                    stdin.write_all(command.as_bytes()).await?;
+                    stdin.flush().await
+                }).await;
+                if !matches!(result, Ok(Ok(()))) {
+                    let _ = app.emit("server://log", serde_json::json!({
+                        "serverId": server_id, "stream": "err",
+                        "line": "发送关服命令失败，仍在等待服务器退出",
+                    }));
+                }
             }
-        }));
+            child.wait().await
+        }
+    }.ok();
+    for mut task in tasks {
+        if tokio::time::timeout(std::time::Duration::from_secs(2), &mut task).await.is_err() {
+            task.abort();
+        }
     }
-    if let Some(err) = stderr {
-        let app = app.clone();
-        let id = server_id.to_string();
-        let lines = lines.clone();
-        let lp = log_path.clone();
-        tasks.push(tauri::async_runtime::spawn(async move {
-            use tokio::io::AsyncBufReadExt;
-            let mut reader = tokio::io::BufReader::new(err).lines();
-            while let Ok(Some(line)) = reader.next_line().await {
-                lines.lock().unwrap().push(line.clone());
-                append_log_line(&lp, &line);
-                let _ = app.emit(
-                    "server://log",
-                    serde_json::json!({ "serverId": id, "stream": "err", "line": line }),
-                );
-            }
-        }));
-    }
-    let status = child.wait().await.ok();
-    for t in tasks {
-        let _ = t.await;
-    }
-    let code = status.map(|s| s.code().unwrap_or(-1));
-    let tail: Vec<String> = if code.map(|c| c != 0).unwrap_or(false) {
-        lines
-            .lock()
-            .unwrap()
-            .iter()
-            .rev()
-            .take(15)
-            .cloned()
-            .collect::<Vec<_>>()
-            .into_iter()
-            .rev()
-            .collect()
-    } else {
-        Vec::new()
+    let recent = match tokio::time::timeout(std::time::Duration::from_secs(4), &mut output).await {
+        Ok(Ok(tail)) => tail,
+        Ok(Err(err)) => {
+            eprintln!("[server] 控制台日志任务失败: {err}");
+            Vec::new()
+        }
+        Err(_) => {
+            output.abort();
+            Vec::new()
+        }
     };
+    let code = status.map(|s| s.code().unwrap_or(-1));
+    let tail = if code.is_some_and(|code| code != 0) { recent } else { Vec::new() };
     (code, tail)
 }
 
 pub async fn stop_server(state: &AppState, id: &str) -> Result<(), String> {
-    let pid = {
-        let mut guard = state.server_pids.lock().unwrap();
-        guard.remove(id)
-    };
-    let sender = {
-        let mut guard = state.server_senders.lock().unwrap();
-        guard.remove(id)
-    };
-
-    if let Some(tx) = sender {
-        let cmd = get_server(state, id)
-            .ok()
-            .and_then(|s| s.stop_command)
-            .unwrap_or_else(|| "stop".to_string());
-        let _ = tx.send(cmd).await;
+    validate_server_id(id)?;
+    let Some(finished) = state.jobs.request_server_shutdown(id) else {
         return Ok(());
-    }
-
-    if let Some(pid) = pid {
-        #[cfg(windows)]
-        {
-            use std::os::windows::process::CommandExt;
-            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-            let _ = Command::new("taskkill")
-                .args(["/T", "/F", "/PID", &pid.to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
-        }
-        #[cfg(not(windows))]
-        {
-            let _ = Command::new("kill").args(["-9", &pid.to_string()]).output();
-        }
-    }
-    Ok(())
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(30), finished.cancelled())
+        .await
+        .map_err(|_| "服务器尚未退出，请查看控制台日志".into())
 }
 
 pub fn is_server_running(state: &AppState, id: &str) -> bool {
-    state.server_pids.lock().unwrap().contains_key(id)
+    state.jobs.server_running(id)
 }
 
-pub fn read_server_log(state: &AppState, id: &str) -> Result<Vec<String>, String> {
+pub async fn read_server_log(state: &AppState, id: &str) -> Result<Vec<String>, String> {
     validate_server_id(id)?;
     let path = server_dir(state, id).join("console.log");
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let content = std::fs::read_to_string(&path).map_err(|e| format!("读取日志失败: {e}"))?;
-    let all: Vec<&str> = content.lines().collect();
-    let start = all.len().saturating_sub(2000);
-    Ok(all[start..].iter().map(|s| s.to_string()).collect())
+    tokio::task::spawn_blocking(move || crate::server_logs::tail(&path))
+        .await.map_err(|err| format!("读取日志任务失败: {err}"))?
+        .map_err(|err| format!("读取日志失败: {err}"))
 }
 
 // ---------------------------------------------------------------------------
@@ -1277,5 +1257,19 @@ fn scan_config_subdir(base: &Path, prefix: &str, out: &mut Vec<ServerConfigFile>
         } else if path.is_dir() {
             scan_config_subdir(&path, &rel, out, depth - 1);
         }
+    }
+}
+
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    #[test]
+    fn direct_server_launch_keeps_custom_jvm_options_before_jar() {
+        let mut command = Command::new("java");
+        append_jar_args(&mut command, "-Xmx4096M", "-Xms1024M", Some("-XX:+UseG1GC -Dkey=quoted"), "server.jar");
+        let args = command.get_args().map(|value| value.to_string_lossy().into_owned()).collect::<Vec<_>>();
+        assert_eq!(args, ["-Xmx4096M", "-Xms1024M", "-XX:+UseG1GC", "-Dkey=quoted", "-jar", "server.jar", "nogui"]);
     }
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { h, onMounted, ref } from "vue";
 import { NButton, useDialog, useMessage } from "naive-ui";
-import { peekUpdate, downloadUpdate, updateReady, forceUpdateInfo, loadChangelogReleases, releasesInRange } from "../updater";
+import { peekUpdate, downloadUpdate, updateReady, forceUpdateInfo, loadChangelogReleases, releasesInRange, type UpdateOffer } from "../updater";
 import UpdateNotes from "./UpdateNotes.vue";
 import { useSettingsStore } from "../stores/settings";
 import { openDownloadsDrawer } from "../composables/useDownloadsDrawer";
@@ -48,7 +48,7 @@ async function runCheck() {
     // 自动更新开启：后台静默下载安装，不弹窗、不打断当前页面。
     // 下载完也只是点亮标题栏的「重启以更新」，绝不自动重启。
     if (settings.settings?.auto_update) {
-      void doInstall(true);
+      void doInstall(update, true);
       return;
     }
 
@@ -103,7 +103,7 @@ async function runCheck() {
               type: "primary",
               onClick: () => {
                 close();
-                void doInstall();
+                void doInstall(update);
               },
             },
             { default: () => t("updaterCheck.downloadAndUpdate") }
@@ -127,11 +127,11 @@ async function dismiss(version: string) {
 /**
  * @param auto 自动更新路径：后台下载，不跳转页面、不弹窗询问。
  */
-async function doInstall(auto = false) {
+async function doInstall(update: UpdateOffer, auto = false) {
   // 手动触发时才打开下载抽屉看进度；自动更新在后台跑，不打断用户。
   if (!auto) openDownloadsDrawer();
   try {
-    const downloaded = await downloadUpdate();
+    const downloaded = await downloadUpdate(update);
     if (!downloaded) return;
     // 只下载不安装：安装与重启由标题栏「重启以更新」按钮触发。
     message.success(t("updaterCheck.downloadedHint"));

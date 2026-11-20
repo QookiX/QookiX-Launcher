@@ -13,9 +13,11 @@
  */
 import { onBeforeUnmount, onMounted, ref, shallowRef, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { listen } from "@tauri-apps/api/event";
+import { useTauriListenerScope } from "../../composables/tauriListeners";
 import { api } from "../../api";
 import type { MapImageData } from "../../types";
+
+const { listen } = useTauriListenerScope();
 
 const props = defineProps<{
   instanceId: string;

@@ -1,6 +1,8 @@
 use crate::models::*;
 use crate::state::AppState;
 use crate::util::rules_allow;
+use crate::runtime_jobs::ProcessLease;
+use crate::task_events::{LaunchProgress, LaunchState, LaunchStateEvent};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -53,7 +55,9 @@ pub async fn launch_game(
     account: ResolvedAccount,
     world: Option<String>,
     server: Option<String>,
+    lease: ProcessLease,
 ) -> Result<LaunchResult, String> {
+    let task_id = lease.task_id;
     let mut settings = state.settings().clone();
     // Resolve effective Microsoft Client ID (built-in or user-configured)
     if let Ok(id) = crate::accounts::effective_ms_client_id(state) {
@@ -78,7 +82,7 @@ pub async fn launch_game(
             "instanceId": &instance.id, "stream": "out",
             "line": "[修复] 版本元数据缺少 classpath 参数，正在重新安装游戏文件…"
         }));
-        crate::install::install_game(app.clone(), state, instance).await?;
+        crate::install::install_game(app.clone(), state, instance, Some(&lease.cancel)).await?;
         let text = std::fs::read_to_string(&version_path).map_err(|e| e.to_string())?;
         version_json = serde_json::from_str(&text).map_err(|e| format!("版本元数据损坏: {e}"))?;
         crate::install::normalize_natives_args(&mut version_json);
@@ -94,37 +98,14 @@ pub async fn launch_game(
             "instanceId": &instance.id, "stream": "out",
             "line": format!("[修复] 本地库 {missing} 缺失，正在重新执行安装任务…")
         }));
-        crate::install::install_game(app.clone(), state, instance).await?;
+        crate::install::install_game(app.clone(), state, instance, Some(&lease.cancel)).await?;
         let text = std::fs::read_to_string(&version_path).map_err(|e| e.to_string())?;
         version_json = serde_json::from_str(&text).map_err(|e| format!("版本元数据损坏: {e}"))?;
         crate::install::normalize_natives_args(&mut version_json);
     }
 
-    let _ = app.emit("launch://progress", serde_json::json!({ "step": "正在检查 Java 运行时…", "progress": 40 }));
-    let java = match pick_java(&app, state, instance, &version_json).await {
-        Ok(j) => j,
-        Err(e) if e.starts_with("NEED_DOWNLOAD:") => {
-            let major = e
-                .trim_start_matches("NEED_DOWNLOAD:")
-                .parse::<u32>()
-                .unwrap_or(17);
-            let _ = app.emit(
-                "launch://log",
-                serde_json::json!({
-                    "instanceId": instance.id,
-                    "stream": "out",
-                    "line": format!("未找到合适的 Java，正在自动下载 Java {major} JRE…"),
-                }),
-            );
-            crate::java::download_java_runtime(app.clone(), state, major).await?;
-            // 下载后清除检测缓存，确保下一次 pick_java 能发现新装的 Java
-            *state.java_cache.lock().unwrap() = None;
-            pick_java(&app, state, instance, &version_json)
-                .await
-                .map_err(|e2| format!("Java 下载完成但仍无法选择: {e2}"))?
-        }
-        Err(e) => return Err(e),
-    };
+    emit_progress(&app, &instance.id, task_id, "正在检查 Java 运行时…", 40);
+    let java = ensure_java(&app, state, instance, &version_json).await?;
 
     let instance_dir = state.instances_dir().join(&instance.id);
     let natives_dir = instance_dir.join("natives");
@@ -158,7 +139,7 @@ pub async fn launch_game(
                         "line": "正在应用离线皮肤…",
                     }));
                     build_skin_resourcepack(&instance_dir, &skin_bytes)?;
-                    crate::util::fs_best_effort("write", &marker, std::fs::write(&marker, current_hash));
+                    crate::fsutil::fs_best_effort("write", &marker, std::fs::write(&marker, current_hash));
                 }
             }
         }
@@ -167,12 +148,12 @@ pub async fn launch_game(
         // override the server-provided skin.
         let skin_pack = instance_dir.join("resourcepacks").join("QookiX_Skin.zip");
         if skin_pack.exists() {
-            crate::util::fs_best_effort("remove_file", &skin_pack, std::fs::remove_file(&skin_pack));
+            crate::fsutil::fs_best_effort("remove_file", &skin_pack, std::fs::remove_file(&skin_pack));
             disable_resource_pack(&instance_dir, "QookiX_Skin.zip");
         }
     }
 
-    let _ = app.emit("launch://progress", serde_json::json!({ "step": "正在准备启动参数…", "progress": 60 }));
+    emit_progress(&app, &instance.id, task_id, "正在准备启动参数…", 60);
 
     // ---- classpath ----
     let features = features_map(resolution.is_some());
@@ -292,10 +273,13 @@ pub async fn launch_game(
     std::fs::create_dir_all(state.logs_dir()).map_err(|e| e.to_string())?;
     // Never write the raw access token into the launch log.
     let logged = mask_secret_args(&args);
-    crate::util::fs_best_effort("write", &log_path, std::fs::write(&log_path, format!("$ java {}\n", logged.join(" "))));
+    crate::fsutil::fs_best_effort("write", &log_path, std::fs::write(&log_path, format!("$ java {}\n", logged.join(" "))));
 
-    let _ = app.emit("launch://progress", serde_json::json!({ "step": "正在启动游戏进程…", "progress": 80 }));
+    emit_progress(&app, &instance.id, task_id, "正在启动游戏进程…", 80);
 
+    if lease.cancel.is_cancelled() {
+        return Err("启动已取消".into());
+    }
     let child = tokio::process::Command::from(cmd)
         .spawn()
         .map_err(|e| format!("启动 Java 失败: {e}"))?;
@@ -304,15 +288,12 @@ pub async fn launch_game(
     let started = std::time::Instant::now();
     // 冒险日志：记下这次游玩的开始（退出时补结束时间；强杀也能补上）
     let session_id = crate::instances::start_play_session(state, &instance.id);
-    let _ = app.emit("launch://progress", serde_json::json!({ "step": "启动成功，正在等待游戏窗口…", "progress": 100 }));
-    emit_state(&app, &instance.id, "running", pid, None);
-    {
-        let mut guard = state.game_pids.lock().unwrap();
-        guard.insert(instance.id.clone(), pid);
-    }
+    emit_progress(&app, &instance.id, task_id, "启动成功，正在等待游戏窗口…", 100);
+    lease.set_pid(pid);
+    emit_state(&app, &instance.id, task_id, LaunchState::Running, pid, None);
     let _ = app.emit(
         "launch://pid",
-        serde_json::json!({ "instanceId": instance.id, "pid": pid, "logPath": log_path.to_string_lossy() }),
+        serde_json::json!({ "instanceId": instance.id, "taskId": task_id, "pid": pid, "logPath": log_path.to_string_lossy() }),
     );
     // 时光机：开启后随游戏启动跑截图引擎（游戏退出自动停）
     crate::timemachine::start_engine(app.clone(), instance.id.clone(), pid);
@@ -320,17 +301,12 @@ pub async fn launch_game(
     // stream stdout/stderr in the background
     let app2 = app.clone();
     let inst_id = instance.id.clone();
-    let gp = state.game_pids.clone();
     let logs_dir = state.logs_dir();
     let inst_dir = ctx.instance_dir.clone();
     let auto_world = ctx.world.clone();
     let auto_game_version = Some(instance.mc_version.clone());
     tauri::async_runtime::spawn(async move {
-        let outcome = stream_output(&app2, child, logs_dir.clone(), inst_id.clone()).await;
-        {
-            let mut guard = gp.lock().unwrap();
-            guard.remove(&inst_id);
-        }
+        let outcome = stream_output(&app2, child, logs_dir.clone(), inst_id.clone(), &lease.cancel).await;
         // 累计游玩时长：进程退出（含强杀）都会走到这里；写入完成后再发 exited
         // 状态事件，保证前端刷新时已能读到最新时长。
         let played_secs = started.elapsed().as_secs();
@@ -343,13 +319,15 @@ pub async fn launch_game(
             let st = app2.state::<AppState>();
             crate::instances::end_play_session(st.inner(), sid);
         }
-        emit_state(&app2, &inst_id, "exited", pid, outcome);
+        emit_state(&app2, &inst_id, task_id, LaunchState::Exited, pid, outcome);
         let _ = app2.emit(
             "launch://exit",
-            serde_json::json!({ "instanceId": inst_id, "code": outcome }),
+            serde_json::json!({ "instanceId": inst_id, "taskId": task_id, "code": outcome }),
         );
+        let stopped = lease.cancel.is_cancelled();
+        drop(lease);
         // 崩溃检查：进程异常退出时分析日志与崩溃文件并弹窗提示
-        if outcome != Some(0) {
+        if !stopped && outcome != Some(0) {
             if let Some(diag) = diagnose_crash(&inst_dir, &logs_dir, &inst_id, outcome) {
                 let mut v = serde_json::to_value(&diag).unwrap_or_default();
                 v["instanceId"] = serde_json::json!(inst_id);
@@ -375,10 +353,7 @@ pub async fn launch_game(
         }
     });
 
-    Ok(LaunchResult {
-        pid,
-        command: args,
-    })
+    Ok(LaunchResult { pid, task_id })
 }
 
 async fn stream_output(
@@ -386,14 +361,14 @@ async fn stream_output(
     mut child: tokio::process::Child,
     logs_dir: PathBuf,
     instance_id: String,
+    cancel: &tokio_util::sync::CancellationToken,
 ) -> Option<i32> {
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
 
-    let write_log: std::sync::Arc<std::sync::Mutex<std::fs::File>> =
-        std::sync::Arc::new(std::sync::Mutex::new(
-            std::fs::File::create(logs_dir.join(format!("{instance_id}-live.log"))).ok()?,
-        ));
+    let write_log = std::fs::File::create(logs_dir.join(format!("{instance_id}-live.log")))
+        .ok()
+        .map(|file| std::sync::Arc::new(std::sync::Mutex::new(file)));
 
     /// 按行转发子进程输出。
     ///
@@ -406,7 +381,7 @@ async fn stream_output(
         app: tauri::AppHandle,
         id: String,
         stream: &'static str,
-        log: std::sync::Arc<std::sync::Mutex<std::fs::File>>,
+        log: Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>>,
     ) where
         R: tokio::io::AsyncRead + Unpin,
     {
@@ -427,7 +402,7 @@ async fn stream_output(
                 "launch://log",
                 serde_json::json!({ "instanceId": id, "stream": stream, "line": line }),
             );
-            if let Ok(mut f) = log.lock() {
+            if let Some(mut f) = log.as_ref().and_then(|log| log.lock().ok()) {
                 use std::io::Write;
                 let _ = writeln!(f, "{line}");
             }
@@ -448,63 +423,63 @@ async fn stream_output(
         }));
     }
 
-    let status = child.wait().await.ok();
-    for t in tasks {
-        let _ = t.await;
+    let status = tokio::select! {
+        status = child.wait() => status,
+        _ = cancel.cancelled() => stop_child(&mut child).await,
+    }.ok();
+    for mut task in tasks {
+        if tokio::time::timeout(std::time::Duration::from_secs(2), &mut task).await.is_err() {
+            task.abort();
+        }
     }
     status.map(|s| s.code().unwrap_or(-1))
 }
 
-pub async fn kill_game(state: &AppState) -> Result<(), String> {
-    let pids: Vec<u32> = {
-        let mut guard = state.game_pids.lock().unwrap();
-        guard.drain().map(|(_, v)| v).collect()
-    };
-    if pids.is_empty() {
-        return Ok(());
-    }
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-        // Graceful: send WM_CLOSE via taskkill (no /F) to all, then give them a
-        // single shared window to exit cleanly before force-killing the rest.
-        for pid in &pids {
-            let _ = Command::new("taskkill")
-                .args(["/PID", &pid.to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
+async fn stop_child(child: &mut tokio::process::Child) -> std::io::Result<std::process::ExitStatus> {
+    use std::time::Duration;
+    if let Some(pid) = child.id() {
+        #[cfg(windows)]
+        let mut request = {
+            let mut command = tokio::process::Command::new("taskkill");
+            command.args(["/PID", &pid.to_string()]).creation_flags(0x0800_0000);
+            command
+        };
+        #[cfg(not(windows))]
+        let mut request = {
+            let mut command = tokio::process::Command::new("kill");
+            command.args(["-15", &pid.to_string()]);
+            command
+        };
+        request.kill_on_drop(true);
+        let _ = tokio::time::timeout(Duration::from_secs(2), request.output()).await;
+        if let Ok(status) = tokio::time::timeout(Duration::from_secs(3), child.wait()).await {
+            return status;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        for pid in &pids {
-            // Force kill the entire process tree if still alive
-            let _ = Command::new("taskkill")
+        #[cfg(windows)]
+        {
+            let mut force = tokio::process::Command::new("taskkill");
+            force
                 .args(["/T", "/F", "/PID", &pid.to_string()])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output();
+                .creation_flags(0x0800_0000)
+                .kill_on_drop(true);
+            let _ = tokio::time::timeout(Duration::from_secs(2), force.output()).await;
         }
+        let _ = child.start_kill();
     }
-    #[cfg(not(windows))]
-    {
-        // Graceful: SIGTERM all first
-        for pid in &pids {
-            let _ = Command::new("kill")
-                .args(["-15", &pid.to_string()])
-                .output();
+    child.wait().await
+}
+
+pub async fn kill_game(state: &AppState) -> Result<(), String> {
+    let pending = state.jobs.request_game_shutdowns();
+    tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        for finished in pending {
+            finished.cancelled().await;
         }
-        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        for pid in &pids {
-            // Force kill if still alive
-            let _ = Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .output();
-        }
-    }
-    Ok(())
+    }).await.map_err(|_| "游戏仍在退出或清理启动任务，请稍候".into())
 }
 
 pub fn is_running(state: &AppState) -> bool {
-    !state.game_pids.lock().unwrap().is_empty()
+    !state.jobs.game_pids().is_empty()
 }
 
 // ---------------------------------------------------------------------------
@@ -524,7 +499,7 @@ pub fn required_java_for(state: &AppState, instance: &Instance) -> u32 {
         }
     }
     let jar = crate::paths::resolve_version_dir(state, &instance.id).join(format!("{}.jar", instance.id));
-    if let Some(class_major) = crate::util::jar_class_version(&jar) {
+    if let Some(class_major) = crate::archive::jar_class_version(&jar) {
         let from_jar = class_major.saturating_sub(44);
         if from_jar > required {
             required = from_jar;
@@ -589,6 +564,38 @@ pub async fn find_best_java(state: &AppState, required: u32) -> Option<JavaInfo>
         .cloned()
 }
 
+pub(crate) async fn ensure_java(
+    app: &tauri::AppHandle,
+    state: &AppState,
+    instance: &Instance,
+    version_json: &VersionJson,
+) -> Result<JavaInfo, String> {
+    match pick_java(app, state, instance, version_json).await {
+        Ok(j) => Ok(j),
+        Err(e) if e.starts_with("NEED_DOWNLOAD:") => {
+            let major = e
+                .trim_start_matches("NEED_DOWNLOAD:")
+                .parse::<u32>()
+                .unwrap_or(17);
+            let _ = app.emit(
+                "launch://log",
+                serde_json::json!({
+                    "instanceId": instance.id,
+                    "stream": "out",
+                    "line": format!("未找到合适的 Java，正在自动下载 Java {major} JRE…"),
+                }),
+            );
+            crate::java::download_java_runtime(app.clone(), state, major).await?;
+            // 下载后清除检测缓存，确保下一次 pick_java 能发现新装的 Java
+            *state.java_cache.lock().unwrap() = None;
+            pick_java(app, state, instance, version_json)
+                .await
+                .map_err(|e2| format!("Java 下载完成但仍无法选择: {e2}"))
+        }
+        Err(e) => Err(e),
+    }
+}
+
 async fn pick_java(
     app: &tauri::AppHandle,
     state: &AppState,
@@ -602,7 +609,7 @@ async fn pick_java(
         .unwrap_or(8);
     // authoritative fallback: derive the requirement from the client jar itself
     let jar = crate::paths::resolve_version_dir(state, &instance.id).join(format!("{}.jar", instance.id));
-    if let Some(class_major) = crate::util::jar_class_version(&jar) {
+    if let Some(class_major) = crate::archive::jar_class_version(&jar) {
         let from_jar = class_major.saturating_sub(44);
         if from_jar > required {
             required = from_jar;
@@ -701,9 +708,9 @@ fn set_chinese_lang(instance_dir: &std::path::Path, mc_version: &str) {
             return;
         }
         let result = format!("{text}\n{target_line}");
-        crate::util::fs_best_effort("write", &options_path, std::fs::write(&options_path, result));
+        crate::fsutil::fs_best_effort("write", &options_path, std::fs::write(&options_path, result));
     } else {
-        crate::util::fs_best_effort("write", &options_path, std::fs::write(&options_path, target_line));
+        crate::fsutil::fs_best_effort("write", &options_path, std::fs::write(&options_path, target_line));
     }
 }
 
@@ -793,7 +800,7 @@ fn enable_resource_pack(instance_dir: &std::path::Path, pack_file: &str) {
         lines.push(format!("resourcePacks:[{entry}]"));
     }
     if !already_enabled || !found {
-        crate::util::fs_best_effort("write", &options_path, std::fs::write(&options_path, lines.join("\n")));
+        crate::fsutil::fs_best_effort("write", &options_path, std::fs::write(&options_path, lines.join("\n")));
     }
 }
 
@@ -821,7 +828,7 @@ fn disable_resource_pack(instance_dir: &std::path::Path, pack_file: &str) {
             lines.push(line.to_string());
         }
     }
-    crate::util::fs_best_effort("write", &options_path, std::fs::write(&options_path, lines.join("\n")));
+    crate::fsutil::fs_best_effort("write", &options_path, std::fs::write(&options_path, lines.join("\n")));
 }
 
 // ---------------------------------------------------------------------------
@@ -1267,15 +1274,14 @@ fn substitute(input: &str, ctx: &LaunchContext, features: &mut HashMap<String, b
     s
 }
 
-fn emit_state(app: &tauri::AppHandle, instance_id: &str, state: &str, pid: u32, code: Option<i32>) {
+pub fn emit_progress(app: &tauri::AppHandle, instance_id: &str, task_id: u64, step: &str, progress: u8) {
+    let _ = app.emit("launch://progress", LaunchProgress { instance_id, task_id, step, progress });
+}
+
+pub fn emit_state(app: &tauri::AppHandle, instance_id: &str, task_id: u64, state: LaunchState, pid: u32, code: Option<i32>) {
     let _ = app.emit(
         "launch://state",
-        serde_json::json!({
-            "instanceId": instance_id,
-            "state": state,
-            "pid": pid,
-            "code": code,
-        }),
+        LaunchStateEvent { instance_id, task_id, state, pid, code },
     );
 }
 

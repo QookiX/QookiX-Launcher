@@ -1,9 +1,7 @@
 use crate::models::Settings;
 use crate::shimu::ShimuAuth;
 use crate::yggdrasil_oauth::YggOauthPending;
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use tokio::sync::Semaphore;
 
@@ -16,16 +14,7 @@ pub struct AppState {
     /// Download concurrency limit
     #[allow(dead_code)]
     pub semaphore: Arc<Semaphore>,
-    /// Currently running game pids keyed by instance id
-    pub game_pids: Arc<Mutex<HashMap<String, u32>>>,
-    /// Currently running hosted server pids keyed by server id
-    pub server_pids: Arc<Mutex<HashMap<String, u32>>>,
-    /// Stdin senders for running servers (to send stop commands)
-    pub server_senders: Arc<Mutex<HashMap<String, tokio::sync::mpsc::Sender<String>>>>,
-    /// Monotonic task counter for event correlation
-    pub task_counter: AtomicU64,
-    /// Cancel flag for the active install task
-    pub install_cancel: Arc<AtomicBool>,
+    pub jobs: crate::runtime_jobs::RuntimeJobs,
     /// Pending Microsoft device-code flow (if any)
     pub ms_flow: Arc<Mutex<Option<crate::models::MsFlow>>>,
     /// 拾木空间（mcimg）OAuth 登录态：待校验 state + access_token + 用户资料
@@ -36,8 +25,8 @@ pub struct AppState {
     pub java_cache: Mutex<Option<(u64, Vec<crate::models::JavaInfo>)>>,
     /// Currently running Terracotta (陶瓦联机) session, if any
     pub terracotta: Mutex<Option<crate::terracotta::TerracottaSession>>,
-    /// 已下载待安装的应用更新（Update + 安装包字节），供「重启以更新」使用
-    pub pending_update: Mutex<Option<(tauri_plugin_updater::Update, Vec<u8>)>>,
+    /// 已检查的更新候选和待安装的签名安装包
+    pub(crate) pending_update: Mutex<crate::updater::UpdateCache>,
     /// 局域网同步服务（运行中时为 Some，关闭后为 None）
     pub lan_sync: Mutex<Option<crate::lan_sync::LanSyncServer>>,
     /// QookiX 账号（可选）：好友与陶瓦联机房间目录
@@ -83,7 +72,7 @@ impl AppState {
     }
 
     pub fn next_task_id(&self) -> u64 {
-        self.task_counter.fetch_add(1, Ordering::Relaxed)
+        self.jobs.next_id()
     }
 
     // ---- Lock helpers: recover from poison instead of panicking -------------

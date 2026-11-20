@@ -21,6 +21,8 @@ export default {
   oauthLogin: "OAuth2 登录",
   oauthHint: "在浏览器里授权登录，无需向启动器输入密码，支持二步验证。",
   oauthWaiting: "已打开浏览器，请在浏览器中完成 LittleSkin 授权…",
+  oauthUserCode: "授权码 {code}",
+  oauthExpired: "LittleSkin 授权已过期，请重新开始。",
   oauthCancel: "取消等待",
   oauthErrNoCode: "回调地址缺少授权码",
   oauthDenied: "LittleSkin 授权已取消",

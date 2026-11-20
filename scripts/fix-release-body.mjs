@@ -21,11 +21,14 @@
 //  Exit code stays 0 when nothing needed fixing; `--dry-run` never writes.
 // ============================================================================
 
+import { githubReleases } from './shared/github-releases.mjs'
+
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN
 const repo = process.env.GITHUB_REPOSITORY
 const args = process.argv.slice(2)
 const dryRun = args.includes('--dry-run')
 const all = args.includes('--all')
+const strict = args.includes('--require-links')
 const tag = args.find((a) => !a.startsWith('--'))
 
 if (!token || !repo) throw new Error('GH_TOKEN and GITHUB_REPOSITORY are required')
@@ -63,14 +66,16 @@ function fixRow(line, byName) {
 
 /** 返回 { body, changed, rows } */
 function repairBody(body, assets) {
-  if (!body) return { body, changed: 0, rows: 0 }
+  if (!body) return { body, changed: 0, rows: 0, missing: [] }
   const byName = new Map(assets.map((a) => [a.name, a]))
+  const missing = []
   let changed = 0
   let rows = 0
   const lines = body.replace(/\r\n/g, '\n').split('\n').map((line) => {
     const m = ROW.exec(line)
     if (!m) return line
     rows++
+    if (!byName.has(ghName(m[2])) && !byName.has(m[2])) missing.push(m[2])
     const fixed = fixRow(line, byName)
     if (fixed) {
       changed++
@@ -78,7 +83,7 @@ function repairBody(body, assets) {
     }
     return line
   })
-  return { body: lines.join('\n'), changed, rows }
+  return { body: lines.join('\n'), changed, rows, missing }
 }
 
 async function get(path) {
@@ -98,7 +103,8 @@ async function patchBody(id, body) {
 }
 
 async function processRelease(release) {
-  const { body, changed, rows } = repairBody(release.body, release.assets)
+  const { body, changed, rows, missing } = repairBody(release.body, release.assets)
+  if (strict && missing.length) throw new Error(`Release links do not have uploaded assets: ${missing.join(', ')}`)
   const label = `${release.tag_name} (${rows} 行表格 / ${release.assets.length} 个附件)`
   if (!rows) {
     console.log(`  - ${label}: 没有下载表格，跳过`)
@@ -126,7 +132,8 @@ if (all) {
   console.log(`检查 ${everything.length} 个 Release${dryRun ? '（dry-run）' : ''}`)
   for (const rel of everything) total += await processRelease(rel)
 } else {
-  const rel = await get(`/repos/${repo}/releases/tags/${tag}`)
+  const rel = await githubReleases(repo, token).find(tag)
+  if (!rel) throw new Error(`Release ${tag} was not found`)
   total = await processRelease(rel)
 }
 

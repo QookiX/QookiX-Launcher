@@ -3,7 +3,7 @@
 //! 只改提交的字段，其余行（顺序、未知配置项）原样保留。文件由游戏首次运行时
 //! 生成，不存在时直接报错——凭空创建可能写出游戏不认识的行。
 
-use std::path::Path;
+use std::{collections::BTreeMap, io, path::Path};
 
 /// 未绑定的按键码（游戏自己的表示）
 pub const UNBOUND: &str = "key.keyboard.unknown";
@@ -24,11 +24,19 @@ pub fn path(instance_dir: &Path) -> std::path::PathBuf {
 
 /// 按键码合法性：只认 `key.keyboard.*` / `key.mouse.*`，防止写入任意内容
 fn valid_key(key: &str) -> bool {
-    (key.starts_with("key.keyboard.") || key.starts_with("key.mouse."))
+    key.strip_prefix("key.keyboard.")
+        .or_else(|| key.strip_prefix("key.mouse."))
+        .is_some_and(|suffix| !suffix.is_empty())
         && key.len() <= 64
         && key
             .chars()
             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '.' || c == '_')
+}
+
+fn valid_action(action: &str) -> bool {
+    !action.is_empty()
+        && action.len() <= 256
+        && action.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b'/'))
 }
 
 /// 解析一行按键绑定；`extra` 兜住老格式潜在的第三段，写回时原样带上
@@ -45,39 +53,55 @@ fn parse_line(line: &str) -> Option<(String, String, Option<String>)> {
 }
 
 /// 读取全部按键绑定。返回 (文件是否存在, 绑定列表)
-pub fn read_keybinds(instance_dir: &Path) -> (bool, Vec<KeyBind>) {
-    let Ok(text) = std::fs::read_to_string(path(instance_dir)) else {
-        return (false, Vec::new());
+pub fn read_keybinds(instance_dir: &Path) -> Result<(bool, Vec<KeyBind>), String> {
+    let text = match read_options(&path(instance_dir)) {
+        Ok(text) => text,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok((false, Vec::new())),
+        Err(err) => return Err(format!("读取 options.txt 失败: {err}")),
     };
     let binds = text
         .lines()
         .filter_map(|l| parse_line(l).map(|(action, key, _)| KeyBind { action, key }))
         .collect();
-    (true, binds)
+    Ok((true, binds))
+}
+
+fn read_options(file: &Path) -> io::Result<String> {
+    let meta = std::fs::symlink_metadata(file)?;
+    if !meta.is_file() || crate::fsutil::is_link_or_reparse_point(&meta) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "options.txt 必须是普通文件"));
+    }
+    std::fs::read_to_string(file)
 }
 
 /// 应用按键修改：`changes` 是 `动作 → 新按键码`（`null` = 未绑定）。
 /// 只写提交的动作；文件里没有的动作追加到末尾。返回实际改动条数。
 pub fn apply_keybinds(
     instance_dir: &Path,
-    changes: &serde_json::Map<String, serde_json::Value>,
+    changes: &BTreeMap<String, Option<String>>,
 ) -> Result<usize, String> {
     if changes.is_empty() {
         return Ok(0);
     }
     // 先整体校验，避免写一半才发现有非法值
-    let mut wanted: Vec<(String, String)> = Vec::with_capacity(changes.len());
-    for (action, value) in changes {
-        let key = value.as_str().unwrap_or(UNBOUND);
+    for (action, key) in changes {
+        if !valid_action(action) {
+            return Err("无效的按键动作名称".into());
+        }
+        let key = key.as_deref().unwrap_or(UNBOUND);
         if !valid_key(key) {
             return Err(format!("不认识的按键码: {key}"));
         }
-        wanted.push((action.clone(), key.to_string()));
     }
 
     let file = path(instance_dir);
-    let text = std::fs::read_to_string(&file)
-        .map_err(|_| "options.txt 不存在，请先启动一次游戏再修改按键".to_string())?;
+    let text = read_options(&file).map_err(|err| {
+        if err.kind() == io::ErrorKind::NotFound {
+            "options.txt 不存在，请先启动一次游戏再修改按键".to_string()
+        } else {
+            format!("读取 options.txt 失败: {err}")
+        }
+    })?;
     let trailing_newline = text.ends_with('\n');
     // 换行符跟随原文件（Windows 是 CRLF），否则整个文件的换行都会被改掉
     let terminator: &str = if text.contains("\r\n") { "\r\n" } else { "\n" };
@@ -88,9 +112,10 @@ pub fn apply_keybinds(
         let Some((action, _, extra)) = parse_line(line) else {
             continue;
         };
-        let Some((_, new_key)) = wanted.iter().find(|(a, _)| *a == action) else {
+        let Some(new_key) = changes.get(&action) else {
             continue;
         };
+        let new_key = new_key.as_deref().unwrap_or(UNBOUND);
         let new_line = match &extra {
             Some(e) => format!("key_key.{action}:{new_key}:{e}"),
             None => format!("key_key.{action}:{new_key}"),
@@ -106,25 +131,28 @@ pub fn apply_keybinds(
         .iter()
         .filter_map(|l| parse_line(l).map(|(a, _, _)| a))
         .collect();
-    for (action, key) in &wanted {
+    for (action, key) in changes {
         if !known.contains(action) {
+            let key = key.as_deref().unwrap_or(UNBOUND);
             lines.push(format!("key_key.{action}:{key}"));
             changed += 1;
         }
     }
 
+    if changed == 0 {
+        return Ok(0);
+    }
     let mut out = lines.join(terminator);
     if trailing_newline && !out.is_empty() {
         out.push_str(terminator);
     }
-    std::fs::write(&file, out).map_err(|e| format!("写入 options.txt 失败: {e}"))?;
+    crate::fsutil::atomic_write(&file, out.as_bytes()).map_err(|e| format!("写入 options.txt 失败: {e}"))?;
     Ok(changed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     fn temp_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("qookix-options-{tag}-{}", std::process::id()));
@@ -140,7 +168,7 @@ mod tests {
     fn parses_only_keybind_lines() {
         let dir = temp_dir("parse");
         std::fs::write(dir.join("options.txt"), SAMPLE).unwrap();
-        let (exists, binds) = read_keybinds(&dir);
+        let (exists, binds) = read_keybinds(&dir).unwrap();
         assert!(exists);
         assert_eq!(binds.len(), 3, "只解析 key_ 开头的行");
         assert_eq!(binds[0].action, "forward");
@@ -151,11 +179,10 @@ mod tests {
     #[test]
     fn missing_file_reports_not_exists_and_refuses_to_write() {
         let dir = temp_dir("missing");
-        let (exists, binds) = read_keybinds(&dir);
+        let (exists, binds) = read_keybinds(&dir).unwrap();
         assert!(!exists);
         assert!(binds.is_empty());
-        let mut changes = serde_json::Map::new();
-        changes.insert("forward".into(), json!("key.keyboard.w"));
+        let changes = BTreeMap::from([("forward".into(), Some("key.keyboard.w".into()))]);
         assert!(apply_keybinds(&dir, &changes).is_err(), "不该凭空创建文件");
     }
 
@@ -163,10 +190,11 @@ mod tests {
     fn apply_touches_only_submitted_actions() {
         let dir = temp_dir("apply");
         std::fs::write(dir.join("options.txt"), SAMPLE).unwrap();
-        let mut changes = serde_json::Map::new();
-        changes.insert("jump".into(), json!("key.mouse.4"));
-        changes.insert("smoothCamera".into(), json!(null));
-        changes.insert("sprint".into(), json!("key.keyboard.left.control")); // 文件里没有 → 追加
+        let changes = BTreeMap::from([
+            ("jump".into(), Some("key.mouse.4".into())),
+            ("smoothCamera".into(), None),
+            ("sprint".into(), Some("key.keyboard.left.control".into())),
+        ]);
         assert_eq!(apply_keybinds(&dir, &changes).unwrap(), 3);
 
         let text = std::fs::read_to_string(dir.join("options.txt")).unwrap();
@@ -189,8 +217,7 @@ mod tests {
         // MC 在 Windows 上按 CRLF 写 options.txt，换行风格必须原样保留
         let sample = "version:3565\r\nkey_key.forward:key.keyboard.w\r\nkey_key.jump:key.keyboard.space\r\n";
         std::fs::write(dir.join("options.txt"), sample).unwrap();
-        let mut changes = serde_json::Map::new();
-        changes.insert("jump".into(), json!("key.mouse.4"));
+        let changes = BTreeMap::from([("jump".into(), Some("key.mouse.4".into()))]);
         apply_keybinds(&dir, &changes).unwrap();
         assert_eq!(
             std::fs::read_to_string(dir.join("options.txt")).unwrap(),
@@ -203,8 +230,7 @@ mod tests {
     fn rejects_bad_key_without_touching_file() {
         let dir = temp_dir("badkey");
         std::fs::write(dir.join("options.txt"), SAMPLE).unwrap();
-        let mut changes = serde_json::Map::new();
-        changes.insert("jump".into(), json!("../../etc/passwd"));
+        let changes = BTreeMap::from([("jump".into(), Some("../../etc/passwd".into()))]);
         assert!(apply_keybinds(&dir, &changes).is_err());
         assert_eq!(
             std::fs::read_to_string(dir.join("options.txt")).unwrap(),
@@ -212,5 +238,17 @@ mod tests {
             "校验失败时不能动文件"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rejects_injected_actions_and_distinguishes_invalid_utf8() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(path(dir.path()), SAMPLE).unwrap();
+        let changes = BTreeMap::from([("jump\nsensitivity:1".into(), None)]);
+        assert!(apply_keybinds(dir.path(), &changes).is_err());
+        assert_eq!(std::fs::read_to_string(path(dir.path())).unwrap(), SAMPLE);
+        std::fs::write(path(dir.path()), [0xff, 0xff]).unwrap();
+        assert!(read_keybinds(dir.path()).is_err());
+        assert!(serde_json::from_str::<BTreeMap<String, Option<String>>>(r#"{"jump":42}"#).is_err());
     }
 }

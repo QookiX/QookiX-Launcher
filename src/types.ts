@@ -150,6 +150,8 @@ export interface StorageStats {
 
 export interface CacheClearResult {
   freed: number;
+  java_download_in_use: boolean;
+  errors: string[];
 }
 
 export interface Instance {
@@ -246,6 +248,14 @@ export interface YggOauthConfig {
   secretConfigured: boolean;
   /** 开发构建才为 true */
   devMode: boolean;
+}
+
+export interface YggOauthResult {
+  authorizationId: string;
+  profiles: { id: string; name: string }[];
+  server: string;
+  serverName: string;
+  links: { homepage: string; register: string };
 }
 
 /** `getInfo` 返回的用户资料（字段以服务端为准，未给出的为可选） */
@@ -490,10 +500,10 @@ export interface WorldForm {
   difficulty: number | null;
   difficultyLocked: number | null;
   hardcore: number | null;
-  /** 十进制字符串：种子是 Long，超过 JS 安全整数范围，走数字会丢精度 */
+  /** 十进制字符串，保留 NBT Long 的完整精度 */
   seed: string | null;
-  time: number | null;
-  dayTime: number | null;
+  time: string | null;
+  dayTime: string | null;
   raining: number | null;
   thundering: number | null;
   spawnX: number | null;
@@ -849,7 +859,19 @@ export interface InstallProgressEvent {
   instanceId?: string;
   instanceName?: string;
   source?: string;
+  cancellable?: boolean;
   ok?: boolean;
+}
+
+export interface InstallPlan {
+  instance_id: string;
+  total_bytes: number;
+  file_count: number;
+}
+
+export interface LaunchResult {
+  taskId: number;
+  pid: number;
 }
 
 export interface DownloadProgressEvent {
@@ -861,6 +883,7 @@ export interface DownloadProgressEvent {
   ok: boolean;
   bytesDone?: number;
   bytesTotal?: number;
+  verifiedBytes: number;
   ts?: number;
   activeFiles?: ActiveFile[];
 }
@@ -890,7 +913,15 @@ export interface LaunchLogEvent {
   line: string;
 }
 
+export interface LaunchProgressEvent {
+  taskId: number;
+  instanceId: string;
+  step: string;
+  progress: number;
+}
+
 export interface LaunchStateEvent {
+  taskId: number;
   instanceId: string;
   state: "running" | "exited";
   pid: number;
@@ -914,6 +945,31 @@ export interface FsEntry {
   is_dir: boolean;
   /** 小写扩展名，目录为空字符串 */
   ext: string;
+}
+
+export interface DirectoryListing {
+  rel: string;
+  entries: FsEntry[];
+}
+
+export interface FileInfo {
+  rel: string;
+  size: number;
+  modified: number;
+}
+
+export interface FileDocument extends FileInfo {
+  content: string;
+}
+
+export interface CreatedEntry {
+  rel: string;
+  is_dir: boolean;
+}
+
+export interface RenamedEntry {
+  rel: string;
+  name: string;
 }
 
 // 经 Server List Ping 获取的实时状态
@@ -1040,6 +1096,28 @@ export interface CrashDiagnosis {
   confidence: number;
 }
 
+export interface CrashAICause {
+  title: string;
+  confidence: number;
+  evidence: string;
+  next_steps: string[];
+}
+
+export interface CrashAIResult {
+  summary: string;
+  likely_causes: CrashAICause[];
+  need_more_info: string[];
+  disclaimer: string;
+}
+
+/** 服务端 AI 深入分析结果；本地规则诊断仍以 CrashDiagnosis 为准 */
+export interface CrashAIAnalysis {
+  result: CrashAIResult;
+  cached: boolean;
+  model: string;
+  hash: string;
+}
+
 // ---- QookiX 账号（可选）：好友 + 陶瓦联机房间目录 --------------
 // 字段名沿用服务端 snake_case，避免中间层再做一次改名。
 
@@ -1066,6 +1144,9 @@ export interface QookixUser {
   username: string;
   email?: string;
   nickname: string;
+  /** approved | pending | rejected；非 approved 时别人看到的是 username */
+  nickname_status?: string;
+  nickname_review_reason?: string;
   role: string;
   status: string;
   created_at: number;
@@ -1106,6 +1187,9 @@ export interface QookixSkin {
   cape: string;
   /** classic | slim */
   model: string;
+  /** approved | pending | rejected：未过审时别人拿到的是空皮肤 */
+  status?: string;
+  reason?: string;
   updated_at: number;
 }
 
@@ -1210,6 +1294,56 @@ export interface QookixStatus {
   share?: QookixShare | null;
 }
 
+/** 登录密码正确但账号开了两步验证：继续用 challenge_token + 动态码换令牌 */
+export interface QookixTwoFactorChallenge {
+  two_factor_required: true;
+  challenge_token: string;
+  expires_in?: number;
+  methods?: string[];
+}
+
+export interface QookixRegistration {
+  email_verification_required: boolean;
+  email_sent: boolean | null;
+  message: string | null;
+}
+
+export interface QookixTwoFactorStatus {
+  enabled: boolean;
+  enabled_at?: number;
+  last_used_at?: number;
+  recovery_remaining?: number;
+}
+
+export interface QookixTwoFactorSetup {
+  secret: string;
+  otpauth_uri: string;
+  issuer?: string;
+  account?: string;
+  digits?: number;
+  period_sec?: number;
+  recovery_codes: string[];
+}
+
+export interface QookixRegisterPolicy {
+  invite_required: boolean;
+  turnstile_enabled: boolean;
+  turnstile_site_key?: string;
+  terms_required?: boolean;
+  terms_url?: string;
+  terms_version?: string;
+  ip_daily_limit?: number;
+}
+
+export interface QookixServiceStatus {
+  online: boolean;
+  state: string;
+  server_time: number;
+  worker?: { running: boolean };
+  speed?: { ready?: boolean; chars_per_min?: number; mods_per_min?: number; window_sec?: number };
+  today?: { chars?: number; mods?: number; calls?: number; body_ok?: number };
+}
+
 export interface QookixStats {
   friends: number;
   pending_requests: number;
@@ -1274,6 +1408,8 @@ export interface QookixRoom {
   owner: QookixUserBrief;
   visibility: "friends" | "public";
   title: string;
+  /** 公开房标题审核状态；pending/rejected 时不进公开大厅 */
+  title_status?: string;
   game_version: string;
   modpack: string;
   status: QookixRoomStatus;
@@ -1291,6 +1427,7 @@ export interface QookixRoom {
   updated_at: number;
   last_heartbeat: number;
   expires_at: number;
+  /** 成员快照：只在详情接口下发（房主客户端上报后才能拿到） */
   members?: QookixRoomMember[];
 }
 

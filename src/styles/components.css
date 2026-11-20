@@ -200,8 +200,102 @@
   background: var(--danger-26);
   border-color: var(--danger-40);
 }
+
+.qx-btn--warn {
+  background: var(--warn-14);
+  border-color: var(--warn-30);
+  color: var(--warn);
+}
+
+.qx-btn--icon {
+  width: var(--ctl-md);
+  padding-inline: 0;
+}
+
+.qx-title-action {
+  min-width: 0;
+  max-width: 100%;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: start;
+  cursor: pointer;
+}
 .qx-btn--block {
   width: 100%;
+}
+
+.n-drawer.qx-drawer.n-drawer--right-placement {
+  top: 50px;
+  right: 10px;
+  bottom: 10px;
+  height: auto;
+  max-width: calc(100vw - 40px);
+  background-color: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--r-xl);
+  box-shadow: var(--layer-shadow);
+}
+
+.n-drawer.qx-drawer .qx-drawer__body {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 14px 12px;
+  overflow: hidden;
+}
+
+/* Keep glass in the document's backdrop while the drawer moves. */
+.n-drawer.qx-drawer.slide-in-from-right-transition-enter-active {
+  transition: right 0.26s var(--ease-out);
+}
+
+.n-drawer.qx-drawer.slide-in-from-right-transition-leave-active {
+  transition: right 0.2s ease-in;
+}
+
+.n-drawer.qx-drawer.slide-in-from-right-transition-enter-from,
+.n-drawer.qx-drawer.slide-in-from-right-transition-leave-to {
+  right: var(--drawer-offscreen, -400px);
+  transform: none;
+}
+
+.n-drawer-container:has(.qx-drawer) .n-drawer-mask {
+  background-color: rgba(0, 0, 0, 0.18);
+}
+
+.n-drawer-container:has(.qx-drawer) .n-drawer-mask.fade-in-transition-enter-active,
+.n-drawer-container:has(.qx-drawer) .n-drawer-mask.fade-in-transition-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.qx-confirm-modal {
+  width: min(420px, calc(100vw - 32px));
+}
+
+.qx-confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp-3);
+  margin-block-start: var(--sp-6);
+}
+
+.qx-media-dialog {
+  width: 100vw;
+  height: 100dvh;
+  margin: 0;
+}
+
+.qx-media-dialog.fade-in-scale-up-transition-enter-active,
+.qx-media-dialog.fade-in-scale-up-transition-leave-active {
+  transition: opacity var(--media-fade-duration) ease;
+}
+
+.qx-media-dialog.fade-in-scale-up-transition-enter-from,
+.qx-media-dialog.fade-in-scale-up-transition-leave-to {
+  transform: none;
 }
 
 /* —— 兼容层：历史 `.mini-btn` ——
@@ -490,6 +584,60 @@
   font-weight: var(--fw-semi);
   color: var(--text-2);
 }
+
+.qx-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  min-height: 64px;
+  padding: var(--sp-4);
+  border-radius: var(--r-lg);
+  background: var(--panel);
+  color: var(--text-2);
+  overflow-wrap: anywhere;
+}
+
+.qx-status--compact {
+  justify-content: flex-start;
+  min-height: 0;
+  padding: var(--sp-3) var(--sp-4);
+}
+
+/* New content can appear without moving its frame or delaying its controls. */
+.qx-enter {
+  animation: qx-content-enter var(--dur-md) var(--ease-out);
+}
+
+.qx-card-open {
+  animation: qx-card-open var(--dur-sm) var(--ease-out);
+}
+
+@keyframes qx-card-open {
+  from { transform: translateY(6px); opacity: 0.78; }
+  to { transform: none; opacity: 1; }
+}
+
+/* Original staggered card entrance. The caller owns the list order and delay. */
+.qx-card-enter {
+  animation: qx-card-rise 0.34s cubic-bezier(0.22, 0.61, 0.36, 1) backwards;
+}
+
+@keyframes qx-card-rise {
+  from { transform: translateY(var(--card-enter-offset, 28px)); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .qx-card-enter { animation: none; }
+}
+
+@keyframes qx-content-enter {
+  from { opacity: 0.76; }
+  to { opacity: 1; }
+}
+
 
 /* —— 输入框 / 下拉 ——
    高度与按钮中档一致（32），这样表单行里 input 和 button 底边能对齐。

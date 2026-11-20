@@ -2,7 +2,7 @@
 //! 报告缺失的前置模组与重复的 mod id；缺失项可再联网解析成可安装的项目。
 
 use crate::state::AppState;
-use crate::util::{self, ModJarMeta};
+use crate::content_metadata::{self, ModJarMeta};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
@@ -66,7 +66,7 @@ pub fn check(state: &AppState, instance_id: &str) -> Result<Value, String> {
     let mut unreadable = 0usize;
 
     for (name, path, enabled) in &jars {
-        match util::parse_mod_jar(path) {
+        match content_metadata::parse_mod_jar(path) {
             Some(meta) => {
                 if let Some(id) = &meta.mod_id {
                     let entry = provided.entry(id.to_lowercase()).or_default();
@@ -164,7 +164,7 @@ pub fn list_installed_mod_ids(state: &AppState, instance_id: &str) -> Vec<String
         if !enabled {
             continue;
         }
-        if let Some(meta) = util::parse_mod_jar(&path) {
+        if let Some(meta) = content_metadata::parse_mod_jar(&path) {
             if let Some(id) = &meta.mod_id {
                 out.push(norm(id));
             }
@@ -181,7 +181,7 @@ pub fn is_mod_installed(state: &AppState, instance_id: &str, slug: &str, title: 
         if !enabled {
             continue;
         }
-        if let Some(meta) = util::parse_mod_jar(&path) {
+        if let Some(meta) = content_metadata::parse_mod_jar(&path) {
             if let Some(id) = &meta.mod_id {
                 let n = norm(id);
                 if n == norm(slug) || n == norm(title) {
@@ -215,7 +215,7 @@ pub async fn resolve_dependency_tree(
         if !enabled {
             continue;
         }
-        if let Some(meta) = util::parse_mod_jar(&path) {
+        if let Some(meta) = content_metadata::parse_mod_jar(&path) {
             if let Some(id) = &meta.mod_id {
                 provided.insert(norm(id));
             }

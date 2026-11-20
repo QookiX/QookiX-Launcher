@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vSegmented } from "../../composables/vSegmented";
 /**
  * 区块编辑：地图（点一下选区块）或按坐标列表选区块，
  * 选中后复用 NbtTreeEditor 改区块 NBT。
@@ -92,7 +93,7 @@ watch(dim, loadChunks, { immediate: true });
       <span class="lbl">{{ t("nbt.dimension") }}</span>
       <NSelect v-model:value="dim" :options="dimOptions" size="small" style="width: 132px" />
 
-      <div ref="viewSegRef" class="seg-group qx-seg qx-seg--sm">
+      <div ref="viewSegRef" v-segmented="{ label: t('common.viewMode') }" class="seg-group qx-seg qx-seg--sm">
         <div class="qx-seg__indicator" :style="viewSegStyle"></div>
         <button class="seg" :class="{ active: view === 'map' }" @click="view = 'map'">
           {{ t("nbt.mapView") }}

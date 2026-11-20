@@ -110,8 +110,7 @@ body,
    轮廓发虚；叠一层淡黑让导航栏与抽屉更沉得下来。有背景图时 --panel 已是半透
    深色，无需此处理；浅色模式同理不走这里。 */
 :root:not(.light):not(.has-bg) .dock,
-:root:not(.light):not(.has-bg) .dl-drawer,
-:root:not(.light):not(.has-bg) .acct-drawer {
+:root:not(.light):not(.has-bg) .n-drawer.qx-drawer {
   background: rgba(0, 0, 0, 0.2), var(--panel);
 }
 
@@ -214,8 +213,10 @@ a:focus-visible,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
     scroll-behavior: auto !important;
   }
 }

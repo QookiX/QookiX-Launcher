@@ -3,7 +3,6 @@ use crate::instances::add_content_batch;
 use crate::models::{Instance, InstalledContent, LoaderType};
 use crate::state::AppState;
 use serde_json::Value;
-use tauri::Emitter;
 
 // ---------------------------------------------------------------------------
 // 整合包安装公共骨架
@@ -53,7 +52,7 @@ pub fn scan_mod_records(
                 icon: None,
                 enabled: true,
             };
-            crate::util::fill_content_from_jar(&mut rec, &path);
+            crate::content_metadata::fill_content_from_jar(&mut rec, &path);
             records.push(rec);
         }
     }
@@ -77,7 +76,9 @@ pub struct PackPrepareSpec {
 pub async fn prepare_pack(
     state: &AppState,
     spec: PackPrepareSpec,
+    task: Option<&crate::runtime_jobs::InstallLease>,
 ) -> Result<(Instance, String), String> {
+    if let Some(task) = task { task.check()?; }
     let pack_path = spec.pack_path;
     let (pack_name, mc_version, loader, loader_version) = detect(&pack_path)
         .await
@@ -89,19 +90,27 @@ pub async fn prepare_pack(
         loader,
         if loader_version.is_empty() { None } else { Some(loader_version) },
     )?;
+    if let Some(task) = task { task.attach_instance(&instance.id)?; }
     let instance_dir = state.instances_dir().join(&instance.id);
 
     // 图标：优先用包内图标，其次用项目图标兜底。
     // 注意要同时更新返回值，否则调用方拿到的实例缺 icon。
-    let mut icon_path = crate::util::extract_modpack_icon(&pack_path, &instance_dir);
+    let mut icon_path = crate::content_metadata::extract_modpack_icon(&pack_path, &instance_dir);
     if icon_path.is_none() {
         if let Some(u) = spec.icon_fallback_url.as_deref().filter(|s| !s.is_empty()) {
-            icon_path = crate::util::download_icon(&state.client, u, &instance_dir).await;
+            let download = crate::content_metadata::download_icon(&state.client, u, &instance_dir);
+            icon_path = match task {
+                Some(task) => task.until_cancelled(download).await?,
+                None => download.await,
+            };
         }
     }
     if let Some(icon_path) = icon_path {
-        instance.icon = Some(format!("img:{icon_path}"));
-        let _ = crate::util::log_best_effort("save_instance", crate::instances::save_instance(state, &instance));
+        let icon = Some(format!("img:{icon_path}"));
+        instance = crate::instances::edit_instance(state, &instance.id, |current| {
+            current.icon = icon;
+            Ok(true)
+        })?;
     }
 
     Ok((instance, format!("整合包：{pack_name}")))
@@ -111,8 +120,6 @@ pub async fn prepare_pack(
 /// 注意：游戏本体安装失败会返回 Err（实例与内容文件此时已就位，
 /// 用户仍可在实例页手动「安装游戏本体」）。
 pub struct PackContentsSpec {
-    /// 任务 id（下载中心的进度卡片）
-    pub task_id: u64,
     /// 进度来源文案（由 prepare_pack 返回）
     pub source: String,
     /// 待下载的内容文件（已含目标路径 / hash / 大小）
@@ -130,23 +137,43 @@ pub struct PackContentsSpec {
     pub overrides_prefix: String,
 }
 
+pub(crate) fn stage_pack_download(state: &AppState, filename: &str) -> Result<(tempfile::TempDir, std::path::PathBuf), String> {
+    if !crate::fsutil::is_portable_filename(filename) {
+        return Err("整合包文件名无效".into());
+    }
+    let runtime = state.root.join("runtimes");
+    std::fs::create_dir_all(&runtime).map_err(|err| err.to_string())?;
+    let stage = tempfile::tempdir_in(runtime).map_err(|err| err.to_string())?;
+    let path = stage.path().join(filename);
+    Ok((stage, path))
+}
+
 /// 返回登记的内容条数（用于回传前端展示）。
 pub async fn install_pack_contents(
     app: &tauri::AppHandle,
     state: &AppState,
     instance: &Instance,
     pack_path: &std::path::Path,
+    lease: &crate::runtime_jobs::InstallLease,
     spec: PackContentsSpec,
 ) -> Result<usize, String> {
     let source = spec.source.clone();
+    lease.check()?;
+    let task_id = lease.task_id;
     let instance_dir = state.instances_dir().join(&instance.id);
+    let overrides = spec.overrides_prefix.replace('\\', "/");
+    let overrides = overrides.strip_suffix('/').unwrap_or(&overrides);
+    if !overrides.split('/').all(crate::fsutil::is_portable_filename) {
+        return Err("整合包的 overrides 目录无效".into());
+    }
+    let overrides_dir_rel = format!("{overrides}/");
 
     // 1) 下载整合包内容
     let file_count = spec.downloads.len();
     if file_count > 0 {
         crate::install::emit_progress(
             app,
-            spec.task_id,
+            task_id,
             "modpack",
             &spec.download_label,
             0,
@@ -154,8 +181,10 @@ pub async fn install_pack_contents(
             instance,
             &source,
         );
-        crate::download::download_many(app.clone(), state, spec.task_id, "modpack", spec.downloads).await?;
+        crate::download::download_many(app.clone(), state, task_id, "modpack", spec.downloads).await?;
     }
+
+    lease.check()?;
 
     // 2) 登记内容记录：优先用调用方给的精确记录；否则扫磁盘自动登记
     let mut registered = 0usize;
@@ -168,7 +197,7 @@ pub async fn install_pack_contents(
             // 文件此刻已下载到位，补全 jar 内元数据（mod_id / 作者 / 图标等）
             let folder = crate::modrinth::kind_folder(&kind);
             let path = instance_dir.join(folder).join(&rec.filename);
-            crate::util::fill_content_from_jar(&mut rec, &path);
+            crate::content_metadata::fill_content_from_jar(&mut rec, &path);
             registered += 1;
             by_kind.entry(kind).or_default().push(rec);
         }
@@ -177,10 +206,12 @@ pub async fn install_pack_contents(
         }
     }
 
+    lease.check()?;
+
     // 3) 解压 overrides（去掉前缀铺到实例根）与包内其它文件
     crate::install::emit_progress(
         app,
-        spec.task_id,
+        task_id,
         "modpack-install",
         "正在写入整合包文件…",
         0,
@@ -188,19 +219,20 @@ pub async fn install_pack_contents(
         instance,
         &source,
     );
-    let overrides_dir_rel = format!("{}/", spec.overrides_prefix);
     let mut skip: Vec<String> = spec.skip_prefixes.clone();
     skip.push(overrides_dir_rel.clone());
     let skip_refs: Vec<&str> = skip.iter().map(|s| s.as_str()).collect();
-    crate::util::extract_zip(pack_path, &instance_dir, &skip_refs)
-        .map_err(|e| format!("解压整合包失败: {e}"))?;
     let strip_skip: Vec<&str> = spec.skip_prefixes.iter().map(|s| s.as_str()).collect();
-    crate::util::extract_zip_strip(pack_path, &instance_dir, &overrides_dir_rel, &strip_skip)?;
-    let overrides_dir = instance_dir.join(&spec.overrides_prefix);
-    crate::util::fs_best_effort("remove_dir_all", &overrides_dir, std::fs::remove_dir_all(&overrides_dir));
+    crate::archive::extract_with_staging(&instance_dir, |stage| {
+        let base = crate::archive::unpack_into_stage(pack_path, stage, &skip_refs, None)?;
+        lease.check()?;
+        let overrides = crate::archive::unpack_into_stage(pack_path, stage, &strip_skip, Some(&overrides_dir_rel))?;
+        lease.check()?;
+        Ok(base + overrides)
+    }).map_err(|error| format!("解压整合包失败: {error}"))?;
     crate::install::emit_progress(
         app,
-        spec.task_id,
+        task_id,
         "modpack-install",
         "整合包文件已写入",
         1,
@@ -210,10 +242,9 @@ pub async fn install_pack_contents(
     );
 
     // 4) 安装游戏本体并标记完成
-    crate::install::install_game(app.clone(), state, instance)
+    crate::install::install_game_for_task(app, state, instance, task_id, &source)
         .await
         .map_err(|e| format!("游戏文件安装失败：{e}"))?;
-    let _ = crate::util::log_best_effort("mark_installed", crate::instances::mark_installed(state, &instance.id));
 
     Ok(registered)
 }
@@ -221,7 +252,7 @@ pub async fn install_pack_contents(
 /// Read the pack metadata (name, mc version, loader) from a local
 /// `.mrpack` or CurseForge modpack zip.
 pub async fn detect(path: &std::path::Path) -> Result<(String, String, LoaderType, String), String> {
-    if let Ok(bytes) = crate::util::read_zip_entry(path, "modrinth.index.json") {
+    if let Ok(bytes) = crate::archive::read_zip_entry(path, "modrinth.index.json") {
         let index: Value = serde_json::from_slice(&bytes).map_err(|e| format!("modrinth.index.json 解析失败: {e}"))?;
         let name = index
             .get("name")
@@ -236,7 +267,7 @@ pub async fn detect(path: &std::path::Path) -> Result<(String, String, LoaderTyp
             .to_string();
         let (loader, lv) = detect_mrpack_loader(&index);
         Ok((name, mc, loader, lv))
-    } else if let Ok(bytes) = crate::util::read_zip_entry(path, "manifest.json") {
+    } else if let Ok(bytes) = crate::archive::read_zip_entry(path, "manifest.json") {
         let manifest: Value = serde_json::from_slice(&bytes).map_err(|e| format!("manifest.json 解析失败: {e}"))?;
         let name = manifest
             .get("name")
@@ -312,27 +343,13 @@ pub async fn install_local_pack(
     pack_path: &std::path::Path,
 ) -> Result<(), String> {
     let source = format!("整合包：{}", instance.name);
-    let result = install_local_pack_inner(app, state, task_id, instance, pack_path, &source).await;
+    let lease = state.jobs.register_install(task_id, &instance.id, None)?;
+    let mut task = crate::install::TaskCtx::new(app, instance, &source, task_id);
+    task.emit("prepare", "正在读取整合包信息…", 0, 1);
+    let result = install_local_pack_inner(app, state, &lease, instance, pack_path, &source).await;
     match &result {
-        Ok(()) => {
-            crate::install::emit_progress(app, task_id, "done", "整合包安装完成", 1, 1, instance, &source);
-        }
-        Err(e) => {
-            let _ = app.emit(
-                "install://progress",
-                serde_json::json!({
-                    "taskId": task_id,
-                    "stage": "done",
-                    "message": format!("安装失败：{e}"),
-                    "done": 0,
-                    "total": 0,
-                    "instanceId": instance.id,
-                    "instanceName": instance.name,
-                    "source": source,
-                    "ok": false,
-                }),
-            );
-        }
+        Ok(()) => task.finish_ok("整合包安装完成"),
+        Err(e) => task.finish_err(&format!("安装失败：{e}")),
     }
     result
 }
@@ -340,25 +357,23 @@ pub async fn install_local_pack(
 async fn install_local_pack_inner(
     app: &tauri::AppHandle,
     state: &AppState,
-    task_id: u64,
+    lease: &crate::runtime_jobs::InstallLease,
     instance: &Instance,
     pack_path: &std::path::Path,
     source: &str,
 ) -> Result<(), String> {
+    let task_id = lease.task_id;
     let instance_dir = state.instances_dir().join(&instance.id);
     std::fs::create_dir_all(&instance_dir).map_err(|e| e.to_string())?;
 
     // ---- Modrinth .mrpack ----
-    if let Ok(bytes) = crate::util::read_zip_entry(pack_path, "modrinth.index.json") {
+    if let Ok(bytes) = crate::archive::read_zip_entry(pack_path, "modrinth.index.json") {
         let index: Value =
             serde_json::from_slice(&bytes).map_err(|e| format!("modrinth.index.json 解析失败: {e}"))?;
         let (items, hash_by_name) = crate::modrinth::parse_index_files(&index, &instance_dir)?;
         // 按文件哈希批量反查 Project/Version，供扫盘登记时补上在线来源信息
-        let resolved = crate::modrinth::resolve_by_hashes(
-            state,
-            &hash_by_name.values().cloned().collect::<Vec<_>>(),
-        )
-        .await;
+        let hashes = hash_by_name.values().cloned().collect::<Vec<_>>();
+        let resolved = lease.until_cancelled(crate::modrinth::resolve_by_hashes(state, &hashes)).await?;
         let mut hash_meta: std::collections::HashMap<String, (String, String)> =
             std::collections::HashMap::new();
         for (fname, h) in &hash_by_name {
@@ -377,8 +392,8 @@ async fn install_local_pack_inner(
             state,
             instance,
             pack_path,
+            lease,
             PackContentsSpec {
-                task_id,
                 source: source.to_string(),
                 download_label: format!("正在下载 {file_count} 个文件…"),
                 downloads: items,
@@ -393,7 +408,7 @@ async fn install_local_pack_inner(
     }
 
     // ---- CurseForge manifest.json ----
-    if let Ok(bytes) = crate::util::read_zip_entry(pack_path, "manifest.json") {
+    if let Ok(bytes) = crate::archive::read_zip_entry(pack_path, "manifest.json") {
         let manifest: Value =
             serde_json::from_slice(&bytes).map_err(|e| format!("manifest.json 解析失败: {e}"))?;
         let pairs = crate::curseforge::manifest_file_pairs(&manifest);
@@ -410,7 +425,7 @@ async fn install_local_pack_inner(
                 instance,
                 source,
             );
-            if let Ok(fbody) = crate::curseforge::file_info(state, *pid, *fid).await {
+            if let Ok(fbody) = lease.until_cancelled(crate::curseforge::file_info(state, *pid, *fid)).await? {
                 if let Some(fdata) = fbody.get("data") {
                     metas.push((*pid, *fid, fdata.clone()));
                 }
@@ -423,8 +438,8 @@ async fn install_local_pack_inner(
             state,
             instance,
             pack_path,
+            lease,
             PackContentsSpec {
-                task_id,
                 source: source.to_string(),
                 download_label: format!("正在下载 {} 个模组…", dl_items.len()),
                 downloads: dl_items,
@@ -457,17 +472,15 @@ mod tests {
             db: Mutex::new(rusqlite::Connection::open_in_memory().unwrap()),
             client: crate::settings::http_client("system", None),
             semaphore: Arc::new(tokio::sync::Semaphore::new(4)),
-            game_pids: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            server_pids: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            server_senders: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            task_counter: std::sync::atomic::AtomicU64::new(1),
-            install_cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            jobs: crate::runtime_jobs::RuntimeJobs::default(),
+
+
             ms_flow: Arc::new(Mutex::new(None)),
             shimu: Mutex::new(crate::shimu::ShimuAuth::default()),
             ygg_oauth: Mutex::new(crate::yggdrasil_oauth::YggOauthPending::default()),
             java_cache: Mutex::new(None),
             terracotta: Mutex::new(None),
-            pending_update: Mutex::new(None),
+            pending_update: Mutex::new(crate::updater::UpdateCache::default()),
             lan_sync: Mutex::new(None),
             qookix: Mutex::new(crate::qookix::QookixSession::default()),
             qookix_refresh: tokio::sync::Mutex::new(()),
@@ -520,6 +533,7 @@ mod tests {
         let (inst, source) = prepare_pack(
             &state,
             PackPrepareSpec { pack_path: pack.clone(), icon_fallback_url: None },
+            None,
         )
         .await
         .unwrap();
@@ -554,6 +568,7 @@ mod tests {
         let (inst, _) = prepare_pack(
             &state,
             PackPrepareSpec { pack_path: pack.clone(), icon_fallback_url: None },
+            None,
         )
         .await
         .unwrap();
@@ -577,6 +592,7 @@ mod tests {
         let r = prepare_pack(
             &state,
             PackPrepareSpec { pack_path: pack.clone(), icon_fallback_url: None },
+            None,
         )
         .await;
         assert!(r.is_err(), "无法识别的包应报错");

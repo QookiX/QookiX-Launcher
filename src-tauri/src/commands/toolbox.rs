@@ -1,6 +1,20 @@
 use crate::cubiomes;
 use serde::Serialize;
 
+static SEED_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(6);
+const MAX_STRUCTURE_RADIUS: i32 = 512;
+const MAX_STRUCTURE_TYPES: usize = 32;
+const MAX_REGIONS_CANDIDATES: usize = 3_000_000;
+const MAX_STRUCTURE_HITS: usize = 100_000;
+
+fn validate_position(dim: i32, x: i32, z: i32) -> Result<(), String> {
+    if !cubiomes::valid_dimension(dim) || !cubiomes::valid_world_coord(x) || !cubiomes::valid_world_coord(z) {
+        Err("维度或坐标超出种子地图范围".into())
+    } else {
+        Ok(())
+    }
+}
+
 /// 前端把种子当**十进制字符串**传：Minecraft 种子是 64 位整数，很多存档的种子
 /// 超出 JS 安全整数范围（2^53），走 JSON number 会被静默舍入成另一个世界。
 fn parse_seed(seed: &str) -> Result<u64, String> {
@@ -36,6 +50,8 @@ pub fn toolbox_query_biome(
     z: i32,
     large_biomes: Option<bool>,
 ) -> Result<BiomeResult, String> {
+    validate_position(dim, x, z)?;
+    if !(-2048..=2048).contains(&y) { return Err("查询高度超出种子地图范围".into()); }
     let seed_u = parse_seed(&seed)?;
     let mc_id = cubiomes::parse_mc(&mc)?;
     let id = cubiomes::query_biome(
@@ -64,6 +80,7 @@ pub fn toolbox_surface_height(
     x: i32,
     z: i32,
 ) -> Result<i32, String> {
+    validate_position(dim, x, z)?;
     let seed_u = parse_seed(&seed)?;
     let mc_id = cubiomes::parse_mc(&mc)?;
     Ok(cubiomes::surface_height(seed_u, mc_id, dim, x, z))
@@ -105,33 +122,42 @@ pub async fn toolbox_query_structures(
     radius_chunks: i32,
     types: Vec<String>,
 ) -> Result<Vec<StructureHit>, String> {
+    validate_position(0, center_x, center_z)?;
+    if !(0..=MAX_STRUCTURE_RADIUS).contains(&radius_chunks) || types.len() > MAX_STRUCTURE_TYPES {
+        return Err("结构查询超出半径或类型数量限制".into());
+    }
     let seed_u = parse_seed(&seed)?;
     let mc_id = cubiomes::parse_mc(&mc)?;
+    let block_radius = radius_chunks.checked_mul(16).ok_or("结构半径超出限制")?;
+    let mut seen = std::collections::BTreeSet::new();
+    let mut scans = Vec::new();
+    let mut total = 0usize;
+    for kind in types {
+        let Ok(id) = cubiomes::parse_structure_type(&kind) else { continue };
+        if !seen.insert(id) { continue; }
+        let Some((region_size, _)) = cubiomes::get_structure_info(id, mc_id) else { continue };
+        let width = region_size.checked_mul(16).filter(|width| *width > 0).ok_or("结构区域尺寸无效")?;
+        let radius = block_radius / width + 1;
+        let side = (radius as usize) * 2 + 1;
+        total = side.checked_mul(side).and_then(|count| total.checked_add(count))
+            .filter(|total| *total <= MAX_REGIONS_CANDIDATES)
+            .ok_or("当前结构查询范围过大，请缩小地图范围")?;
+        scans.push((id, kind, center_x.div_euclid(width), center_z.div_euclid(width), radius));
+    }
+    let permit = SEED_WORK.acquire_many(2).await.map_err(|err| err.to_string())?;
     tokio::task::spawn_blocking(move || {
-        let block_radius = radius_chunks.max(0) * 16;
+        let _permit = permit;
         let mut out = Vec::new();
-        for t in &types {
-            let stype = match cubiomes::parse_structure_type(t) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let (region_size, _chunk_range) = match cubiomes::get_structure_info(stype, mc_id) {
-                Some(info) => info,
-                None => continue,
-            };
-            if region_size <= 0 {
-                continue;
-            }
-            let region_block = region_size as i32 * 16;
-            let reg_cx = center_x.div_euclid(region_block);
-            let reg_cz = center_z.div_euclid(region_block);
-            let reg_radius = block_radius / region_block + 1;
+        for (stype, kind, reg_cx, reg_cz, reg_radius) in scans {
             for rx in (reg_cx - reg_radius)..=(reg_cx + reg_radius) {
                 for rz in (reg_cz - reg_radius)..=(reg_cz + reg_radius) {
                     if let Some((px, pz)) = cubiomes::get_structure_pos(stype, seed_u, mc_id, rx, rz) {
-                        if (px - center_x).abs() <= block_radius && (pz - center_z).abs() <= block_radius {
+                        if px.abs_diff(center_x) <= block_radius as u32 && pz.abs_diff(center_z) <= block_radius as u32 {
+                            if out.len() >= MAX_STRUCTURE_HITS {
+                                return Err("结构查询结果过多，请缩小地图范围".into());
+                            }
                             out.push(StructureHit {
-                                r#type: t.clone(),
+                                r#type: kind.clone(),
                                 x: px,
                                 z: pz,
                                 region_x: rx,
@@ -142,7 +168,7 @@ pub async fn toolbox_query_structures(
                 }
             }
         }
-        out.sort_by_key(|h| (h.x - center_x).abs() + (h.z - center_z).abs());
+        out.sort_by_key(|hit| u64::from(hit.x.abs_diff(center_x)) + u64::from(hit.z.abs_diff(center_z)));
         Ok(out)
     })
     .await
@@ -152,6 +178,8 @@ pub async fn toolbox_query_structures(
 /// 查询指定区块是否为史莱姆区块。
 #[tauri::command]
 pub fn toolbox_slime_chunk(seed: String, chunk_x: i32, chunk_z: i32) -> Result<bool, String> {
+    let in_world = |chunk: i32| chunk.checked_mul(16).is_some_and(cubiomes::valid_world_coord);
+    if !in_world(chunk_x) || !in_world(chunk_z) { return Err("区块坐标超出种子地图范围".into()); }
     Ok(cubiomes::is_slime_chunk(parse_seed(&seed)?, chunk_x, chunk_z))
 }
 
@@ -170,7 +198,9 @@ pub async fn toolbox_world_spawn(
 ) -> Result<SpawnResult, String> {
     let seed_u = parse_seed(&seed)?;
     let mc_id = cubiomes::parse_mc(&mc)?;
+    let permit = SEED_WORK.acquire_many(2).await.map_err(|err| err.to_string())?;
     tokio::task::spawn_blocking(move || {
+        let _permit = permit;
         cubiomes::get_spawn(seed_u, mc_id, large_biomes.unwrap_or(false))
             .map(|(x, z)| SpawnResult { x, z })
             .ok_or_else(|| "无法计算出生点".to_string())
@@ -201,11 +231,17 @@ pub async fn toolbox_query_biome_map(
     large_biomes: Option<bool>,
     want_shade: Option<bool>,
 ) -> Result<tauri::ipc::Response, String> {
+    validate_position(dim, center_x, center_z)?;
+    if !(1..=cubiomes::MAX_TILE_SIDE).contains(&size) || !cubiomes::valid_tile_scale(scale) {
+        return Err("瓦片的尺寸或缩放超出种子地图范围".into());
+    }
     let seed_u = parse_seed(&seed)?;
     let mc_id = cubiomes::parse_mc(&mc)?;
     let want_shade = want_shade.unwrap_or(true);
+    let permit = SEED_WORK.acquire().await.map_err(|err| err.to_string())?;
     tokio::task::spawn_blocking(move || {
-        let s = scale.max(1);
+        let _permit = permit;
+        let s = scale;
         let half = size / 2;
         let bx = center_x.div_euclid(s) - half;
         let bz = center_z.div_euclid(s) - half;
@@ -354,7 +390,7 @@ pub fn toolbox_read_world_info(
     world: String,
 ) -> Result<WorldInfo, String> {
     crate::instances::validate_instance_id(&instance_id)?;
-    if !crate::util::is_safe_filename(&world) {
+    if !crate::fsutil::is_safe_filename(&world) {
         return Err("非法存档名".into());
     }
     let dir = state

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { vSegmented } from "../composables/vSegmented";
 /**
  * NBT 存档编辑器。
  * 三种视图：世界属性（表单 / 树形）、玩家数据、背包物品。
@@ -7,8 +8,8 @@
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from "vue";
 import { useI18n } from "vue-i18n";
-import { NButton, NModal, NProgress, NSelect, NSwitch, useDialog, useMessage } from "naive-ui";
-import { listen } from "@tauri-apps/api/event";
+import { NButton, NCollapse, NCollapseItem, NInput, NInputNumber, NModal, NProgress, NSelect, NSwitch, useDialog, useMessage } from "naive-ui";
+import { useTauriListenerScope } from "../composables/tauriListeners";
 import { open } from "@tauri-apps/plugin-dialog";
 import { api } from "../api";
 import { useInstancesStore } from "../stores/instances";
@@ -29,6 +30,8 @@ import ItemEditor from "../components/nbt/ItemEditor.vue";
 import NbtTreeEditor from "../components/nbt/NbtTreeEditor.vue";
 import ChunkEditor from "../components/nbt/ChunkEditor.vue";
 import BackupPanel from "../components/nbt/BackupPanel.vue";
+
+const { listen } = useTauriListenerScope();
 
 const { t, te } = useI18n();
 const message = useMessage();
@@ -133,17 +136,6 @@ function setRule(key: string, value: string) {
   if (!form.value?.gameRules) return;
   form.value.gameRules[key] = value;
 }
-/** 本次实际改动过的规则（只提交这些，未动的后端保持原样） */
-const changedRules = computed<Record<string, string>>(() => {
-  const out: Record<string, string> = {};
-  const before = original.value?.gameRules ?? {};
-  const now = form.value?.gameRules ?? {};
-  for (const [k, v] of Object.entries(now)) {
-    if (before[k] !== v) out[k] = v;
-  }
-  return out;
-});
-
 const gameModeOptions = computed(() => [
   { label: t("nbt.modeSurvival"), value: 0 },
   { label: t("nbt.modeCreative"), value: 1 },
@@ -203,6 +195,7 @@ async function openWorld(w: WorldSummary) {
     startBusy("work", t("nbt.readingPlayers"));
     const pl = await api.nbtListPlayers(instanceId.value, w.dir);
     players.value = pl.players;
+    if (pl.warnings.length) message.warning(pl.warnings.slice(0, 3).join("\n"));
   } catch (e) {
     message.error(String(e));
     current.value = null;
@@ -272,61 +265,79 @@ function setTab(x: Tab) {
   localStorage.setItem(TAB_KEY, x);
 }
 
-/** 与原始值对比，生成 "旧 → 新" 改动摘要（key 用真实 NBT 字段名，树形模式据此高亮） */
-const changes = computed<{ label: string; from: string; to: string; key: string }[]>(() => {
-  if (!form.value || !original.value) return [];
-  const out: { label: string; from: string; to: string; key: string }[] = [];
-  const diff = (key: string, label: string, a: unknown, b: unknown) => {
-    if (JSON.stringify(a) !== JSON.stringify(b)) {
-      out.push({ key, label, from: String(a ?? "-"), to: String(b ?? "-") });
-    }
+/** 确认摘要和提交补丁使用同一组改动。key 用真实 NBT 字段名供树形模式高亮。 */
+const savePlan = computed(() => {
+  const changes: { label: string; from: string; to: string; key: string }[] = [];
+  const patch: Record<string, unknown> = {};
+  const before = original.value;
+  const after = form.value;
+  if (!before || !after) return { changes, patch };
+
+  const text = (value: unknown) => String(value ?? "-");
+  const record = <T,>(key: string, label: string, oldValue: T, newValue: T, format: (value: T) => string = text) => {
+    if (oldValue === newValue) return false;
+    changes.push({ key, label, from: format(oldValue), to: format(newValue) });
+    return true;
   };
-  const label = (
-    opts: { label: string; value: number | null }[],
-    v: number | null
-  ) => opts.find((o) => o.value === v)?.label ?? String(v ?? "-");
-  diff("LevelName", t("nbt.levelName"), original.value.levelName, form.value.levelName);
+  const diff = <T,>(key: string, label: string, oldValue: T, newValue: T, format?: (value: T) => string) => {
+    if (record(key, label, oldValue, newValue, format)) patch[key] = newValue;
+  };
+  const optionLabel = (choices: { label: string; value: number }[]) => (value: number | null) =>
+    choices.find((option) => option.value === value)?.label ?? text(value);
+
+  diff("LevelName", t("nbt.levelName"), before.levelName, after.levelName);
   diff(
     "GameType",
     t("nbt.gameMode"),
-    label(gameModeOptions.value, original.value.gameType),
-    label(gameModeOptions.value, form.value.gameType)
+    before.gameType,
+    after.gameType,
+    optionLabel(gameModeOptions.value),
   );
   diff(
     "Difficulty",
     t("nbt.difficulty"),
-    label(difficultyOptions.value, original.value.difficulty),
-    label(difficultyOptions.value, form.value.difficulty)
+    before.difficulty,
+    after.difficulty,
+    optionLabel(difficultyOptions.value),
   );
-  diff("RandomSeed", t("nbt.seed"), original.value.seed, form.value.seed);
-  diff("Time", t("nbt.time"), original.value.time, form.value.time);
-  diff("raining", t("nbt.weatherRain"), original.value.raining, form.value.raining);
-  diff("thundering", t("nbt.weatherThunder"), original.value.thundering, form.value.thundering);
-  diff("SpawnX", t("nbt.spawn"), original.value.spawnX, form.value.spawnX);
-  diff("SpawnY", t("nbt.spawn"), original.value.spawnY, form.value.spawnY);
-  diff("SpawnZ", t("nbt.spawn"), original.value.spawnZ, form.value.spawnZ);
-  diff("allowCommands", t("nbt.allowCheats"), original.value.allowCommands, form.value.allowCommands);
-  diff(
-    "DifficultyLocked",
-    t("nbt.lockDifficulty"),
-    original.value.difficultyLocked,
-    form.value.difficultyLocked
+  diff("RandomSeed", t("nbt.seed"), before.seed, after.seed);
+  diff("Time", t("nbt.time"), before.time, after.time);
+  diff("DayTime", t("nbt.dayTime"), before.dayTime, after.dayTime);
+  diff("raining", t("nbt.weatherRain"), before.raining, after.raining);
+  diff("thundering", t("nbt.weatherThunder"), before.thundering, after.thundering);
+  diff("SpawnX", t("nbt.spawn"), before.spawnX, after.spawnX);
+  diff("SpawnY", t("nbt.spawn"), before.spawnY, after.spawnY);
+  diff("SpawnZ", t("nbt.spawn"), before.spawnZ, after.spawnZ);
+  diff("allowCommands", t("nbt.allowCheats"), before.allowCommands, after.allowCommands);
+  diff("DifficultyLocked", t("nbt.lockDifficulty"), before.difficultyLocked, after.difficultyLocked);
+  diff("hardcore", t("nbt.hardcore"), before.hardcore, after.hardcore);
+
+  const gameRules = Object.fromEntries(
+    Object.entries(after.gameRules ?? {}).filter(([key, value]) =>
+      record(key, ruleLabel(key), before.gameRules?.[key], value),
+    ),
   );
-  diff("hardcore", t("nbt.hardcore"), original.value.hardcore, form.value.hardcore);
-  // 游戏规则逐条比对（只列出真正改动的）
-  const beforeRules = original.value.gameRules ?? {};
-  for (const [k, v] of Object.entries(changedRules.value)) {
-    out.push({ key: k, label: ruleLabel(k), from: beforeRules[k] ?? "-", to: v });
+  if (Object.keys(gameRules).length) patch.gameRules = gameRules;
+
+  if (before.border && after.border) {
+    const border: Partial<NonNullable<WorldForm["border"]>> = {};
+    const fields = [
+      ["centerX", "CenterX", t("nbt.center")],
+      ["centerZ", "CenterZ", t("nbt.center")],
+      ["size", "Size", t("nbt.size")],
+    ] as const;
+    for (const [property, field, label] of fields) {
+      const key = after.borderFlat ? `Border${field}` : field;
+      if (record(key, label, before.border[property], after.border[property])) {
+        border[property] = after.border[property];
+      }
+    }
+    if (Object.keys(border).length) patch.border = border;
   }
-  if (form.value.border && original.value.border) {
-    // 扁平布局的字段名带 Border 前缀，树形模式高亮要跟着走
-    const flat = !!form.value.borderFlat;
-    diff(flat ? "BorderCenterX" : "CenterX", t("nbt.center"), original.value.border.centerX, form.value.border.centerX);
-    diff(flat ? "BorderCenterZ" : "CenterZ", t("nbt.center"), original.value.border.centerZ, form.value.border.centerZ);
-    diff(flat ? "BorderSize" : "Size", t("nbt.size"), original.value.border.size, form.value.border.size);
-  }
-  return out;
+  return { changes, patch };
 });
+
+const changes = computed(() => savePlan.value.changes);
 
 function setWeather(kind: "clear" | "rain" | "thunder") {
   if (!form.value) return;
@@ -336,11 +347,11 @@ function setWeather(kind: "clear" | "rain" | "thunder") {
 function setTime(preset: "sunrise" | "noon" | "sunset" | "midnight") {
   if (!form.value) return;
   const map = { sunrise: 0, noon: 6000, sunset: 12000, midnight: 18000 };
-  form.value.time = map[preset];
+  form.value.dayTime = String(map[preset]);
 }
 
 async function save() {
-  if (!form.value || !current.value) return;
+  if (!form.value || !current.value || saving.value) return;
   if (running.value) {
     message.warning(t("nbt.runningWarn"));
     return;
@@ -349,11 +360,24 @@ async function save() {
     message.warning(readonlyReason.value || t("nbt.readonlyWarn"));
     return;
   }
-  const list = changes.value;
+  const { changes: list, patch } = savePlan.value;
   if (!list.length) {
     message.info(t("nbt.noChanges"));
     return;
   }
+  const target = current.value;
+  const targetInstance = instanceId.value;
+  const submittedForm = JSON.stringify(form.value);
+  saving.value = true;
+  try {
+    await api.nbtValidateWorldPatch(targetInstance, target.dir, patch);
+  } catch (error) {
+    message.error(String(error));
+    return;
+  } finally {
+    saving.value = false;
+  }
+  if (current.value !== target || instanceId.value !== targetInstance) return;
   dialog.warning({
     title: t("nbt.confirmTitle"),
     content: () =>
@@ -363,38 +387,26 @@ async function save() {
     positiveText: t("nbt.save"),
     negativeText: t("nbt.reset"),
     onPositiveClick: async () => {
+      if (current.value !== target || instanceId.value !== targetInstance) return;
       saving.value = true;
       startBusy("work", t("nbt.writingSave"));
       try {
         // 落盘前再确认一次可写：文件可能在打开之后被改成只读
-        const chk = await api.nbtCanEdit(instanceId.value, current.value!.dir);
+        const chk = await api.nbtCanEdit(targetInstance, target.dir);
+        if (current.value !== target || instanceId.value !== targetInstance) return;
         if (!chk.editable) {
           editable.value = false;
           readonlyReason.value = chk.reason;
           message.warning(chk.reason || t("nbt.readonlyWarn"));
           return;
         }
-        const r = await api.nbtSaveWorld(instanceId.value, current.value!.dir, {
-          LevelName: form.value!.levelName,
-          GameType: form.value!.gameType,
-          Difficulty: form.value!.difficulty,
-          DifficultyLocked: form.value!.difficultyLocked,
-          hardcore: form.value!.hardcore,
-          RandomSeed: form.value!.seed,
-          Time: form.value!.time,
-          DayTime: form.value!.time,
-          raining: form.value!.raining,
-          thundering: form.value!.thundering,
-          SpawnX: form.value!.spawnX,
-          SpawnY: form.value!.spawnY,
-          SpawnZ: form.value!.spawnZ,
-          allowCommands: form.value!.allowCommands,
-          // 只提交改动过的规则，其余规则后端保持原样
-          gameRules: changedRules.value,
-          border: form.value!.border,
-        });
+        const r = await api.nbtSaveWorld(targetInstance, target.dir, patch);
+        if (current.value !== target || instanceId.value !== targetInstance) return;
         lastBackup.value = r.backup;
-        original.value = JSON.parse(JSON.stringify(form.value));
+        original.value = r.form;
+        if (JSON.stringify(form.value) === submittedForm) {
+          form.value = JSON.parse(JSON.stringify(r.form));
+        }
         message.success(t("nbt.saved"));
       } catch (e) {
         message.error(String(e));
@@ -449,7 +461,7 @@ watch(instanceId, () => {
 </script>
 
 <template>
-  <div class="nbt-view" data-tauri-drag-region>
+  <div class="nbt-view qx-page" data-tauri-drag-region>
     <div class="bar glass">
       <span class="bar-label">{{ t("nbt.selectInstance") }}</span>
       <NSelect
@@ -516,7 +528,7 @@ watch(instanceId, () => {
 
     <!-- 编辑器 -->
     <div v-else class="editor glass">
-      <div class="editor-head">
+      <div class="editor-head qx-card-open">
         <button class="mini-btn" @click="back">← {{ t("nbt.backToList") }}</button>
         <span class="world-title">{{ worldLabel(current) }}</span>
         <span v-if="manual" class="tag manual">{{ t("nbt.manualTag") }}</span>
@@ -530,7 +542,7 @@ watch(instanceId, () => {
           <IconRestore /> {{ t("nbt.backupTitle") }}
         </button>
         <!-- 表单 / 树形 模式切换 -->
-        <div v-if="tab === 'world'" ref="modeSegRef" class="seg qx-seg qx-seg--sm">
+        <div v-if="tab === 'world'" ref="modeSegRef" v-segmented="{ label: t('common.editorMode') }" class="seg qx-seg qx-seg--sm">
           <div class="qx-seg__indicator" :style="modeSegStyle"></div>
           <button :class="{ active: mode === 'form' }" @click="setMode('form')">
             {{ t("nbt.formMode") }}
@@ -544,7 +556,7 @@ watch(instanceId, () => {
       <div v-if="readonlyReason && !running" class="readonly-bar">{{ readonlyReason }}</div>
 
       <!-- 三大分区 -->
-      <div ref="tabSegRef" class="seg qx-seg">
+      <div ref="tabSegRef" v-segmented="{ label: t('nbt.nbtTitle'), panel: 'nbt-tab-panel' }" class="seg qx-seg">
         <div class="qx-seg__indicator" :style="tabSegStyle"></div>
         <button :class="{ active: tab === 'world' }" @click="setTab('world')">
           {{ t("nbt.worldProps") }}
@@ -560,11 +572,12 @@ watch(instanceId, () => {
         </button>
       </div>
 
+      <div id="nbt-tab-panel" class="nbt-tab-panel" role="tabpanel">
       <!-- 世界属性：表单模式 -->
       <div v-if="tab === 'world' && mode === 'form' && form" class="form-body">
         <div class="field">
-          <label>{{ t("nbt.levelName") }}</label>
-          <input v-model="form.levelName" class="input" spellcheck="false" />
+          <label for="nbt-levelName">{{ t("nbt.levelName") }}</label>
+          <NInput v-model:value="form.levelName" :input-props="{ id: 'nbt-levelName', spellcheck: false }" />
         </div>
         <div class="field-row">
           <div class="field">
@@ -577,14 +590,18 @@ watch(instanceId, () => {
           </div>
         </div>
         <div class="field">
-          <label>{{ t("nbt.seed") }}</label>
-          <input v-model="form.seed" class="input" spellcheck="false" inputmode="numeric" />
+          <label for="nbt-seed">{{ t("nbt.seed") }}</label>
+          <NInput v-model:value="form.seed" :input-props="{ id: 'nbt-seed', spellcheck: false, inputmode: 'numeric' }" />
           <span class="hint">{{ t("nbt.seedHint") }}</span>
         </div>
         <div class="field">
-          <label>{{ t("nbt.time") }}</label>
+          <label for="nbt-time">{{ t("nbt.time") }}</label>
+          <NInput v-model:value="form.time" :input-props="{ id: 'nbt-time', spellcheck: false, inputmode: 'numeric' }" />
+        </div>
+        <div class="field">
+          <label for="nbt-day-time">{{ t("nbt.dayTime") }}</label>
           <div class="inline">
-            <input v-model.number="form.time" class="input num" type="number" />
+            <NInput v-model:value="form.dayTime" class="num" :input-props="{ id: 'nbt-day-time', spellcheck: false, inputmode: 'numeric' }" />
             <button class="mini-btn" @click="setTime('sunrise')">{{ t("nbt.timeSunrise") }}</button>
             <button class="mini-btn" @click="setTime('noon')">{{ t("nbt.timeNoon") }}</button>
             <button class="mini-btn" @click="setTime('sunset')">{{ t("nbt.timeSunset") }}</button>
@@ -602,9 +619,12 @@ watch(instanceId, () => {
         <div class="field">
           <label>{{ t("nbt.spawn") }}</label>
           <div class="inline">
-            <span>X</span><input v-model.number="form.spawnX" class="input num" type="number" />
-            <span>Y</span><input v-model.number="form.spawnY" class="input num" type="number" />
-            <span>Z</span><input v-model.number="form.spawnZ" class="input num" type="number" />
+            <label for="nbt-spawn-x">X</label>
+            <NInputNumber v-model:value="form.spawnX" class="num" :show-button="false" :input-props="{ id: 'nbt-spawn-x' }" />
+            <label for="nbt-spawn-y">Y</label>
+            <NInputNumber v-model:value="form.spawnY" class="num" :show-button="false" :input-props="{ id: 'nbt-spawn-y' }" />
+            <label for="nbt-spawn-z">Z</label>
+            <NInputNumber v-model:value="form.spawnZ" class="num" :show-button="false" :input-props="{ id: 'nbt-spawn-z' }" />
           </div>
         </div>
         <div class="field-row">
@@ -647,49 +667,52 @@ watch(instanceId, () => {
             <div v-for="k in NUMERIC_RULES" :key="k" class="field">
               <label :title="k">{{ ruleLabel(k) }}</label>
               <input
-                class="input"
+                class="qx-input"
                 type="number"
                 :value="form.gameRules?.[k] ?? ''"
                 @input="(e: Event) => setRule(k, (e.target as HTMLInputElement).value)"
               />
             </div>
           </div>
-          <details v-if="otherRules.length" class="rules-all">
-            <summary>{{ t("nbt.allRules") }}（{{ otherRules.length }}）</summary>
-            <div class="rules">
-              <div v-for="k in otherRules" :key="k" class="rule-row">
-                <span class="rule-label" :title="k">{{ ruleLabel(k) }}</span>
-                <NSwitch
-                  v-if="isBoolRule(form.gameRules?.[k])"
-                  size="small"
-                  :value="form.gameRules?.[k] === 'true'"
-                  @update:value="(v: boolean) => setRule(k, v ? 'true' : 'false')"
-                />
-                <input
-                  v-else
-                  class="input rule-input"
-                  :value="form.gameRules?.[k]"
-                  @input="(e: Event) => setRule(k, (e.target as HTMLInputElement).value)"
-                />
+          <NCollapse v-if="otherRules.length" class="rules-all" display-directive="show">
+            <NCollapseItem name="all-rules" :title="`${t('nbt.allRules')} (${otherRules.length})`">
+              <div class="rules">
+                <div v-for="k in otherRules" :key="k" class="rule-row">
+                  <span class="rule-label" :title="k">{{ ruleLabel(k) }}</span>
+                  <NSwitch
+                    v-if="isBoolRule(form.gameRules?.[k])"
+                    size="small"
+                    :value="form.gameRules?.[k] === 'true'"
+                    @update:value="(v: boolean) => setRule(k, v ? 'true' : 'false')"
+                  />
+                  <NInput
+                    v-else
+                    class="rule-input"
+                    size="small"
+                    :value="form.gameRules?.[k]"
+                    :input-props="{ 'aria-label': ruleLabel(k) }"
+                    @update:value="(value) => setRule(k, value)"
+                  />
+                </div>
               </div>
-            </div>
-          </details>
+            </NCollapseItem>
+          </NCollapse>
         </template>
 
         <template v-if="form.border">
           <h3 class="sec-title">{{ t("nbt.worldBorder") }}</h3>
           <div class="field-row">
             <div class="field">
-              <label>{{ t("nbt.center") }} X</label>
-              <input v-model.number="form.border.centerX" class="input" type="number" step="0.5" />
+              <label for="nbt-border-x">{{ t("nbt.center") }} X</label>
+              <NInputNumber v-model:value="form.border.centerX" :step="0.5" :input-props="{ id: 'nbt-border-x' }" />
             </div>
             <div class="field">
-              <label>{{ t("nbt.center") }} Z</label>
-              <input v-model.number="form.border.centerZ" class="input" type="number" step="0.5" />
+              <label for="nbt-border-z">{{ t("nbt.center") }} Z</label>
+              <NInputNumber v-model:value="form.border.centerZ" :step="0.5" :input-props="{ id: 'nbt-border-z' }" />
             </div>
             <div class="field">
-              <label>{{ t("nbt.size") }}</label>
-              <input v-model.number="form.border.size" class="input" type="number" step="0.5" />
+              <label for="nbt-border-size">{{ t("nbt.size") }}</label>
+              <NInputNumber v-model:value="form.border.size" :step="0.5" :input-props="{ id: 'nbt-border-size' }" />
             </div>
           </div>
         </template>
@@ -784,6 +807,7 @@ watch(instanceId, () => {
           />
           <div v-else class="center">{{ t("nbt.selectPlayer") }}</div>
         </template>
+      </div>
       </div>
     </div>
 
@@ -917,6 +941,7 @@ watch(instanceId, () => {
   font-size: var(--fs-xs);
 }
 /* 分段控件外观走全局 .qx-seg（主标签）/ .qx-seg--sm（表单-树形切换） */
+.nbt-tab-panel { display: flex; flex-direction: column; min-width: 0; }
 .form-body {
   display: flex;
   flex-direction: column;
@@ -941,20 +966,7 @@ watch(instanceId, () => {
   color: var(--text-2);
   font-weight: 600;
 }
-.input {
-  padding: 6px 10px;
-  border-radius: var(--r-sm);
-  border: 1px solid var(--border);
-  background: var(--w-04);
-  color: var(--text-1);
-  font-size: var(--fs-sm);
-  font-family: inherit;
-  outline: none;
-}
-.input:focus {
-  border-color: var(--accent-04);
-}
-.input.num {
+.num {
   width: 110px;
 }
 .inline {
@@ -995,17 +1007,9 @@ watch(instanceId, () => {
 }
 .rule-input {
   width: 120px;
-  padding: 4px 8px;
-  font-size: var(--fs-xs);
 }
 .rules-all {
   margin-top: 2px;
-}
-.rules-all summary {
-  cursor: pointer;
-  font-size: var(--fs-xs);
-  color: var(--text-3);
-  padding: 4px 0;
 }
 .rules-all .rules {
   margin-top: 6px;

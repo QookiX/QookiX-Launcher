@@ -4,6 +4,9 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
+const QUERY_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_STATUS_BYTES: usize = 1024 * 1024;
+
 /// 单个 Minecraft 多人服务器的实时状态（Java 版 Server List Ping 协议返回）
 #[derive(Serialize, Clone)]
 pub struct ServerStatus {
@@ -22,7 +25,9 @@ pub struct ServerStatus {
 /// 入口：统一返回 ServerStatus，网络/解析失败也会返回一个 offline 状态，绝不抛错
 pub async fn ping_server(raw_addr: &str) -> ServerStatus {
     let addr = raw_addr.trim().to_string();
-    match do_ping(&addr).await {
+    let result = tokio::time::timeout(QUERY_TIMEOUT, do_ping(&addr)).await
+        .unwrap_or_else(|_| Err("服务器状态查询超时".into()));
+    match result {
         Ok(s) => s,
         Err(e) => ServerStatus {
             online: false,
@@ -66,6 +71,7 @@ fn parse_addr(addr: &str) -> Result<(String, u16), String> {
 }
 
 async fn do_ping(addr: &str) -> Result<ServerStatus, String> {
+    let query_started = Instant::now();
     let (host, port) = parse_addr(addr)?;
 
     let connect = TcpStream::connect((host.as_str(), port));
@@ -102,26 +108,26 @@ async fn do_ping(addr: &str) -> Result<ServerStatus, String> {
     // 3) 读取 Status Response
     let t0 = Instant::now();
     let len = read_varint_timeout(&mut reader, Duration::from_secs(6)).await?;
-    if len <= 0 || len > 10_000_000 {
-        return Err("状态响应过大或无效".into());
-    }
-    let mut buf = vec![0u8; len as usize];
+    let len = usize::try_from(len).ok().filter(|n| (2..=MAX_STATUS_BYTES).contains(n))
+        .ok_or("状态响应过大或无效")?;
+    let mut buf = vec![0u8; len];
     read_exact_timeout(&mut reader, &mut buf, Duration::from_secs(6)).await?;
     let elapsed = t0.elapsed();
-    // buf[0] = packet id (0x00)，随后是 VarInt 长度的 JSON 字符串
-    let mut pos = 1usize;
-    let json_len = read_varint_at(&buf, &mut pos)? as usize;
-    if pos + json_len > buf.len() {
-        return Err("状态响应格式错误".into());
-    }
-    let json = String::from_utf8_lossy(&buf[pos..pos + json_len]).to_string();
-    let v: Value = serde_json::from_str(&json).map_err(|e| format!("JSON 解析失败: {e}"))?;
+    let v = parse_status_frame(&buf)?;
 
     // 4) Ping / Pong 用于测量更精确的延迟
-    let latency_ms: Option<u64> = match send_ping_pong(&mut reader, &mut writer, Duration::from_secs(5)).await {
-        Ok(rtt) => Some(rtt),
-        Err(_) => Some(elapsed.as_millis() as u64),
-    };
+    let pong_budget = QUERY_TIMEOUT
+        .saturating_sub(query_started.elapsed())
+        .saturating_sub(Duration::from_millis(50))
+        .min(Duration::from_secs(1));
+    let mut latency_ms = Some(elapsed.as_millis() as u64);
+    if !pong_budget.is_zero() {
+        if let Ok(Ok(rtt)) = tokio::time::timeout(
+            pong_budget, send_ping_pong(&mut reader, &mut writer, pong_budget),
+        ).await {
+            latency_ms = Some(rtt);
+        }
+    }
 
     let version = v
         .get("version")
@@ -132,12 +138,12 @@ async fn do_ping(addr: &str) -> Result<ServerStatus, String> {
         .get("players")
         .and_then(|x| x.get("online"))
         .and_then(|x| x.as_u64())
-        .map(|x| x as u32);
+        .and_then(|x| u32::try_from(x).ok());
     let raw_max = v
         .get("players")
         .and_then(|x| x.get("max"))
         .and_then(|x| x.as_u64())
-        .map(|x| x as u32);
+        .and_then(|x| u32::try_from(x).ok());
     // 部分服务器（BungeeCord 网关、插件服等）会把 max 写成 1 或小于在线人数，
     // 这种上限无意义，统一隐藏，避免显示成 "260/1" 之类的奇怪数字
     let players_max = match (players_online, raw_max) {
@@ -159,6 +165,52 @@ async fn do_ping(addr: &str) -> Result<ServerStatus, String> {
         latency_ms,
         error: None,
     })
+}
+
+fn parse_status_frame(frame: &[u8]) -> Result<Value, String> {
+    let mut pos = 0;
+    if read_varint_at(frame, &mut pos)? != 0 {
+        return Err("状态响应类型错误".into());
+    }
+    let length = usize::try_from(read_varint_at(frame, &mut pos)?)
+        .map_err(|_| "状态 JSON 长度为负数")?;
+    let body = frame.get(pos..).filter(|bytes| !bytes.is_empty() && bytes.len() == length && length <= MAX_STATUS_BYTES)
+        .ok_or("状态 JSON 长度与响应帧不匹配")?;
+    let status: Value = serde_json::from_slice(body).map_err(|err| format!("状态 JSON 解析失败: {err}"))?;
+    if !status.is_object() {
+        return Err("状态 JSON 必须是对象".into());
+    }
+    Ok(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_parses_only_complete_frames_of_the_expected_type() {
+        let body = b"{\"version\":{\"name\":\"test\"}}";
+        let mut packet = vec![0, body.len() as u8];
+        packet.extend_from_slice(body);
+        assert_eq!(parse_status_frame(&packet).unwrap()["version"]["name"], "test");
+        packet[0] = 1;
+        assert!(parse_status_frame(&packet).unwrap_err().contains("类型"));
+        packet[0] = 0;
+        packet.push(0);
+        assert!(parse_status_frame(&packet).unwrap_err().contains("长度"));
+        assert!(parse_status_frame(&[0, 0xff, 0xff, 0xff, 0xff, 0x0f]).unwrap_err().contains("负数"));
+    }
+
+    #[tokio::test]
+    async fn signed_varints_respect_the_five_byte_limit_in_both_readers() {
+        let mut data = Vec::new();
+        write_varint(&mut data, -1);
+        assert_eq!(read_varint_at(&data, &mut 0), Ok(-1));
+        assert_eq!(read_varint_timeout(&mut data.as_slice(), Duration::from_secs(1)).await, Ok(-1));
+        let oversized = [0x80, 0x80, 0x80, 0x80, 0x80, 1];
+        assert!(read_varint_at(&oversized, &mut 0).is_err());
+        assert!(read_varint_timeout(&mut oversized.as_slice(), Duration::from_secs(1)).await.is_err());
+    }
 }
 
 /// 发送 0x01 Ping（payload = 时间戳），读取 0x01 Pong，返回往返耗时(ms)
@@ -185,13 +237,14 @@ where
     }
     let mut buf = [0u8; 9];
     read_exact_timeout(reader, &mut buf, timeout).await?;
-    if buf[0] != 0x01 {
+    if buf[0] != 0x01 || buf[1..] != payload.to_be_bytes() {
         return Err("pong 类型异常".into());
     }
     Ok(t0.elapsed().as_millis() as u64)
 }
 
-fn write_varint(buf: &mut Vec<u8>, mut value: i32) {
+fn write_varint(buf: &mut Vec<u8>, value: i32) {
+    let mut value = value as u32;
     loop {
         let mut temp = (value & 0b0111_1111) as u8;
         value >>= 7;
@@ -214,22 +267,15 @@ async fn write_all_timeout<W: AsyncWriteExt + Unpin>(w: &mut W, buf: &[u8], time
 }
 
 async fn read_varint_timeout<R: AsyncReadExt + Unpin>(r: &mut R, timeout: Duration) -> Result<i32, String> {
-    let mut num_read = 0;
-    let mut result = 0i32;
-    loop {
-        let mut byte = [0u8; 1];
-        read_exact_timeout(r, &mut byte, timeout).await?;
-        let b = byte[0];
-        result |= ((b & 0b0111_1111) as i32) << (7 * num_read);
-        num_read += 1;
-        if num_read > 5 {
-            return Err("VarInt 过长".into());
-        }
-        if (b & 0b1000_0000) == 0 {
-            break;
+    let deadline = tokio::time::Instant::now() + timeout;
+    let mut bytes = [0; 5];
+    for byte in &mut bytes {
+        read_exact_timeout(r, std::slice::from_mut(byte), deadline.saturating_duration_since(tokio::time::Instant::now())).await?;
+        if *byte & 0x80 == 0 {
+            return read_varint_at(&bytes, &mut 0);
         }
     }
-    Ok(result)
+    Err("VarInt 过长".into())
 }
 
 async fn read_exact_timeout<R: AsyncReadExt + Unpin>(r: &mut R, buf: &mut [u8], timeout: Duration) -> Result<(), String> {
@@ -241,24 +287,19 @@ async fn read_exact_timeout<R: AsyncReadExt + Unpin>(r: &mut R, buf: &mut [u8], 
 }
 
 fn read_varint_at(buf: &[u8], pos: &mut usize) -> Result<i32, String> {
-    let mut num_read = 0;
-    let mut result = 0i32;
-    loop {
-        if *pos >= buf.len() {
-            return Err("VarInt 越界".into());
-        }
-        let b = buf[*pos];
+    let mut result = 0u32;
+    for index in 0..5 {
+        let b = *buf.get(*pos).ok_or("VarInt 越界")?;
         *pos += 1;
-        result |= ((b & 0b0111_1111) as i32) << (7 * num_read);
-        num_read += 1;
-        if num_read > 5 {
-            return Err("VarInt 过长".into());
+        if index == 4 && b > 0x0f {
+            return Err("VarInt 超出 32 位范围".into());
         }
-        if (b & 0b1000_0000) == 0 {
-            break;
+        result |= u32::from(b & 0x7f) << (7 * index);
+        if b & 0x80 == 0 {
+            return Ok(result as i32);
         }
     }
-    Ok(result)
+    Err("VarInt 过长".into())
 }
 
 /// 把 MC 的聊天组件（字符串 / 带 text+extra 的对象 / 数组）压平为带 § 颜色码的纯文本，

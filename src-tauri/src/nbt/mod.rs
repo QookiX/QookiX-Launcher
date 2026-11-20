@@ -6,6 +6,7 @@
 //! 3. 世界正在游玩（该实例有运行中的游戏进程）时拒绝写盘
 
 pub mod backup;
+mod bounded;
 pub mod item;
 pub mod level;
 pub mod map;
@@ -37,7 +38,7 @@ pub fn resolve_world(state: &AppState, instance_id: &str, world: &str) -> Result
     let path = if is_absolute(world) {
         PathBuf::from(world)
     } else {
-        if !crate::util::is_safe_filename(world) {
+        if !crate::fsutil::is_safe_filename(world) {
             return Err("非法的世界目录名".into());
         }
         if instance_id.is_empty() {
@@ -153,36 +154,38 @@ pub fn list_worlds(
 /// 逐个 stat 会让"扫描世界"慢到像卡死。
 fn world_size(dir: &Path) -> u64 {
     let mut total = 0u64;
-    let mut add_dir = |path: PathBuf| {
+    let mut add_dir = |path: &Path| {
         if let Ok(rd) = std::fs::read_dir(path) {
             for e in rd.flatten() {
-                if let Ok(m) = e.metadata() {
-                    total += m.len();
+                let Ok(mut metadata) = e.metadata() else {
+                    continue;
+                };
+                // 链接本身的元数据不包含目标文件的大小。
+                if metadata.is_symlink() {
+                    let Ok(target) = std::fs::metadata(e.path()) else {
+                        continue;
+                    };
+                    metadata = target;
+                }
+                if metadata.is_file() {
+                    total += metadata.len();
                 }
             }
         }
     };
+    add_dir(dir);
     for sub in ["region", "entities", "poi"] {
-        add_dir(dir.join(sub));
+        add_dir(&dir.join(sub));
     }
     for dim in ["DIM-1", "DIM1"] {
         for sub in ["region", "entities", "poi"] {
-            add_dir(dir.join(dim).join(sub));
+            add_dir(&dir.join(dim).join(sub));
         }
     }
     // 26.x：所有维度都搬到了 dimensions/minecraft/<维度>/ 下
     for dim in ["overworld", "the_nether", "the_end"] {
         for sub in ["region", "entities", "poi"] {
-            add_dir(dir.join("dimensions").join("minecraft").join(dim).join(sub));
-        }
-    }
-    if let Ok(rd) = std::fs::read_dir(dir) {
-        for e in rd.flatten() {
-            if let Ok(m) = e.metadata() {
-                if m.is_file() {
-                    total += m.len();
-                }
-            }
+            add_dir(&dir.join("dimensions").join("minecraft").join(dim).join(sub));
         }
     }
     total
@@ -191,11 +194,15 @@ fn world_size(dir: &Path) -> u64 {
 /// 读出一个世界的表单字段（只挑 UI 关心的，完整树另由 nbt_tree_view 提供）。
 pub fn world_form(path: &Path) -> Result<Json, String> {
     let root = level::read_level(path)?;
-    let data = level::world_data(&root);
+    Ok(world_form_from_data(&root))
+}
+
+fn world_form_from_data(root: &Value) -> Json {
+    let data = level::world_data(root);
     let rules = level::get(data, "GameRules")
         .map(game_rules_json)
         .unwrap_or(Json::Null);
-    Ok(json!({
+    json!({
         "levelName": get_string(data, "LevelName"),
         "gameType": get_int(data, "GameType"),
         "difficulty": get_int(data, "Difficulty"),
@@ -203,8 +210,8 @@ pub fn world_form(path: &Path) -> Result<Json, String> {
         "hardcore": get_int(data, "hardcore"),
         // 种子是 Long，可能超过 JS 的安全整数范围，这里按十进制字符串给前端
         "seed": world_seed(data).map(|n| n.to_string()),
-        "time": get_int(data, "Time"),
-        "dayTime": get_int(data, "DayTime"),
+        "time": get_int(data, "Time").map(|n| n.to_string()),
+        "dayTime": get_int(data, "DayTime").map(|n| n.to_string()),
         "raining": get_int(data, "raining"),
         "thundering": get_int(data, "thundering"),
         "spawnX": get_int(data, "SpawnX"),
@@ -214,7 +221,7 @@ pub fn world_form(path: &Path) -> Result<Json, String> {
         "gameRules": rules,
         "border": border_values(data),
         "borderFlat": border_is_flat(data),
-    }))
+    })
 }
 
 /// 种子：1.16+ 存在 `WorldGenSettings.seed`，更老的存档在顶层 `RandomSeed`
@@ -251,21 +258,18 @@ fn border_values(data: &Value) -> Option<Json> {
 }
 
 /// 写回种子：只写到存档里实际存在的那个位置，不新增另一种布局
-fn set_seed(map: &mut HashMap<String, Value>, seed: i64) {
-    let mut wrote = false;
+fn set_seed(map: &mut HashMap<String, Value>, seed: i64) -> Result<(), String> {
     if let Some(Value::Compound(w)) = map.get_mut("WorldGenSettings") {
-        if w.contains_key("seed") {
-            w.insert("seed".into(), Value::Long(seed));
+        if let Some(value) = w.get_mut("seed") {
+            *value = Value::Long(seed);
+            return Ok(());
         }
-        wrote = true; // WorldGenSettings 在，就在里面写（1.16+ 权威位置）
     }
-    if map.contains_key("RandomSeed") {
-        map.insert("RandomSeed".into(), Value::Long(seed));
-        wrote = true;
+    if let Some(value) = map.get_mut("RandomSeed") {
+        *value = Value::Long(seed);
+        return Ok(());
     }
-    if !wrote {
-        map.insert("RandomSeed".into(), Value::Long(seed));
-    }
+    Err("当前存档没有可编辑的种子字段".into())
 }
 
 /// GameRules 是一组字符串值（"true"/"false"/数字字符串），原样交给前端渲染。
@@ -284,22 +288,37 @@ fn game_rules_json(v: &Value) -> Json {
     }
 }
 
+pub(crate) fn validate_world_patch(level_path: &Path, patch: &Json) -> Result<(), String> {
+    let mut data = level::read_level(level_path)?;
+    apply_patch(&mut data, patch)
+}
+
 /// 把表单字段写回 level.dat。只改 patch 中出现的字段，其余原样保留。
-/// 返回备份文件名。
+/// 返回备份文件名和写入后的字段。
 pub fn save_world_form(
     state: &AppState,
     instance_id: &str,
     world: &str,
     patch: &Json,
-) -> Result<String, String> {
+) -> Result<(String, Json), String> {
     let dir = resolve_world(state, instance_id, world)?;
     let level_path = dir.join("level.dat");
-    let backup_name = backup::backup_file(&level_path)?;
+    let (backup_name, data) = edit_level(&level_path, |data| apply_patch(data, patch))?;
+    Ok((backup_name, world_form_from_data(&data)))
+}
 
-    let mut data = level::read_level(&level_path)?;
-    apply_patch(&mut data, patch)?;
-    level::write_level(&level_path, &data)?;
-    Ok(backup_name)
+/// 表单和树形模式都在同一轮读改写中先校验，再备份和替换文件。
+fn edit_level(
+    path: &Path,
+    change: impl FnOnce(&mut Value) -> Result<(), String>,
+) -> Result<(String, Value), String> {
+    static WORLD_EDIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _edit = WORLD_EDIT.lock().map_err(|_| "世界编辑状态不可用")?;
+    let mut data = level::read_level(path)?;
+    change(&mut data)?;
+    let backup = backup::backup_file(path)?;
+    level::write_level(path, &data)?;
+    Ok((backup, data))
 }
 
 /// 只修改 patch 中列出的字段；未知/未列出的字段原封不动。
@@ -322,95 +341,46 @@ fn apply_data_patch(data: &mut Value, patch: &Json) -> Result<(), String> {
             // 种子：按存档里的实际位置写（1.16+ 在 WorldGenSettings.seed，老存档在 RandomSeed）。
             // 前端传的是十进制字符串（Long 超过 JS 安全整数范围，走数字会被截断）
             "RandomSeed" => {
-                let seed = match v {
-                    Json::String(s) => s.trim().parse::<i64>().ok(),
-                    other => other.as_i64(),
-                };
-                if let Some(n) = seed {
-                    set_seed(map, n);
-                }
+                let seed = level::long_from_json(v).map_err(|error| format!("{key}: {error}"))?;
+                set_seed(map, seed)?;
             }
             // 世界边界：compound 布局改 CenterX/CenterZ/Size，扁平布局改 Border*，
             // 都只动已存在的字段，不新建另一种布局
             "border" => {
-                let Some(p) = v.as_object() else { continue };
-                if let Some(Value::Compound(b)) = map.get_mut("WorldBorder") {
-                    if let Some(x) = p.get("centerX").and_then(|x| x.as_f64()) {
-                        b.insert("CenterX".into(), Value::Double(x));
-                    }
-                    if let Some(z) = p.get("centerZ").and_then(|x| x.as_f64()) {
-                        b.insert("CenterZ".into(), Value::Double(z));
-                    }
-                    if let Some(s) = p.get("size").and_then(|x| x.as_f64()) {
-                        b.insert("Size".into(), Value::Double(s));
-                    }
-                } else {
-                    for (src, dst) in [
-                        ("centerX", "BorderCenterX"),
-                        ("centerZ", "BorderCenterZ"),
-                        ("size", "BorderSize"),
-                    ] {
-                        if let Some(num) = p.get(src).and_then(|x| x.as_f64()) {
-                            if matches!(map.get(dst), Some(Value::Double(_))) {
-                                map.insert(dst.into(), Value::Double(num));
-                            }
-                        }
+                let fields = v.as_object().ok_or("世界边界修改必须是对象")?;
+                for (field, value) in fields {
+                    let (nested, flat) = match field.as_str() {
+                        "centerX" => ("CenterX", "BorderCenterX"),
+                        "centerZ" => ("CenterZ", "BorderCenterZ"),
+                        "size" => ("Size", "BorderSize"),
+                        _ => return Err(format!("未知的世界边界字段: {field}")),
+                    };
+                    let value = level::typed_value("double", value)
+                        .map_err(|error| format!("{field}: {error}"))?;
+                    if let Some(Value::Compound(border)) = map.get_mut("WorldBorder") {
+                        border.insert(nested.into(), value);
+                    } else if matches!(map.get(flat), Some(Value::Double(_))) {
+                        map.insert(flat.into(), value);
+                    } else {
+                        return Err(format!("存档缺少世界边界字段: {flat}"));
                     }
                 }
             }
             // 游戏规则：只改 patch 里出现的规则项，其余规则原样保留
             "gameRules" => {
-                if let Some(Value::Compound(g)) = map.get_mut("GameRules") {
-                    if let Some(p) = v.as_object() {
-                        for (k, val) in p {
-                            if let Some(s) = val.as_str() {
-                                g.insert(k.clone(), Value::String(s.to_string()));
-                            }
-                        }
-                    }
+                let rules = v.as_object().ok_or("游戏规则修改必须是对象")?;
+                let Some(Value::Compound(existing)) = map.get_mut("GameRules") else {
+                    return Err("存档缺少 GameRules".into());
+                };
+                for (key, value) in rules {
+                    let value = value.as_str().ok_or_else(|| format!("游戏规则 {key} 必须是文本"))?;
+                    existing.insert(key.clone(), Value::String(value.into()));
                 }
             }
             _ => {
-                if v.is_null() {
-                    continue;
-                }
-                let tag = type_of(key);
-                match tag {
-                    "string" => {
-                        if let Some(s) = v.as_str() {
-                            map.insert(key.clone(), Value::String(s.to_string()));
-                        }
-                    }
-                    "long" => {
-                        if let Some(n) = v.as_i64() {
-                            map.insert(key.clone(), Value::Long(n));
-                        }
-                    }
-                    "int" => {
-                        if let Some(n) = v.as_i64() {
-                            map.insert(key.clone(), Value::Int(n as i32));
-                        }
-                    }
-                    "byte" => {
-                        if let Some(n) = v.as_i64() {
-                            map.insert(key.clone(), Value::Byte(n as i8));
-                        }
-                    }
-                    _ => {
-                        // 未知字段：保持原类型，只接受数字/字符串
-                        match v {
-                            Json::Number(n) => {
-                                if let Some(i) = n.as_i64() {
-                                    map.insert(key.clone(), Value::Int(i as i32));
-                                }
-                            }
-                            Json::String(s) => {
-                                map.insert(key.clone(), Value::String(s.clone()));
-                            }
-                            _ => {}
-                        }
-                    }
-                }
+                let tag = type_of(key).ok_or_else(|| format!("表单不支持修改字段: {key}"))?;
+                let value = level::typed_value(tag, v).map_err(|error| format!("{key}: {error}"))?;
+                map.insert(key.clone(), value);
             }
         }
     }
@@ -418,17 +388,16 @@ fn apply_data_patch(data: &mut Value, patch: &Json) -> Result<(), String> {
 }
 
 /// level.dat 中各字段的 NBT 类型（类型写错会导致游戏读不出值）
-fn type_of(key: &str) -> &'static str {
-    match key {
+fn type_of(key: &str) -> Option<&'static str> {
+    Some(match key {
         "LevelName" => "string",
-        "RandomSeed" | "Time" | "DayTime" => "long",
-        "SpawnX" | "SpawnY" | "SpawnZ" => "int",
-        "GameType" => "int",
+        "Time" | "DayTime" => "long",
+        "GameType" | "SpawnX" | "SpawnY" | "SpawnZ" => "int",
         "Difficulty" | "DifficultyLocked" | "raining" | "thundering" | "allowCommands" | "hardcore" => {
             "byte"
         }
-        _ => "unknown",
-    }
+        _ => return None,
+    })
 }
 
 #[cfg(test)]
@@ -450,7 +419,7 @@ mod tests {
         m.insert("Difficulty".into(), Value::Byte(2));
         m.insert("DifficultyLocked".into(), Value::Byte(0));
         m.insert("Time".into(), Value::Long(1000));
-        m.insert("DayTime".into(), Value::Long(1000));
+        m.insert("DayTime".into(), Value::Long(6000));
         m.insert("SpawnX".into(), Value::Int(12));
         m.insert("SpawnY".into(), Value::Int(64));
         m.insert("SpawnZ".into(), Value::Int(-34));
@@ -533,6 +502,8 @@ mod tests {
         assert_eq!(get_int(d, "SpawnY"), Some(64));
         assert_eq!(get_int(d, "SpawnZ"), Some(-34));
         assert_eq!(get_int(d, "allowCommands"), Some(0));
+        assert_eq!(get_int(d, "Time"), Some(1000));
+        assert_eq!(get_int(d, "DayTime"), Some(6000));
         // 大块嵌套字段必须还在
         let wgs = level::get(d, "WorldGenSettings").expect("WorldGenSettings 丢失会导致世界损坏");
         assert!(level::get(wgs, "dimensions").is_some());
@@ -562,6 +533,46 @@ mod tests {
             Some(59999968.0)
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn daylight_patch_preserves_total_time_and_roundtrips_long_values() {
+        let mut root = make_sample_level();
+        apply_patch(&mut root, &json!({ "DayTime": "9007199254740993" })).unwrap();
+
+        let form = world_form_from_data(&root);
+        assert_eq!(form["time"], "1000");
+        assert_eq!(form["dayTime"], "9007199254740993");
+        assert!(apply_patch(&mut root, &json!({ "Time": "9223372036854775808" })).is_err());
+        assert_eq!(world_form_from_data(&root)["time"], "1000");
+    }
+
+    #[test]
+    fn rejects_invalid_or_unavailable_seed() {
+        let mut root = make_sample_level();
+        let original = world_seed(level::world_data(&root));
+        for invalid in ["", "1.25", "9223372036854775808"] {
+            assert!(apply_patch(&mut root, &json!({ "RandomSeed": invalid })).is_err());
+            assert_eq!(world_seed(level::world_data(&root)), original);
+        }
+        let mut missing = Value::Compound([
+            ("WorldGenSettings".into(), Value::Compound(HashMap::new())),
+        ].into());
+        let err = apply_patch(&mut missing, &json!({ "RandomSeed": "42" })).unwrap_err();
+        assert!(err.contains("没有可编辑的种子字段"));
+        assert_eq!(world_seed(&missing), None);
+    }
+
+    #[test]
+    fn invalid_form_and_tree_edits_leave_file_and_backups_untouched() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_sample(dir.path(), &make_sample_level());
+        let before = std::fs::read(&path).unwrap();
+        let patch = json!({"LevelName": "改名", "raining": 128});
+        assert!(edit_level(&path, |data| apply_patch(data, &patch)).is_err());
+        assert!(tree::set_node(&path, vec!["raining".into()], &json!("128"), "byte").is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(backup::list_backups(dir.path()).is_empty());
     }
 
     /// 没有 Data 包装层的老格式文件也要能读写

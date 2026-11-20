@@ -13,8 +13,11 @@ use tauri::State;
 // ---------------------------------------------------------------------------
 
 #[tauri::command]
-pub fn list_instances(state: State<AppState>) -> Result<Vec<Instance>, String> {
-    Ok(crate::instances::load_instances(&state))
+pub async fn list_instances(state: State<'_, AppState>) -> Result<crate::fsutil::DirectoryIndex<Instance>, String> {
+    let directory = state.instances_dir();
+    tokio::task::spawn_blocking(move || {
+        crate::fsutil::inspect_dir_entries(&directory, "qookix.json", |instance: &Instance| instance.created)
+    }).await.map_err(|error| error.to_string())?
 }
 
 #[tauri::command]
@@ -113,16 +116,17 @@ pub async fn install_game(
     instance_id: String,
 ) -> Result<InstallPlan, String> {
     let instance = crate::instances::get_instance(&state, &instance_id)?;
-    let plan = install::install_game(app.clone(), &state, &instance).await?;
-    crate::instances::mark_installed(&state, &instance_id)?;
-    Ok(plan)
+    install::install_game(app, &state, &instance, None).await
 }
 
 #[tauri::command]
-pub fn cancel_install(state: State<AppState>) -> Result<(), String> {
-    use std::sync::atomic::Ordering;
-    state.install_cancel.store(true, Ordering::Relaxed);
-    Ok(())
+pub fn cancel_install(state: State<AppState>, instance_id: Option<String>, task_id: Option<u64>) -> Result<(), String> {
+    if let Some(task_id) = task_id {
+        state.jobs.cancel_install_task(task_id);
+        Ok(())
+    } else {
+        state.jobs.cancel_install(instance_id.as_deref())
+    }
 }
 
 #[tauri::command]
@@ -133,12 +137,12 @@ pub async fn launch_instance(
     world: Option<String>,
     server: Option<String>,
 ) -> Result<LaunchResult, String> {
-    // 启动失败时悬浮进度卡没有其它收尾信号（launch://log 只在游戏真正
-    // 跑起来、launch://exit 只在进程退出时发），不补发的话卡片会永远
-    // 停在当前百分比。这里统一兜底：失败即广播 exit 收起卡片。
-    let result = launch_instance_inner(&app, &state, &instance_id, world, server).await;
+    let lease = state.jobs.reserve_game(&instance_id)?;
+    let task_id = lease.task_id;
+    let result = launch_instance_inner(&app, &state, &instance_id, world, server, lease).await;
     if result.is_err() {
-        let _ = app.emit("launch://exit", serde_json::json!({}));
+        launch::emit_state(&app, &instance_id, task_id, crate::task_events::LaunchState::Exited, 0, None);
+        let _ = app.emit("launch://exit", serde_json::json!({ "instanceId": instance_id, "taskId": task_id }));
     }
     result
 }
@@ -149,6 +153,7 @@ async fn launch_instance_inner(
     instance_id: &str,
     world: Option<String>,
     server: Option<String>,
+    lease: crate::runtime_jobs::ProcessLease,
 ) -> Result<LaunchResult, String> {
     let instance = crate::instances::get_instance(state, instance_id)?;
     // resolve account: instance override -> global selected -> first
@@ -165,9 +170,12 @@ async fn launch_instance_inner(
         accounts.first().cloned()
     };
     let account = account.ok_or("请先在左下角账号栏添加账号（正版或离线）")?;
-    let _ = app.emit("launch://progress", serde_json::json!({ "step": "正在登录账号…", "progress": 10 }));
-    let account = accounts::refresh_microsoft(&state, &account).await?;
-    let _ = app.emit("launch://progress", serde_json::json!({ "step": "账号准备完成", "progress": 25 }));
+    launch::emit_progress(app, instance_id, lease.task_id, "正在登录账号…", 10);
+    let account = tokio::select! {
+        result = accounts::refresh_microsoft(state, &account) => result?,
+        _ = lease.cancel.cancelled() => return Err("启动已取消".into()),
+    };
+    launch::emit_progress(app, instance_id, lease.task_id, "账号准备完成", 25);
     let resolved = launch::ResolvedAccount {
         username: account.username().to_string(),
         uuid: account.uuid().to_string(),
@@ -176,7 +184,10 @@ async fn launch_instance_inner(
             Account::Offline { .. } => "0".into(),
             // 皮肤站账号：启动前校验令牌，失效自动用 clientToken 换新
             Account::Yggdrasil { .. } => {
-                crate::yggdrasil::ensure_token_for(&state, &account).await?
+                tokio::select! {
+                    result = crate::yggdrasil::ensure_token_for(state, &account) => result?,
+                    _ = lease.cancel.cancelled() => return Err("启动已取消".into()),
+                }
             }
         },
         user_type: if account.is_microsoft() || matches!(account, Account::Yggdrasil { .. }) {
@@ -187,7 +198,7 @@ async fn launch_instance_inner(
         user_properties: "{}".into(),
         yggdrasil_server: account.yggdrasil_server().map(|s| s.to_string()),
     };
-    let result = launch::launch_game(app.clone(), &state, &instance, resolved, world, server).await?;
+    let result = launch::launch_game(app.clone(), &state, &instance, resolved, world, server, lease).await?;
     crate::instances::touch_last_played(&state, &instance_id);
     // 托盘菜单的「最近游玩」按 last_played 排序，启动成功后立即刷新
     crate::refresh_tray_menu(app);
@@ -466,11 +477,7 @@ pub async fn import_instance_pack(
         let res: Result<(), String> = async {
             let state = app2.state::<crate::state::AppState>();
             let inst = crate::instances::get_instance(&state, &iid)?;
-            crate::install::install_game(app2.clone(), &state, &inst).await?;
-            let _ = crate::util::log_best_effort(
-                "mark_installed",
-                crate::instances::mark_installed(&state, &iid),
-            );
+            crate::install::install_game(app2.clone(), &state, &inst, None).await?;
             Ok(())
         }
         .await;
