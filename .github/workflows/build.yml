@@ -327,8 +327,10 @@ jobs:
         run: node scripts/generate-changelog-json.mjs CHANGELOG.md release/changelog.json 5
 
       - name: Upload installers and signatures to a draft
+        id: upload_draft
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ github.ref_name }}
           name: QookiX Launcher ${{ github.ref_name }}
           draft: true
           fail_on_unmatched_files: true
@@ -340,12 +342,14 @@ jobs:
       - name: Check download links against uploaded draft assets
         env:
           GH_TOKEN: ${{ github.token }}
+          QOOKIX_RELEASE_ID: ${{ steps.upload_draft.outputs.id }}
         run: node scripts/fix-release-body.mjs "$GITHUB_REF_NAME" --require-links
 
       - name: Verify uploaded bytes, publish checksums and update manifest, then release
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_TAG: ${{ github.ref_name }}
+          QOOKIX_RELEASE_ID: ${{ steps.upload_draft.outputs.id }}
           QOOKIX_MIN_VERSION: ${{ vars.QOOKIX_MIN_VERSION || secrets.QOOKIX_MIN_VERSION }}
         run: node scripts/fix-update-manifest.mjs --publish-draft release
 

@@ -1,6 +1,23 @@
 import { createHash } from 'node:crypto'
 import fs from 'node:fs'
 
+export function matchesReleaseTag(release, tag, draftId) {
+  if (draftId === undefined) return release?.tag_name === tag
+  return Number.isSafeInteger(draftId) && draftId > 0 && release?.draft === true && release.id === draftId
+    && (release.tag_name === tag || /^untagged-[a-f0-9]+$/i.test(release.tag_name))
+}
+
+export function releaseAssetUrl(asset, tag) {
+  const url = new URL(asset.browser_download_url)
+  const parts = url.pathname.split('/')
+  if (url.origin !== 'https://github.com' || parts.length !== 7 || parts[3] !== 'releases' || parts[4] !== 'download') {
+    throw new Error(`Invalid GitHub download URL for ${asset.name}`)
+  }
+  parts[5] = encodeURIComponent(tag)
+  url.pathname = parts.join('/')
+  return url.href
+}
+
 export function githubReleases(repo, token, request = fetch) {
   if (!/^[-.\w]+\/[-.\w]+$/.test(repo ?? '') || !token) {
     throw new Error('GITHUB_REPOSITORY and GH_TOKEN are required')
@@ -49,6 +66,12 @@ export function githubReleases(repo, token, request = fetch) {
 
   return {
     find,
+    async getDraft(tag, id) {
+      if (!Number.isSafeInteger(id) || id <= 0) throw new Error('Invalid GitHub release ID')
+      const release = await json(`${endpoint}/${id}`)
+      if (!matchesReleaseTag(release, tag, id)) throw new Error(`Release ${id} is not a draft for ${tag}`)
+      return release
+    },
     digest,
     async text(asset, limit = 256 * 1024) {
       if (asset.size > limit) throw new Error(`${asset.name} exceeds the metadata size limit`)

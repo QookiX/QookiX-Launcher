@@ -1,7 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { fileDigest, githubReleases, sha256 } from './shared/github-releases.mjs'
+import { fileDigest, githubReleases, matchesReleaseTag, releaseAssetUrl, sha256 } from './shared/github-releases.mjs'
 import { requireUpdaterCoverage, selectUpdaterBundles } from './shared/updater-targets.mjs'
 import { buildUpdateManifest, readLocalSignature } from './shared/update-manifest.mjs'
 import { normalizeReleaseVersion } from './shared/release-version.mjs'
@@ -44,8 +44,8 @@ async function writeDraftAsset(client, release, name, bytes) {
   await client.upload(release.id, name, bytes)
 }
 
-export async function finalizeRelease(client, release, { tag, minVersion, directory, publish = false }) {
-  if (!release?.id || release.tag_name !== tag || !Array.isArray(release.assets)) {
+export async function finalizeRelease(client, release, { tag, minVersion, directory, publish = false, draftId }) {
+  if (!release?.id || !matchesReleaseTag(release, tag, draftId) || !Array.isArray(release.assets)) {
     throw new Error('The requested GitHub release is missing')
   }
   const { assets } = release
@@ -76,13 +76,7 @@ export async function finalizeRelease(client, release, { tag, minVersion, direct
     notes: release.body ?? '',
     minVersion,
     bundles,
-    urlFor: (asset) => {
-      const url = new URL(asset.browser_download_url)
-      if (url.protocol !== 'https:' || url.hostname !== 'github.com') {
-        throw new Error(`Invalid GitHub download URL for ${asset.name}`)
-      }
-      return url.href
-    },
+    urlFor: (asset) => releaseAssetUrl(asset, tag),
   })
   manifest.pub_date = release.created_at ?? manifest.pub_date
   if (matched) {
@@ -93,8 +87,12 @@ export async function finalizeRelease(client, release, { tag, minVersion, direct
   }
   await writeDraftAsset(client, release, manifestName, Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`))
   if (publish) {
-    const published = await client.edit(release.id, { draft: false, make_latest: release.prerelease ? 'false' : 'true' })
-    if (published.id !== release.id || published.draft !== false) throw new Error('Could not confirm release publication')
+    const published = await client.edit(release.id, {
+      tag_name: tag, draft: false, make_latest: release.prerelease ? 'false' : 'true',
+    })
+    if (published.id !== release.id || published.tag_name !== tag || published.draft !== false) {
+      throw new Error('Could not confirm release publication')
+    }
   }
   return manifest
 }
@@ -104,16 +102,19 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
   if (!normalizeReleaseVersion(tag)) throw new Error('GITHUB_TAG must identify a SemVer release')
   const args = process.argv.slice(2)
   const client = githubReleases(process.env.GITHUB_REPOSITORY, process.env.GH_TOKEN || process.env.GITHUB_TOKEN)
-  const release = await client.find(tag)
   if (args[0] === '--assert-unpublished') {
+    const release = await client.find(tag)
     if (release && !release.draft) throw new Error(`Release ${tag} is already public`)
   } else {
     const publish = args[0] === '--publish-draft'
     if ((publish && args.length !== 2) || (!publish && args.length)) {
       throw new Error('Usage: fix-update-manifest.mjs [--assert-unpublished | --publish-draft <verified-artifacts>]')
     }
+    const id = process.env.QOOKIX_RELEASE_ID
+    const draftId = id === undefined ? undefined : Number(id)
+    const release = draftId === undefined ? await client.find(tag) : await client.getDraft(tag, draftId)
     const manifest = await finalizeRelease(client, release, {
-      tag, minVersion: process.env.QOOKIX_MIN_VERSION, directory: publish ? args[1] : undefined, publish,
+      tag, minVersion: process.env.QOOKIX_MIN_VERSION, directory: publish ? args[1] : undefined, publish, draftId,
     })
     console.log(`Verified updater manifest for ${tag}: ${Object.keys(manifest.platforms).join(', ')}`)
   }

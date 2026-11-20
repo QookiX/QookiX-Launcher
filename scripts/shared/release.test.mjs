@@ -11,7 +11,7 @@ import { selectUpdaterBundles } from './updater-targets.mjs'
 import { requireUpdaterCoverage } from './updater-targets.mjs'
 import { synchronizeReleaseVersion, verifyReleaseVersion } from '../update-version.mjs'
 import { finalizeRelease } from '../fix-update-manifest.mjs'
-import { fileDigest } from './github-releases.mjs'
+import { fileDigest, githubReleases } from './github-releases.mjs'
 import { pushBucket } from '../push-bucket.mjs'
 import { fileURLToPath } from 'node:url'
 
@@ -170,7 +170,17 @@ test('artifact verification reads both executable slices inside a macOS updater 
 
 test('draft publication verifies the actual signed uploads before exposing the manifest', async () => {
   await withReleaseAssets(async (directory, assets) => {
-    const release = { id: 4, tag_name: 'v1.2.0', draft: true, assets }
+    const tag = 'v1.2.0'
+    const draftTag = 'untagged-9eb48aafd1fa7a0dccf4'
+    for (const asset of assets) {
+      asset.browser_download_url = asset.browser_download_url.replace(`/download/${tag}/`, `/download/${draftTag}/`)
+    }
+    const release = { id: 4, tag_name: draftTag, draft: true, assets }
+    const api = githubReleases('demo/launcher', 'fixture', (url) => {
+      assert.equal(url, 'https://api.github.com/repos/demo/launcher/releases/4')
+      return Response.json(release)
+    })
+    const draft = await api.getDraft(tag, release.id)
     const calls = []
     let rejectManifest = true
     const client = {
@@ -182,25 +192,29 @@ test('draft publication verifies the actual signed uploads before exposing the m
         if (name === 'latest.json') {
           const manifest = JSON.parse(bytes)
           assert.equal(manifest.minVersion, '1.0.0')
-          assert.match(manifest.platforms['windows-x86_64'].url, /QookiX\.Launcher/)
+          assert.match(manifest.platforms['windows-x86_64'].url, /\/download\/v1\.2\.0\/QookiX\.Launcher/)
           assert.deepEqual(manifest.platforms['darwin-aarch64'], manifest.platforms['darwin-x86_64'])
         }
       },
       async edit(id, patch) {
         calls.push('publish')
-        assert.equal(patch.draft, false)
-        return { id, draft: false }
+        assert.deepEqual(patch, { tag_name: tag, draft: false, make_latest: 'true' })
+        return { id, tag_name: tag, draft: false }
       },
     }
-    const options = { tag: 'v1.2.0', directory, minVersion: '1.0.0', publish: true }
-    await assert.rejects(finalizeRelease(client, release, options), /upload failed/)
+    const options = { tag, directory, minVersion: '1.0.0', publish: true, draftId: 4 }
+    await assert.rejects(finalizeRelease(client, draft, { ...options, draftId: 5 }), /release is missing/)
+    await assert.rejects(finalizeRelease(client, draft, { ...options, draftId: undefined }), /release is missing/)
+    await assert.rejects(finalizeRelease(client, draft, options), /upload failed/)
     assert.deepEqual(calls, ['SHA256SUMS.txt', 'latest.json'])
     calls.length = 0
     rejectManifest = false
-    await finalizeRelease(client, release, options)
+    await finalizeRelease(client, draft, options)
     assert.deepEqual(calls, ['SHA256SUMS.txt', 'latest.json', 'publish'])
     calls.length = 0
-    await assert.rejects(finalizeRelease(client, { ...release, draft: false }, options), /public/)
+    await assert.rejects(finalizeRelease(client, { ...release, tag_name: tag, draft: false }, {
+      ...options, draftId: undefined,
+    }), /public/)
     assert.equal(calls.length, 0)
   })
 })

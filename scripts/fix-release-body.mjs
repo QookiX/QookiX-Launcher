@@ -21,7 +21,7 @@
 //  Exit code stays 0 when nothing needed fixing; `--dry-run` never writes.
 // ============================================================================
 
-import { githubReleases } from './shared/github-releases.mjs'
+import { githubReleases, releaseAssetUrl } from './shared/github-releases.mjs'
 
 const token = process.env.GH_TOKEN || process.env.GITHUB_TOKEN
 const repo = process.env.GITHUB_REPOSITORY
@@ -53,19 +53,19 @@ const ROW = /^\|\s*([^|]*?)\s*\|\s*`([^`]+)`\s*\|\s*\[下载\]\(([^)]*)\)\s*\|\s
 const ghName = (name) => name.replace(/\s+/g, '.')
 
 /** 用真实 asset 修一行；修不了就原样返回（返回 null 表示这一行不动） */
-function fixRow(line, byName) {
+function fixRow(line, byName, releaseTag) {
   const m = ROW.exec(line)
   if (!m) return null
-  const [, label, shown, url] = m
+  const [, label, shown] = m
   // 正文上写的名字可能是本地名（带空格）也可能是已改好的名字
   const asset = byName.get(ghName(shown)) || byName.get(shown)
   if (!asset) return null
-  const next = `| ${label} | \`${asset.name}\` | [下载](${asset.browser_download_url}) |`
+  const next = `| ${label} | \`${asset.name}\` | [下载](${releaseAssetUrl(asset, releaseTag)}) |`
   return next === line ? null : next
 }
 
 /** 返回 { body, changed, rows } */
-function repairBody(body, assets) {
+function repairBody(body, assets, releaseTag) {
   if (!body) return { body, changed: 0, rows: 0, missing: [] }
   const byName = new Map(assets.map((a) => [a.name, a]))
   const missing = []
@@ -76,7 +76,7 @@ function repairBody(body, assets) {
     if (!m) return line
     rows++
     if (!byName.has(ghName(m[2])) && !byName.has(m[2])) missing.push(m[2])
-    const fixed = fixRow(line, byName)
+    const fixed = fixRow(line, byName, releaseTag)
     if (fixed) {
       changed++
       return fixed
@@ -102,10 +102,10 @@ async function patchBody(id, body) {
   return res.json()
 }
 
-async function processRelease(release) {
-  const { body, changed, rows, missing } = repairBody(release.body, release.assets)
+async function processRelease(release, releaseTag = release.tag_name) {
+  const { body, changed, rows, missing } = repairBody(release.body, release.assets, releaseTag)
   if (strict && missing.length) throw new Error(`Release links do not have uploaded assets: ${missing.join(', ')}`)
-  const label = `${release.tag_name} (${rows} 行表格 / ${release.assets.length} 个附件)`
+  const label = `${releaseTag} (${rows} 行表格 / ${release.assets.length} 个附件)`
   if (!rows) {
     console.log(`  - ${label}: 没有下载表格，跳过`)
     return 0
@@ -132,9 +132,11 @@ if (all) {
   console.log(`检查 ${everything.length} 个 Release${dryRun ? '（dry-run）' : ''}`)
   for (const rel of everything) total += await processRelease(rel)
 } else {
-  const rel = await githubReleases(repo, token).find(tag)
+  const client = githubReleases(repo, token)
+  const id = process.env.QOOKIX_RELEASE_ID
+  const rel = id === undefined ? await client.find(tag) : await client.getDraft(tag, Number(id))
   if (!rel) throw new Error(`Release ${tag} was not found`)
-  total = await processRelease(rel)
+  total = await processRelease(rel, tag)
 }
 
 if (total === 0) console.log('无需修改，全部链接都指向真实附件。')
